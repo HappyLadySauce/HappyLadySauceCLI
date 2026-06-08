@@ -8,7 +8,7 @@
 
 PROJECT  := HAPPLADYSAUCECLI
 MODULE   := github.com/HappyLadySauce/HappyLadySauceCLI
-CMD      := ./cmd/HAPPLADYSAUCECLI.go
+CMD      := ./cmd/root.go
 BIN_DIR  := bin
 GO       := go
 
