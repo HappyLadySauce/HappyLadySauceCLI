@@ -12,7 +12,7 @@ import (
 type Options struct {
 	basename   string
 	configPath string
-	Model      *options.ModelOptions    `mapstructure:"model"`
+	Model      *options.ModelOptions `mapstructure:"model"`
 }
 
 // ConfigPath returns the absolute path of the loaded configuration file.

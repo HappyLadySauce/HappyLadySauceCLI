@@ -10,8 +10,8 @@ import (
 	"k8s.io/component-base/cli/flag"
 	"k8s.io/component-base/logs"
 
-	"github.com/HappyLadySauce/HappyLadySauceCLI/internal/agents"
 	"github.com/HappyLadySauce/HappyLadySauceCLI/cmd/app/options"
+	"github.com/HappyLadySauce/HappyLadySauceCLI/internal/agents"
 	"github.com/HappyLadySauce/HappyLadySauceCLI/pkg/config"
 	pkgoptions "github.com/HappyLadySauce/HappyLadySauceCLI/pkg/options"
 )
@@ -61,7 +61,7 @@ func NewAPICommand(ctx context.Context, basename string) *cobra.Command {
 
 func run(ctx context.Context, opts *options.Options) error {
 	cfg := &config.Config{
-		Model:    opts.Model,
+		Model: opts.Model,
 	}
 	config.Init(cfg)
 

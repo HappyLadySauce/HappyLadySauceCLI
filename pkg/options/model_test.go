@@ -24,10 +24,10 @@ func TestModelOptionsValidateRequiredFields(t *testing.T) {
 // TestModelOptionsValidatePassesWithRequiredFields 确认必填项齐全时校验通过。
 func TestModelOptionsValidatePassesWithRequiredFields(t *testing.T) {
 	o := &ModelOptions{
-		BaseURL:          "https://api.example.com",
-		Model:            "gpt-4",
+		BaseURL:         "https://api.example.com",
+		Model:           "gpt-4",
 		MaxModelContext: 128000,
-		MaxOutputTokens:  32000,
+		MaxOutputTokens: 32000,
 	}
 	if err := o.Validate(); err != nil {
 		t.Errorf("Validate() error = %v, want nil", err)
@@ -38,10 +38,10 @@ func TestModelOptionsValidatePassesWithRequiredFields(t *testing.T) {
 // TestModelOptionsValidateNormalizesBaseURL 确认 host:port 形式的 base URL 会自动补全 http scheme。
 func TestModelOptionsValidateNormalizesBaseURL(t *testing.T) {
 	o := &ModelOptions{
-		BaseURL:          "100.100.100.254:11434/v1",
-		Model:            "gemma",
+		BaseURL:         "100.100.100.254:11434/v1",
+		Model:           "gemma",
 		MaxModelContext: 128000,
-		MaxOutputTokens:  32000,
+		MaxOutputTokens: 32000,
 	}
 	if err := o.Validate(); err != nil {
 		t.Fatalf("Validate() error = %v, want nil", err)
@@ -53,10 +53,10 @@ func TestModelOptionsValidateNormalizesBaseURL(t *testing.T) {
 
 func TestModelOptionsValidateRejectsOutputTokensAtOrAboveContext(t *testing.T) {
 	o := &ModelOptions{
-		BaseURL:          "https://api.example.com",
-		Model:            "gpt-4",
+		BaseURL:         "https://api.example.com",
+		Model:           "gpt-4",
 		MaxModelContext: 32000,
-		MaxOutputTokens:  32000,
+		MaxOutputTokens: 32000,
 	}
 
 	err := o.Validate()

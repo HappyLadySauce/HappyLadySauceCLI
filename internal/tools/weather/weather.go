@@ -10,7 +10,7 @@ import (
 	"strings"
 
 	"github.com/cloudwego/eino/components/tool"
-    "github.com/cloudwego/eino/components/tool/utils"
+	"github.com/cloudwego/eino/components/tool/utils"
 )
 
 // https://uapis.cn/docs/api-reference/get-misc-weather
