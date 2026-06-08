@@ -1,0 +1,8 @@
+# IDE and editor files
+.vscode/
+
+# Local secrets loaded by Makefile (-include .env)
+.env
+
+# Build artifacts
+bin/
