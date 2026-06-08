@@ -10,6 +10,7 @@ import (
 	"k8s.io/component-base/cli/flag"
 	"k8s.io/component-base/logs"
 
+	"github.com/HappyLadySauce/HappyLadySauceCLI/internal/agents"
 	"github.com/HappyLadySauce/HappyLadySauceCLI/cmd/app/options"
 	"github.com/HappyLadySauce/HappyLadySauceCLI/pkg/config"
 	pkgoptions "github.com/HappyLadySauce/HappyLadySauceCLI/pkg/options"
@@ -64,10 +65,10 @@ func run(ctx context.Context, opts *options.Options) error {
 	}
 	config.Init(cfg)
 
-	// err := agents.RunAgentLoop(ctx, cfg)
-	// if err != nil {
-	// 	return fmt.Errorf("run agent loop: %w", err)
-	// }
+	err := agents.RunLoop(ctx, cfg)
+	if err != nil {
+		return fmt.Errorf("run agent loop: %w", err)
+	}
 
 	return nil
 }

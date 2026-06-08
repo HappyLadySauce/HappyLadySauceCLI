@@ -26,7 +26,7 @@ func TestModelOptionsValidatePassesWithRequiredFields(t *testing.T) {
 	o := &ModelOptions{
 		BaseURL:          "https://api.example.com",
 		Model:            "gpt-4",
-		MaxContextTokens: 128000,
+		MaxModelContext: 128000,
 		MaxOutputTokens:  32000,
 	}
 	if err := o.Validate(); err != nil {
@@ -40,7 +40,7 @@ func TestModelOptionsValidateNormalizesBaseURL(t *testing.T) {
 	o := &ModelOptions{
 		BaseURL:          "100.100.100.254:11434/v1",
 		Model:            "gemma",
-		MaxContextTokens: 128000,
+		MaxModelContext: 128000,
 		MaxOutputTokens:  32000,
 	}
 	if err := o.Validate(); err != nil {
@@ -55,7 +55,7 @@ func TestModelOptionsValidateRejectsOutputTokensAtOrAboveContext(t *testing.T) {
 	o := &ModelOptions{
 		BaseURL:          "https://api.example.com",
 		Model:            "gpt-4",
-		MaxContextTokens: 32000,
+		MaxModelContext: 32000,
 		MaxOutputTokens:  32000,
 	}
 
@@ -63,7 +63,7 @@ func TestModelOptionsValidateRejectsOutputTokensAtOrAboveContext(t *testing.T) {
 	if err == nil {
 		t.Fatal("Validate() error = nil, want non-nil")
 	}
-	if !strings.Contains(err.Error(), "max_context_tokens must be greater than max_output_tokens") {
+	if !strings.Contains(err.Error(), "max_model_context must be greater than max_output_tokens") {
 		t.Fatalf("Validate() error = %q, want context/output validation", err.Error())
 	}
 }
@@ -71,16 +71,10 @@ func TestModelOptionsValidateRejectsOutputTokensAtOrAboveContext(t *testing.T) {
 func TestNewModelOptionsUsesTokenDefaults(t *testing.T) {
 	o := NewModelOptions()
 
-	if o.MaxContextTokens != 128000 {
-		t.Fatalf("MaxContextTokens = %d, want 128000", o.MaxContextTokens)
+	if o.MaxModelContext != 128000 {
+		t.Fatalf("MaxModelContext = %d, want 128000", o.MaxModelContext)
 	}
 	if o.MaxOutputTokens != 32000 {
 		t.Fatalf("MaxOutputTokens = %d, want 32000", o.MaxOutputTokens)
-	}
-	if o.MaxHistoryMessages != 40 {
-		t.Fatalf("MaxHistoryMessages = %d, want 40", o.MaxHistoryMessages)
-	}
-	if o.TokenizerModel != "" {
-		t.Fatalf("TokenizerModel = %q, want empty", o.TokenizerModel)
 	}
 }

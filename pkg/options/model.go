@@ -8,20 +8,17 @@ import (
 )
 
 type ModelOptions struct {
-	AuthToken          string `mapstructure:"HAPPLADYSAUCECLI_AUTH_TOKEN"`
+	APIKey          string `mapstructure:"HAPPLADYSAUCECLI_API_KEY"`
 	BaseURL            string `mapstructure:"HAPPLADYSAUCECLI_BASE_URL"`
 	Model              string `mapstructure:"HAPPLADYSAUCECLI_MODEL"`
 	MaxOutputTokens    int    `mapstructure:"HAPPLADYSAUCECLI_MAX_OUTPUT_TOKENS"`
-	MaxContextTokens   int    `mapstructure:"HAPPLADYSAUCECLI_MAX_CONTEXT_TOKENS"`
-	MaxHistoryMessages int    `mapstructure:"HAPPLADYSAUCECLI_MAX_HISTORY_MESSAGES"`
-	TokenizerModel     string `mapstructure:"HAPPLADYSAUCECLI_TOKENIZER_MODEL"`
+	MaxModelContext    int    `mapstructure:"HAPPLADYSAUCECLI_MAX_MODEL_CONTEXT"`
 }
 
 func NewModelOptions() *ModelOptions {
 	return &ModelOptions{
 		MaxOutputTokens:    32000,
-		MaxContextTokens:   128000,
-		MaxHistoryMessages: 40,
+		MaxModelContext:   128000,
 	}
 }
 
@@ -40,14 +37,8 @@ func (o *ModelOptions) Validate() error {
 	if o.MaxOutputTokens <= 0 {
 		errs = errors.Join(errs, errors.New("max_output_tokens must be greater than 0"))
 	}
-	if o.MaxContextTokens <= 0 {
-		errs = errors.Join(errs, errors.New("max_context_tokens must be greater than 0"))
-	}
-	if o.MaxHistoryMessages <= 0 {
-		errs = errors.Join(errs, errors.New("max_history_messages must be greater than 0"))
-	}
-	if o.MaxContextTokens > 0 && o.MaxOutputTokens > 0 && o.MaxContextTokens <= o.MaxOutputTokens {
-		errs = errors.Join(errs, errors.New("max_context_tokens must be greater than max_output_tokens"))
+	if o.MaxModelContext <= 0 {
+		errs = errors.Join(errs, errors.New("max_model_context must be greater than 0"))
 	}
 
 	return errs
@@ -58,11 +49,8 @@ func (o *ModelOptions) applyDefaults() {
 	if o.MaxOutputTokens == 0 {
 		o.MaxOutputTokens = defaults.MaxOutputTokens
 	}
-	if o.MaxContextTokens == 0 {
-		o.MaxContextTokens = defaults.MaxContextTokens
-	}
-	if o.MaxHistoryMessages == 0 {
-		o.MaxHistoryMessages = defaults.MaxHistoryMessages
+	if o.MaxModelContext == 0 {
+		o.MaxModelContext = defaults.MaxModelContext
 	}
 }
 
@@ -81,11 +69,9 @@ func normalizeBaseURL(raw string) string {
 }
 
 func (o *ModelOptions) AddFlags(fs *pflag.FlagSet) {
-	fs.StringVar(&o.AuthToken, "auth-token", "", "The authentication token for the model")
-	fs.StringVar(&o.BaseURL, "base-url", "", "The base URL for the model")
+	fs.StringVar(&o.APIKey, "apikey", "", "The APIKey for the model")
+	fs.StringVar(&o.BaseURL, "url", "", "The base URL for the model")
 	fs.StringVar(&o.Model, "model", "", "The model to use")
 	fs.IntVar(&o.MaxOutputTokens, "max-output-tokens", o.MaxOutputTokens, "The maximum number of output tokens")
-	fs.IntVar(&o.MaxContextTokens, "max-context-tokens", o.MaxContextTokens, "The maximum number of context tokens")
-	fs.IntVar(&o.MaxHistoryMessages, "max-history-messages", o.MaxHistoryMessages, "The maximum number of conversation history messages")
-	fs.StringVar(&o.TokenizerModel, "tokenizer-model", "", "The tokenizer model name; defaults to the selected model")
+	fs.IntVar(&o.MaxModelContext, "max-model-context", o.MaxModelContext, "The maximum number of model context tokens")
 }
