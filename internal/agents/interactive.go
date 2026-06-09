@@ -38,7 +38,7 @@ func RunLoop(ctx context.Context, cfg *config.Config) error {
 
 	agent, err := adk.NewChatModelAgent(ctx, &adk.ChatModelAgentConfig{
 		Model:       chatModel,
-		Name:        "HAPPLADYSAUCECLI",
+		Name:        "HappyLadySauce",
 		Description: "A Agent for HAPPLADYSAUCECLI",
 		Instruction: prompts.SystemPrompt,
 		ToolsConfig: tools,
