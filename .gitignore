@@ -1,5 +1,11 @@
 # IDE and editor files
 .vscode/
+.cursor/
+.idea/
+.trae/
+.codex/
+.claude/
+.plans/
 
 # Local secrets loaded by Makefile (-include .env)
 .env
