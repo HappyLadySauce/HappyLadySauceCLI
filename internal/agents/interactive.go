@@ -1,15 +1,17 @@
 package agents
 
 import (
-	"bufio"
 	"context"
+	"errors"
 	"fmt"
 	"os"
+	"strings"
 
 	"github.com/cloudwego/eino-ext/components/model/openai"
 	"github.com/cloudwego/eino/adk"
 	"github.com/cloudwego/eino/schema"
 
+	ioChannel "github.com/HappyLadySauce/HappyLadySauceCLI/internal/channel"
 	"github.com/HappyLadySauce/HappyLadySauceCLI/internal/prompts"
 	"github.com/HappyLadySauce/HappyLadySauceCLI/internal/tools"
 	"github.com/HappyLadySauce/HappyLadySauceCLI/pkg/config"
@@ -27,13 +29,13 @@ func RunLoop(ctx context.Context, cfg *config.Config) error {
 	}
 
 	tools := tools.NewAgentTools()
-
-	msgs := []*schema.Message{}
+	history := []*schema.Message{}
+	input := ioChannel.NewContentChannel(ctx, os.Stdin)
 
 	agent, err := adk.NewChatModelAgent(ctx, &adk.ChatModelAgentConfig{
 		Model:       chatModel,
 		Name:        "HAPPLADYSAUCECLI",
-		Description: "A CLI for HAPPLADYSAUCECLI",
+		Description: "A Agent for HAPPLADYSAUCECLI",
 		Instruction: prompts.SystemPrompt,
 		ToolsConfig: tools,
 	})
@@ -49,15 +51,28 @@ func RunLoop(ctx context.Context, cfg *config.Config) error {
 		return fmt.Errorf("new runner: %w", err)
 	}
 
-	iter := runner.Run(ctx, msgs)
-
-	scanner := bufio.NewScanner(os.Stdin)
-	scanner.Buffer(make([]byte, 1024), 1024*1024*10) // 10MB
+	iter := runner.Run(ctx, history)
 
 	for {
-		if !scanner.Scan() {
-			break
+		fmt.Println("User>")
+		promptResult, ok := ioChannel.Receive(ctx, input.ContentCh())
+		if !ok {
+			return nil
 		}
+		if promptResult.Error != nil {
+			if errors.Is(promptResult.Error, context.Canceled) || errors.Is(promptResult.Error, context.DeadlineExceeded) {
+				fmt.Fprintln(os.Stderr, "Agent loop stopped by context cancellation.")
+				return nil
+			}
+			return fmt.Errorf("receive user input: %w", promptResult.Error)
+		}
+
+		prompt := strings.TrimSpace(promptResult.Text)
+		if prompt == "" {
+			continue
+		}
+
+		
 
 		iter.Next()
 	}
