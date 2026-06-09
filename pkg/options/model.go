@@ -40,6 +40,9 @@ func (o *ModelOptions) Validate() error {
 	if o.MaxModelContext <= 0 {
 		errs = errors.Join(errs, errors.New("max_model_context must be greater than 0"))
 	}
+	if o.MaxModelContext > 0 && o.MaxOutputTokens > 0 && o.MaxModelContext <= o.MaxOutputTokens {
+		errs = errors.Join(errs, errors.New("max_model_context must be greater than max_output_tokens"))
+	}
 
 	return errs
 }

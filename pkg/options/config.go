@@ -46,7 +46,7 @@ func init() {
 func AddConfigFlag(fs *pflag.FlagSet, basename string) {
 	fs.AddFlag(pflag.Lookup(configFlagName))
 
-	prefix := strings.Replace(strings.ToUpper(basename), "-", "_", -1)
+	prefix := envPrefixForBasename(basename)
 	viper.SetEnvPrefix(prefix)
 	viper.SetEnvKeyReplacer(strings.NewReplacer(".", "_", "-", "_"))
 	configureEnvBinding(prefix)
@@ -57,6 +57,19 @@ func AddConfigFlag(fs *pflag.FlagSet, basename string) {
 			os.Exit(1)
 		}
 	})
+}
+
+// envPrefixForBasename returns the environment variable prefix for a command basename.
+// envPrefixForBasename 返回命令 basename 对应的环境变量前缀。
+func envPrefixForBasename(basename string) string {
+	normalized := strings.Replace(strings.ToUpper(basename), "-", "_", -1)
+	if normalized == "HAPPLADYSAUCECLI" {
+		return normalized
+	}
+	if basename == "HappyLadySauceCLI" {
+		return "HAPPLADYSAUCECLI_AGENT_CLI"
+	}
+	return normalized
 }
 
 // configureEnvBinding wires environment variables into Viper without flattening nested keys.

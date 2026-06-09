@@ -1,8 +1,9 @@
-package channel
+package input
 
 import (
 	"bufio"
 	"context"
+	"fmt"
 	"io"
 	"strings"
 )
@@ -16,23 +17,48 @@ const (
 	continuationSuffix = `\`
 )
 
-// ReadLoop reads messages from reader and sends them to ContentCh until EOF or ctx cancellation.
-// Close ContentCh when the loop exits.
-// ReadLoop 从 reader 读取消息并写入 ContentCh，直到 EOF 或 ctx 取消；退出时关闭 ContentCh。
-//
-// Multiline input is supported in two ways:
-// 多行输入支持两种方式：
-//  1. Trailing "\" on a line continues reading on the next line.
-//     Use "\\" at EOL for a literal backslash (e.g. Windows paths like C:\\).
-//     行尾单个 "\" 表示续行；行尾 "\\" 表示字面量反斜杠（如 C:\\）。
-//     Mid-line "\n" is two literal characters, not an escape sequence.
-//     行内的 "\n" 是两个普通字符，不会变成换行。
-//  2. A line containing only """ starts a block that ends on the next """ line.
-//     单独一行的 """ 开启块模式，直到遇到下一个 """ 行结束。
-//     "/" has no special meaning and is passed through unchanged.
-//     "/" 无特殊含义，原样保留。
-func (i *ContentChannel) readLoop(ctx context.Context, reader io.Reader) {
-	defer close(i.contentCh)
+// PromptResult contains one complete user prompt or a read error.
+// PromptResult 包含一条完整用户输入或读取错误。
+type PromptResult struct {
+	Text  string
+	Error error
+}
+
+// PromptReader reads complete prompts from an io.Reader.
+// PromptReader 从 io.Reader 读取完整 prompt。
+type PromptReader struct {
+	results chan PromptResult
+}
+
+// NewPromptReader creates a PromptReader and starts its single producer goroutine.
+// NewPromptReader 创建 PromptReader，并启动唯一的 producer goroutine。
+func NewPromptReader(ctx context.Context, reader io.Reader) *PromptReader {
+	promptReader := &PromptReader{
+		results: make(chan PromptResult),
+	}
+	go promptReader.readLoop(ctx, reader)
+	return promptReader
+}
+
+// Receive waits for the next complete prompt or context cancellation.
+// Receive 等待下一条完整 prompt 或上下文取消。
+func (r *PromptReader) Receive(ctx context.Context) (PromptResult, bool) {
+	select {
+	case result, ok := <-r.results:
+		return result, ok
+	case <-ctx.Done():
+		return PromptResult{Error: fmt.Errorf("input cancelled: %w", ctx.Err())}, true
+	}
+}
+
+// readLoop reads prompts until EOF, scanner error, or context cancellation.
+// The results channel is closed exactly once by this producer.
+// Standard stdin line mode cannot reliably distinguish Enter from Shift+Enter;
+// explicit multiline input is handled by "\" continuation or """ blocks.
+// readLoop 读取 prompt，直到 EOF、scanner 错误或上下文取消；结果通道仅由该 producer 关闭一次。
+// 标准 stdin 行模式无法可靠区分 Enter 与 Shift+Enter；显式多行输入通过 "\" 续行或 """ 块处理。
+func (r *PromptReader) readLoop(ctx context.Context, reader io.Reader) {
+	defer close(r.results)
 
 	scanner := bufio.NewScanner(reader)
 	scanner.Buffer(make([]byte, 1024), 1024*1024*10) // 10MB
@@ -44,25 +70,21 @@ func (i *ContentChannel) readLoop(ctx context.Context, reader io.Reader) {
 
 		text, ok, err := readMessage(scanner)
 		if err != nil {
-			i.trySend(ctx, contentResult{Error: err})
+			r.trySend(ctx, PromptResult{Error: err})
 			return
 		}
 		if !ok {
 			return
 		}
-		if text == "" {
-			continue
-		}
-
-		if !i.trySend(ctx, contentResult{Text: text}) {
+		if !r.trySend(ctx, PromptResult{Text: text}) {
 			return
 		}
 	}
 }
 
-func (i *ContentChannel) trySend(ctx context.Context, result contentResult) bool {
+func (r *PromptReader) trySend(ctx context.Context, result PromptResult) bool {
 	select {
-	case i.contentCh <- result:
+	case r.results <- result:
 		return true
 	case <-ctx.Done():
 		return false
