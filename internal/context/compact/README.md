@@ -1,0 +1,280 @@
+# compact 包
+
+Hermes 风格的语义上下文压缩：当 prompt token 接近模型窗口上限时，将对话历史切分为 **head / middle / tail**，对 middle 段调用辅助模型生成结构化摘要，再组装为 `[head] + [summary] + [tail]` 供后续模型调用使用。
+
+上层集成：`internal/middlewares/content.go` 在每次 `BeforeModelRewriteState` 钩子中调用 `Compactor.CompactIfNeeded()`。
+
+---
+
+## 压缩流程
+
+```mermaid
+flowchart TD
+    A[CompactIfNeeded] --> B{messages 为空?}
+    B -->|是| Z1[原样返回, changed=false]
+    B -->|否| C[estimateTotalTokens]
+    C --> D{total >= triggerTokens?}
+    D -->|否| Z2[原样返回, changed=false]
+    D -->|是| E[selectBoundary]
+    E --> F{boundary.ok?}
+    F -->|否| Z3[返回 ErrUnsafeBoundary]
+    F -->|是| G[generateSummary]
+    G --> H{摘要成功?}
+    H -->|否| Z4[返回 error, 原 messages 不变]
+    H -->|是| I[assembleCompactedMessages]
+    I --> Z5[返回新 messages, changed=true]
+```
+
+### 阶段说明
+
+| 阶段 | 职责 | 关键函数 |
+|------|------|----------|
+| 1. 压力检测 | 估算消息 + 工具 schema token，与触发水位比较 | `estimateTotalTokens`, `triggerTokens`, `safePromptBudget` |
+| 2. 边界切分 | 过滤 system 消息，划分 head/middle/tail，保证 tool 配对完整 | `selectBoundary` 及辅助函数 |
+| 3. 中间段摘要 | 调用主模型生成六段式结构化摘要 | `generateSummary`, `summaryTokenLimit` |
+| 4. 结果组装 | 不修改原消息，拼接 `[head, summary, tail]` | `assembleCompactedMessages` |
+
+### 触发条件
+
+```text
+safePromptBudget = maxContextTokens - maxOutputTokens
+triggerTokens    = safePromptBudget × 80%
+```
+
+当 `estimateTotalTokens(messages, tools) >= triggerTokens` 时进入压缩流程。
+
+### 默认边界参数
+
+| 常量 | 值 | 含义 |
+|------|-----|------|
+| `defaultHeadMessages` | 2 | 过滤 system 后保留的头部消息数 |
+| `defaultTailMessages` | 4 | 尾部至少保留的最近消息数 |
+| `compactionTriggerPercent` | 80 | 触发压缩的 prompt 预算比例 |
+| `defaultSummaryTokens` | 2048 | 摘要输出 token 上限（大模型场景） |
+| `minimumSummaryTokens` | 256 | 摘要输出 token 下限（小 max output 场景） |
+
+摘要输出上限由 `summaryTokenLimit()` 动态计算：`maxOutputTokens / 4`，并 clamp 到 `[256, 2048]`。
+
+---
+
+## 文件职责
+
+| 文件 | 内容 |
+|------|------|
+| `compact.go` | `Compactor` 类型、入口 `CompactIfNeeded`、token 估算与摘要生成 |
+| `boundary.go` | head/middle/tail 切分及 tool call/result 配对保护 |
+| `assemble.go` | 压缩结果消息列表组装 |
+| `compact_test.go` | 单元测试 |
+
+---
+
+## 函数调用关系
+
+### 总览（以 `CompactIfNeeded` 为根）
+
+```text
+NewCompactor(cfg)
+  └── common.NewTokenEstimator(modelName)
+
+CompactIfNeeded(ctx, messages, tools)
+  ├── estimateTotalTokens(messages, tools)
+  │     ├── TokenEstimator.CountMessages(messages)
+  │     └── TokenEstimator.CountTools(tools)
+  ├── triggerTokens()
+  │     └── safePromptBudget()
+  ├── selectBoundary(messages)                    [boundary.go]
+  │     ├── withoutSystemMessages(messages)
+  │     ├── adjustHeadEndForToolPairs(...)
+  │     │     ├── toolCallIDs(...)
+  │     │     └── findToolResult(...)
+  │     ├── adjustTailStartForToolPairs(...)
+  │     │     └── findAssistantToolCall(...)
+  │     ├── cloneMessages(...) × 3
+  │     └── hasCompleteToolPairs(head/tail)
+  ├── generateSummary(ctx, middle, middleTokens)
+  │     ├── summaryTokenLimit()
+  │     ├── prompts.ContextCompactionSystemPrompt
+  │     ├── prompts.ContextCompactionUserPrompt(...)
+  │     └── model.Generate(...)
+  └── assembleCompactedMessages(head, summary, tail)  [assemble.go]
+```
+
+### 调用关系图
+
+```mermaid
+flowchart LR
+    subgraph compact.go
+        NC[NewCompactor]
+        CIN[CompactIfNeeded]
+        ETT[estimateTotalTokens]
+        TT[triggerTokens]
+        SPB[safePromptBudget]
+        STL[summaryTokenLimit]
+        GS[generateSummary]
+    end
+
+    subgraph boundary.go
+        SB[selectBoundary]
+        WSM[withoutSystemMessages]
+        AHE[adjustHeadEndForToolPairs]
+        ATS[adjustTailStartForToolPairs]
+        CM[cloneMessages]
+        HCTP[hasCompleteToolPairs]
+        TCID[toolCallIDs]
+        FTR[findToolResult]
+        FATC[findAssistantToolCall]
+    end
+
+    subgraph assemble.go
+        ACM[assembleCompactedMessages]
+    end
+
+    subgraph external
+        TE[common.TokenEstimator]
+        PR[prompts.*]
+        MD[model.Generate]
+    end
+
+    NC --> TE
+    CIN --> ETT --> TE
+    CIN --> TT --> SPB
+    CIN --> SB
+    CIN --> GS --> STL
+    GS --> PR
+    GS --> MD
+    CIN --> ACM
+
+    SB --> WSM
+    SB --> AHE --> TCID
+    AHE --> FTR
+    SB --> ATS --> FATC
+    SB --> CM
+    SB --> HCTP
+```
+
+---
+
+## 各函数说明
+
+### compact.go
+
+| 函数 | 可见性 | 说明 |
+|------|--------|------|
+| `NewCompactor` | 导出 | 校验配置，创建 `Compactor` 并初始化 `TokenEstimator` |
+| `CompactIfNeeded` | 导出 | **主入口**：检测压力 → 切分 → 摘要 → 组装 |
+| `estimateTotalTokens` | 私有 | 消息 token + 工具 schema token |
+| `triggerTokens` | 私有 | 返回 80% 安全预算水位线 |
+| `safePromptBudget` | 私有 | `maxContextTokens - maxOutputTokens` |
+| `summaryTokenLimit` | 私有 | 摘要模型的 `MaxTokens` 上限 |
+| `generateSummary` | 私有 | 构造压缩 prompt，调用模型，返回带前缀的 user 摘要消息 |
+
+### boundary.go
+
+| 函数 | 可见性 | 说明 |
+|------|--------|------|
+| `selectBoundary` | 包内 | 选择 head/middle/tail 切分点；失败时 `ok=false` |
+| `withoutSystemMessages` | 包内 | 移除 system 消息（Eino 通过 Instruction 单独注入） |
+| `adjustHeadEndForToolPairs` | 包内 | 若 head 含 tool_call，向前扩展 headEnd 以包含对应 tool_result |
+| `adjustTailStartForToolPairs` | 包内 | 若 tail 含 tool_result，向后扩展 tailStart 以包含对应 assistant tool_call |
+| `hasCompleteToolPairs` | 包内 | 校验 segment 内 tool_call 与 tool_result 一一配对 |
+| `cloneMessages` | 包内 | 浅拷贝消息，复制 `ToolCalls` 与 `Extra`，避免污染原历史 |
+| `toolCallIDs` | 私有 | 收集 assistant 消息中的 tool call ID |
+| `findToolResult` | 私有 | 在指定范围内查找 tool result 索引 |
+| `findAssistantToolCall` | 私有 | 向前查找拥有指定 call ID 的 assistant 消息 |
+
+### assemble.go
+
+| 函数 | 可见性 | 说明 |
+|------|--------|------|
+| `assembleCompactedMessages` | 包内 | 按顺序拼接 head、summary（可选）、tail，返回新切片 |
+
+---
+
+## 边界切分算法（selectBoundary）
+
+```text
+messages (已过滤 system)
+├── head   : messages[0 : headEnd)           默认 2 条
+├── middle : messages[headEnd : tailStart)   待摘要
+└── tail   : messages[tailStart : ]          默认 4 条
+```
+
+处理顺序：
+
+1. **过滤 system** — `withoutSystemMessages`
+2. **长度校验** — 至少 `head + tail + 1` 条 middle 才允许压缩
+3. **初始切点** — `headEnd=2`, `tailStart=len-4`
+4. **head 扩展** — `adjustHeadEndForToolPairs`：head 内未闭合的 tool_call 需把对应 result 纳入 head
+5. **tail 收缩** — `adjustTailStartForToolPairs`：tail 内 tool_result 需把对应 assistant 纳入 tail
+6. **克隆与校验** — `cloneMessages` 三段，`hasCompleteToolPairs` 验证 head/tail 配对完整
+
+任一环节失败 → 返回 `compactionBoundary{ok: false}`，上层收到 `ErrUnsafeBoundary`。
+
+---
+
+## 摘要生成（generateSummary）
+
+输入为 middle 段消息，构造两条 prompt 消息：
+
+1. **System** — `prompts.ContextCompactionSystemPrompt`（六段式摘要指令）
+2. **User** — `prompts.ContextCompactionUserPrompt(...)`（含 token 估算、目标长度、middle 转写文本）
+
+模型响应校验：
+
+- 响应非空
+- 无 tool calls
+- content 非空
+
+输出为 **user 角色**消息，前缀为 `prompts.ContextCompactionSummaryPrefix`，以便后续压缩轮次不会被当作 system 消息过滤掉。
+
+建议摘要结构：
+
+```markdown
+## Goal
+## Constraints
+## Progress
+## Decisions
+## Relevant Files
+## Next Steps
+```
+
+---
+
+## 返回值与错误语义
+
+```go
+func (c *Compactor) CompactIfNeeded(
+    ctx context.Context,
+    messages []*schema.Message,
+    tools []*schema.ToolInfo,
+) (next []*schema.Message, changed bool, err error)
+```
+
+| 场景 | `next` | `changed` | `err` |
+|------|--------|-----------|-------|
+| 未达触发水位 | 原 messages | `false` | `nil` |
+| 压缩成功 | `[head, summary, tail]` | `true` | `nil` |
+| 边界不安全 | 原 messages | `false` | `ErrUnsafeBoundary` |
+| 摘要失败 | 原 messages | `false` | 非 nil error |
+| token 估算失败 | 原 messages | `false` | 非 nil error |
+
+Middleware 层（`content.go`）在 `err != nil` 时记录 warning 并透传原 state，不中断 agent 运行。
+
+---
+
+## 外部依赖
+
+| 包 | 用途 |
+|----|------|
+| `internal/context/common` | `TokenEstimator` — tiktoken 或字符 fallback 估算 |
+| `internal/prompts` | 压缩 system/user prompt 与摘要前缀 |
+| `github.com/cloudwego/eino/components/model` | 调用 `Generate` 生成摘要 |
+| `github.com/cloudwego/eino/schema` | 消息与工具类型 |
+
+---
+
+## 相关文档
+
+- 设计总览：[`docs/context/compression.md`](../../../docs/context/compression.md)
+- Middleware 集成：[`internal/middlewares/content.go`](../../middlewares/content.go)
+- 创建 Compactor：[`internal/agents/interactive.go`](../../agents/interactive.go)
