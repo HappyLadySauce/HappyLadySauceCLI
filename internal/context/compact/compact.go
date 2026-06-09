@@ -26,11 +26,14 @@ const (
 	// defaultTailMessages 为尾部至少保留的最近消息条数。
 	defaultTailMessages = 4
 	// defaultSummaryTokens caps auxiliary summary output when model max tokens is large.
+	// 4k strikes a balance: enough for a detailed six-section summary of a large middle segment,
+	// but not so large that the summary itself becomes a compaction trigger.
 	// defaultSummaryTokens 在模型 max tokens 较大时限制辅助摘要输出上限。
-	defaultSummaryTokens = 2048
+	// 4k 是一个平衡点：足够容纳大规模 middle 段的六段式详细摘要，又不至于让摘要自身触发压缩。
+	defaultSummaryTokens = 4096
 	// minimumSummaryTokens keeps structured six-section summaries usable when max output is small.
 	// minimumSummaryTokens 在 max output 较小时保证六段式摘要仍有可用输出空间。
-	minimumSummaryTokens = 256
+	minimumSummaryTokens = 512
 )
 
 // ErrUnsafeBoundary indicates that compaction would break message ordering constraints.

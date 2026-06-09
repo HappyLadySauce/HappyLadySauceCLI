@@ -50,10 +50,10 @@ triggerTokens    = safePromptBudget × 80%
 | `defaultHeadMessages` | 2 | 非 system 上下文中保留的头部消息数 |
 | `defaultTailMessages` | 4 | 尾部至少保留的最近消息数 |
 | `compactionTriggerPercent` | 80 | 触发压缩的 prompt 预算比例 |
-| `defaultSummaryTokens` | 2048 | 摘要输出 token 上限（大模型场景） |
-| `minimumSummaryTokens` | 256 | 摘要输出 token 下限（小 max output 场景） |
+| `defaultSummaryTokens` | 4096 | 摘要输出 token 上限（大模型场景） |
+| `minimumSummaryTokens` | 512 | 摘要输出 token 下限（小 max output 场景） |
 
-摘要输出上限由 `summaryTokenLimit()` 动态计算：`maxOutputTokens / 4`，并 clamp 到 `[256, 2048]`。
+摘要输出上限由 `summaryTokenLimit()` 动态计算：`maxOutputTokens / 4`，并 clamp 到 `[512, 4096]`。
 
 ---
 

@@ -278,8 +278,17 @@ func TestTokenEstimatorCountsFallbackContent(t *testing.T) {
 
 func TestSummaryTokenLimitHasMinimumFloor(t *testing.T) {
 	compactor := newTestCompactor(t, &fakeChatModel{response: schema.AssistantMessage("summary", nil)}, 1000, 200)
+	// 200/4 = 50 → clamped to minimumSummaryTokens (512)
 	if got := compactor.summaryTokenLimit(); got != minimumSummaryTokens {
 		t.Fatalf("summaryTokenLimit() = %d, want %d", got, minimumSummaryTokens)
+	}
+}
+
+func TestSummaryTokenLimitHitsDefaultCap(t *testing.T) {
+	compactor := newTestCompactor(t, &fakeChatModel{response: schema.AssistantMessage("summary", nil)}, 128000, 32768)
+	// 32768/4 = 8192 → clamped to defaultSummaryTokens (4096)
+	if got := compactor.summaryTokenLimit(); got != defaultSummaryTokens {
+		t.Fatalf("summaryTokenLimit() = %d, want %d", got, defaultSummaryTokens)
 	}
 }
 
