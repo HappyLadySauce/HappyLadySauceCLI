@@ -16,7 +16,6 @@ const (
 	continuationSuffix = `\`
 )
 
-
 // ReadLoop reads messages from reader and sends them to ContentCh until EOF or ctx cancellation.
 // Close ContentCh when the loop exits.
 // ReadLoop 从 reader 读取消息并写入 ContentCh，直到 EOF 或 ctx 取消；退出时关闭 ContentCh。
@@ -61,7 +60,6 @@ func (i *ContentChannel) readLoop(ctx context.Context, reader io.Reader) {
 	}
 }
 
-
 func (i *ContentChannel) trySend(ctx context.Context, result contentResult) bool {
 	select {
 	case i.contentCh <- result:
@@ -70,7 +68,6 @@ func (i *ContentChannel) trySend(ctx context.Context, result contentResult) bool
 		return false
 	}
 }
-
 
 func readMessage(scanner *bufio.Scanner) (string, bool, error) {
 	if !scanner.Scan() {
@@ -88,7 +85,6 @@ func readMessage(scanner *bufio.Scanner) (string, bool, error) {
 	return readContinuedLines(scanner, line)
 }
 
-
 func readMultilineBlock(scanner *bufio.Scanner) (string, bool, error) {
 	var lines []string
 	for scanner.Scan() {
@@ -102,7 +98,6 @@ func readMultilineBlock(scanner *bufio.Scanner) (string, bool, error) {
 	}
 	return strings.Join(lines, "\n"), true, nil
 }
-
 
 func readContinuedLines(scanner *bufio.Scanner, firstLine string) (string, bool, error) {
 	var builder strings.Builder
@@ -127,7 +122,6 @@ func readContinuedLines(scanner *bufio.Scanner, firstLine string) (string, bool,
 
 	return strings.TrimSpace(builder.String()), true, nil
 }
-
 
 // splitLineContinuation decides whether a physical line continues on the next line.
 // An odd number of trailing "\" (after trimming trailing spaces/tabs) means continuation;

@@ -14,8 +14,8 @@ type ContentChannel struct {
 // contentResult is a content body.
 // contentResult 是一个内容体。
 type contentResult struct {
-	Text string
-	Error  error
+	Text  string
+	Error error
 }
 
 // NewContentChannel creates a new content channel.

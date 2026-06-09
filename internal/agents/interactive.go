@@ -10,6 +10,7 @@ import (
 	"github.com/cloudwego/eino-ext/components/model/openai"
 	"github.com/cloudwego/eino/adk"
 	"github.com/cloudwego/eino/schema"
+	"k8s.io/klog/v2"
 
 	ioChannel "github.com/HappyLadySauce/HappyLadySauceCLI/internal/channel"
 	"github.com/HappyLadySauce/HappyLadySauceCLI/internal/prompts"
@@ -47,21 +48,16 @@ func RunLoop(ctx context.Context, cfg *config.Config) error {
 		Agent:           agent,
 		EnableStreaming: true,
 	})
-	if err != nil {
-		return fmt.Errorf("new runner: %w", err)
-	}
-
-	iter := runner.Run(ctx, history)
 
 	for {
-		fmt.Println("User>")
+		fmt.Print("User>")
 		promptResult, ok := ioChannel.Receive(ctx, input.ContentCh())
 		if !ok {
 			return nil
 		}
 		if promptResult.Error != nil {
 			if errors.Is(promptResult.Error, context.Canceled) || errors.Is(promptResult.Error, context.DeadlineExceeded) {
-				fmt.Fprintln(os.Stderr, "Agent loop stopped by context cancellation.")
+				klog.Info("Agent loop stopped by context cancellation.")
 				return nil
 			}
 			return fmt.Errorf("receive user input: %w", promptResult.Error)
@@ -72,10 +68,53 @@ func RunLoop(ctx context.Context, cfg *config.Config) error {
 			continue
 		}
 
-		
+		history = append(history, schema.UserMessage(prompt))
 
-		iter.Next()
+		iter := runner.Run(ctx, history)
+		exited, err := consumeAgentEvents(iter, &history)
+		if err != nil {
+			return err
+		}
+		if exited {
+			return nil
+		}
 	}
+}
 
-	return nil
+func consumeAgentEvents(iter *adk.AsyncIterator[*adk.AgentEvent], history *[]*schema.Message) (bool, error) {
+	for {
+		event, ok := iter.Next()
+		if !ok {
+			return false, nil
+		}
+		if event.Err != nil {
+			klog.Errorf("agent loop error: %v", event.Err)
+			return false, fmt.Errorf("agent loop error: %w", event.Err)
+		}
+		if event.Action != nil && event.Action.Exit {
+			fmt.Println("Agent 主动退出")
+			return true, nil
+		}
+		if event.Output == nil || event.Output.MessageOutput == nil {
+			continue
+		}
+
+		msg, err := event.Output.MessageOutput.GetMessage()
+		if err != nil {
+			return false, fmt.Errorf("read agent message: %w", err)
+		}
+		if msg == nil {
+			continue
+		}
+
+		if msg.Content != "" {
+			label := event.AgentName
+			if event.Output.MessageOutput.ToolName != "" {
+				label = event.Output.MessageOutput.ToolName
+			}
+			fmt.Printf("[%s] %s\n", label, msg.Content)
+		}
+
+		*history = append(*history, msg)
+	}
 }
