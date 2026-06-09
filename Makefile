@@ -159,18 +159,6 @@ test-cover-html: test-cover
 	$(GO) tool cover -html=coverage.out -o coverage.html
 	@echo wrote coverage.html
 
-## test-agents: Test internal/agents packages
-test-agents:
-	$(GO) test ./internal/agents/...
-
-## test-commands: Test internal/commands packages
-test-commands:
-	$(GO) test ./internal/commands/...
-
-## test-security: Test internal/security packages
-test-security:
-	$(GO) test ./internal/security/...
-
 ## cross: Cross-compile for linux/darwin/windows amd64
 cross:
 ifeq ($(IS_WINDOWS),1)
