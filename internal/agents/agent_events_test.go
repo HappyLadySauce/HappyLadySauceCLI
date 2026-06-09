@@ -30,11 +30,11 @@ func TestConsumeAgentEvents_StreamingAssistant(t *testing.T) {
 	gen.Close()
 
 	var out bytes.Buffer
-	renderer := terminal.NewRenderer(&out, &bytes.Buffer{})
+	stream := terminal.NewRenderer(&out, &bytes.Buffer{})
 
-	msg, exited, err := consumeAgentEvents(iter, renderer)
+	msg, exited, err := ConsumeAgentEvents(iter, stream)
 	if err != nil {
-		t.Fatalf("consumeAgentEvents returned error: %v", err)
+		t.Fatalf("ConsumeAgentEvents returned error: %v", err)
 	}
 	if exited {
 		t.Fatal("expected exited=false")
@@ -66,11 +66,11 @@ func TestConsumeAgentEvents_StreamingAssistantWithReasoning(t *testing.T) {
 	gen.Close()
 
 	var out bytes.Buffer
-	renderer := terminal.NewRenderer(&out, &bytes.Buffer{})
+	stream := terminal.NewRenderer(&out, &bytes.Buffer{})
 
-	msg, exited, err := consumeAgentEvents(iter, renderer)
+	msg, exited, err := ConsumeAgentEvents(iter, stream)
 	if err != nil {
-		t.Fatalf("consumeAgentEvents returned error: %v", err)
+		t.Fatalf("ConsumeAgentEvents returned error: %v", err)
 	}
 	if exited {
 		t.Fatal("expected exited=false")
@@ -97,11 +97,11 @@ func TestConsumeAgentEvents_NonStreamingAssistant(t *testing.T) {
 	gen.Close()
 
 	var out bytes.Buffer
-	renderer := terminal.NewRenderer(&out, &bytes.Buffer{})
+	stream := terminal.NewRenderer(&out, &bytes.Buffer{})
 
-	msg, exited, err := consumeAgentEvents(iter, renderer)
+	msg, exited, err := ConsumeAgentEvents(iter, stream)
 	if err != nil {
-		t.Fatalf("consumeAgentEvents returned error: %v", err)
+		t.Fatalf("ConsumeAgentEvents returned error: %v", err)
 	}
 	if exited {
 		t.Fatal("expected exited=false")
@@ -128,11 +128,11 @@ func TestConsumeAgentEvents_ToolMessageDoesNotBecomeAssistantHistory(t *testing.
 	gen.Close()
 
 	var out bytes.Buffer
-	renderer := terminal.NewRenderer(&out, &bytes.Buffer{})
+	stream := terminal.NewRenderer(&out, &bytes.Buffer{})
 
-	msg, exited, err := consumeAgentEvents(iter, renderer)
+	msg, exited, err := ConsumeAgentEvents(iter, stream)
 	if err != nil {
-		t.Fatalf("consumeAgentEvents returned error: %v", err)
+		t.Fatalf("ConsumeAgentEvents returned error: %v", err)
 	}
 	if exited {
 		t.Fatal("expected exited=false")
@@ -151,9 +151,9 @@ func TestConsumeAgentEvents_Error(t *testing.T) {
 	gen.Close()
 
 	var errOut bytes.Buffer
-	renderer := terminal.NewRenderer(&bytes.Buffer{}, &errOut)
+	stream := terminal.NewRenderer(&bytes.Buffer{}, &errOut)
 
-	msg, exited, err := consumeAgentEvents(iter, renderer)
+	msg, exited, err := ConsumeAgentEvents(iter, stream)
 	if err == nil {
 		t.Fatal("expected error")
 	}
@@ -177,11 +177,11 @@ func TestConsumeAgentEvents_Exit(t *testing.T) {
 	gen.Close()
 
 	var out bytes.Buffer
-	renderer := terminal.NewRenderer(&out, &bytes.Buffer{})
+	stream := terminal.NewRenderer(&out, &bytes.Buffer{})
 
-	msg, exited, err := consumeAgentEvents(iter, renderer)
+	msg, exited, err := ConsumeAgentEvents(iter, stream)
 	if err != nil {
-		t.Fatalf("consumeAgentEvents returned error: %v", err)
+		t.Fatalf("ConsumeAgentEvents returned error: %v", err)
 	}
 	if msg != nil {
 		t.Fatalf("expected no assistant message, got %#v", msg)

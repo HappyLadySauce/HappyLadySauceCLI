@@ -169,9 +169,15 @@ func (r *Renderer) agentLabelLocked(name string) {
 // Token renders one streaming content chunk without forcing a newline.
 // Token 渲染一个流式内容片段，不强制换行。
 func (r *Renderer) Token(content string) {
+	_, _ = r.Write([]byte(content))
+}
+
+// Write writes raw stream bytes to the renderer output.
+// Write 将原始流字节写入 renderer 输出。
+func (r *Renderer) Write(p []byte) (int, error) {
 	r.mu.Lock()
 	defer r.mu.Unlock()
-	_, _ = fmt.Fprint(r.out, content)
+	return r.out.Write(p)
 }
 
 // ToolMessage renders a completed tool message.
@@ -184,6 +190,33 @@ func (r *Renderer) ToolMessage(toolName, content string) {
 	}
 	label := fmt.Sprintf("%s> ", toolName)
 	_, _ = fmt.Fprintf(r.out, "%s%s\n", r.colorize(colorTool, label), content)
+}
+
+// EmitAgentEvent handles a structured agent stream event.
+// kind uses the string constants defined by internal/agents.AgentStreamEvent*.
+// The method intentionally accepts strings instead of importing internal/agents
+// so terminal stays a pure output adapter and avoids a package import cycle.
+// EmitAgentEvent 处理结构化 agent 流事件；kind 使用 internal/agents.AgentStreamEvent* 字符串常量。
+// 该方法故意使用字符串而不是导入 internal/agents，避免 terminal 与 agents 形成循环依赖。
+func (r *Renderer) EmitAgentEvent(kind string, agentName string, toolName string, content string, err error) {
+	switch kind {
+	case "thinking_started":
+		r.StartThinkingAnimation(agentName)
+	case "thinking_stopped":
+		r.StopThinkingAnimation()
+	case "thinking_content_started":
+		r.ThinkingLabel(agentName)
+	case "answer_content_started":
+		r.AgentLabel(agentName)
+	case "message_finished":
+		r.FinishMessage()
+	case "tool_message":
+		r.ToolMessage(toolName, content)
+	case "error":
+		r.Error(err)
+	case "exit":
+		r.Exit()
+	}
 }
 
 // Error renders an error message to stderr.
