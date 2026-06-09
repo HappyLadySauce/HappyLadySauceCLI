@@ -112,6 +112,36 @@ func TestCompactIfNeededSummarizesMiddleMessages(t *testing.T) {
 	}
 }
 
+func TestCompactIfNeededCountsInstructionPressure(t *testing.T) {
+	model := &fakeChatModel{response: schema.AssistantMessage("## Goal\nInstruction summary", nil)}
+	compactor := newTestCompactorWithInstruction(t, model, 1000, 100, strings.Repeat("system policy ", 600))
+	messages := []*schema.Message{
+		schema.UserMessage("head user"),
+		schema.AssistantMessage("head assistant", nil),
+		schema.UserMessage("middle user"),
+		schema.AssistantMessage("middle assistant", nil),
+		schema.UserMessage("latest user"),
+		schema.AssistantMessage("latest assistant", nil),
+		schema.UserMessage("final user"),
+	}
+
+	got, changed, err := compactor.CompactIfNeeded(stdcontext.Background(), messages, nil)
+	if err != nil {
+		t.Fatalf("CompactIfNeeded() error = %v", err)
+	}
+	if !changed {
+		t.Fatal("CompactIfNeeded() did not compact despite instruction pressure")
+	}
+	if len(model.input) != 2 || strings.Contains(model.input[1].Content, "system policy") {
+		t.Fatalf("summary input should summarize only middle history, got %#v", model.input)
+	}
+	for _, msg := range got {
+		if msg != nil && msg.Role == schema.System {
+			t.Fatalf("compacted messages should not include instruction as system message: %#v", got)
+		}
+	}
+}
+
 func TestCompactIfNeededDoesNotCutToolPairs(t *testing.T) {
 	model := &fakeChatModel{response: schema.AssistantMessage("## Goal\nTool summary", nil)}
 	compactor := newTestCompactor(t, model, 160, 20)
@@ -253,9 +283,15 @@ func TestSummaryTokenLimitHasMinimumFloor(t *testing.T) {
 
 func newTestCompactor(t *testing.T, chatModel model.BaseChatModel, maxContext, maxOutput int) *Compactor {
 	t.Helper()
+	return newTestCompactorWithInstruction(t, chatModel, maxContext, maxOutput, "")
+}
+
+func newTestCompactorWithInstruction(t *testing.T, chatModel model.BaseChatModel, maxContext, maxOutput int, instruction string) *Compactor {
+	t.Helper()
 	compactor, err := NewCompactor(Config{
 		Model:           chatModel,
 		ModelName:       "unknown-local-model",
+		Instruction:     instruction,
 		MaxModelContext: maxContext,
 		MaxOutputTokens: maxOutput,
 	})

@@ -29,7 +29,8 @@ func RunLoop(ctx context.Context, cfg *config.Config) error {
 		return fmt.Errorf("new chat model: %w", err)
 	}
 
-	handlers, err := newAgentHandlers(chatModel, cfg)
+	instruction := prompts.SystemPrompt
+	handlers, err := newAgentHandlers(chatModel, cfg, instruction)
 	if err != nil {
 		return err
 	}
@@ -43,7 +44,7 @@ func RunLoop(ctx context.Context, cfg *config.Config) error {
 		Model:       chatModel,
 		Name:        "HappyLadySauce",
 		Description: "A Agent for HAPPLADYSAUCECLI",
-		Instruction: prompts.SystemPrompt,
+		Instruction: instruction,
 		ToolsConfig: agentTools,
 		Handlers:    handlers,
 	})
@@ -105,12 +106,13 @@ func newChatModelConfig(cfg *config.Config) *openai.ChatModelConfig {
 	}
 }
 
-// newAgentHandlers builds ChatModelAgent handlers.
-// newAgentHandlers 构建 ChatModelAgent handlers。
-func newAgentHandlers(chatModel model.BaseChatModel, cfg *config.Config) ([]adk.ChatModelAgentMiddleware, error) {
+// newAgentHandlers builds ChatModelAgent handlers for the given agent instruction.
+// newAgentHandlers 基于指定 agent instruction 构建 ChatModelAgent handlers。
+func newAgentHandlers(chatModel model.BaseChatModel, cfg *config.Config, instruction string) ([]adk.ChatModelAgentMiddleware, error) {
 	compactor, err := compact.NewCompactor(compact.Config{
 		Model:           chatModel,
 		ModelName:       cfg.Model.Model,
+		Instruction:     instruction,
 		MaxModelContext: cfg.Model.MaxModelContext,
 		MaxOutputTokens: cfg.Model.MaxOutputTokens,
 	})

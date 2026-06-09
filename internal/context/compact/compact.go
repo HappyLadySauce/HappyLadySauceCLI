@@ -42,6 +42,7 @@ var ErrUnsafeBoundary = errors.New("unsafe context compaction boundary")
 type Config struct {
 	Model           model.BaseChatModel
 	ModelName       string
+	Instruction     string
 	MaxModelContext int
 	MaxOutputTokens int
 }
@@ -49,10 +50,11 @@ type Config struct {
 // Compactor rewrites message history when context pressure is high.
 // Compactor 在上下文压力过高时重写消息历史。
 type Compactor struct {
-	model            model.BaseChatModel
-	estimator        *common.TokenEstimator
-	maxContextTokens int
-	maxOutputTokens  int
+	model             model.BaseChatModel
+	estimator         *common.TokenEstimator
+	instructionTokens int
+	maxContextTokens  int
+	maxOutputTokens   int
 }
 
 // NewCompactor creates a context compactor from model options.
@@ -71,11 +73,13 @@ func NewCompactor(cfg Config) (*Compactor, error) {
 		return nil, errors.New("max model context must be greater than max output tokens")
 	}
 
+	estimator := common.NewTokenEstimator(cfg.ModelName)
 	return &Compactor{
-		model:            cfg.Model,
-		estimator:        common.NewTokenEstimator(cfg.ModelName),
-		maxContextTokens: cfg.MaxModelContext,
-		maxOutputTokens:  cfg.MaxOutputTokens,
+		model:             cfg.Model,
+		estimator:         estimator,
+		instructionTokens: estimator.CountInstruction(cfg.Instruction),
+		maxContextTokens:  cfg.MaxModelContext,
+		maxOutputTokens:   cfg.MaxOutputTokens,
 	}, nil
 }
 
@@ -116,7 +120,7 @@ func (c *Compactor) CompactIfNeeded(ctx stdcontext.Context, messages []*schema.M
 // estimateTotalTokens sums message and tool-schema tokens for compaction decisions.
 // estimateTotalTokens 汇总消息与工具 schema token，用于压缩决策。
 func (c *Compactor) estimateTotalTokens(messages []*schema.Message, tools []*schema.ToolInfo) (int, error) {
-	total := c.estimator.CountMessages(messages)
+	total := c.instructionTokens + c.estimator.CountMessages(messages)
 	toolTokens, err := c.estimator.CountTools(tools)
 	if err != nil {
 		return 0, fmt.Errorf("estimate tool tokens: %w", err)

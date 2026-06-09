@@ -29,7 +29,7 @@ flowchart TD
 
 | 阶段 | 职责 | 关键函数 |
 |------|------|----------|
-| 1. 压力检测 | 估算消息 + 工具 schema token，与触发水位比较 | `estimateTotalTokens`, `triggerTokens`, `safePromptBudget` |
+| 1. 压力检测 | 估算 Instruction + 消息 + 工具 schema token，与触发水位比较 | `estimateTotalTokens`, `triggerTokens`, `safePromptBudget` |
 | 2. 边界切分 | 过滤 system 消息，划分 head/middle/tail，保证 tool 配对完整 | `selectBoundary` 及辅助函数 |
 | 3. 中间段摘要 | 调用主模型生成六段式结构化摘要 | `generateSummary`, `summaryTokenLimit` |
 | 4. 结果组装 | 不修改原消息，拼接 `[head, summary, tail]` | `assembleCompactedMessages` |
@@ -41,7 +41,7 @@ safePromptBudget = maxContextTokens - maxOutputTokens
 triggerTokens    = safePromptBudget × 80%
 ```
 
-当 `estimateTotalTokens(messages, tools) >= triggerTokens` 时进入压缩流程。
+当 `estimateTotalTokens(messages, tools) >= triggerTokens` 时进入压缩流程。`Instruction` 由具体 agent wiring 显式传入 `NewCompactor`，作为静态 prompt 成本计入预算，但不会进入消息切分或压缩结果。
 
 ### 默认边界参数
 
@@ -75,9 +75,11 @@ triggerTokens    = safePromptBudget × 80%
 ```text
 NewCompactor(cfg)
   └── common.NewTokenEstimator(modelName)
+  └── TokenEstimator.CountInstruction(cfg.Instruction)
 
 CompactIfNeeded(ctx, messages, tools)
   ├── estimateTotalTokens(messages, tools)
+  │     ├── instructionTokens
   │     ├── TokenEstimator.CountMessages(messages)
   │     └── TokenEstimator.CountTools(tools)
   ├── triggerTokens()
@@ -160,9 +162,9 @@ flowchart LR
 
 | 函数 | 可见性 | 说明 |
 |------|--------|------|
-| `NewCompactor` | 导出 | 校验配置，创建 `Compactor` 并初始化 `TokenEstimator` |
+| `NewCompactor` | 导出 | 校验配置，创建 `Compactor`，初始化 `TokenEstimator` 并缓存调用方传入的 Instruction token |
 | `CompactIfNeeded` | 导出 | **主入口**：检测压力 → 切分 → 摘要 → 组装 |
-| `estimateTotalTokens` | 私有 | 消息 token + 工具 schema token |
+| `estimateTotalTokens` | 私有 | Instruction token + 消息 token + 工具 schema token |
 | `triggerTokens` | 私有 | 返回 80% 安全预算水位线 |
 | `safePromptBudget` | 私有 | `maxContextTokens - maxOutputTokens` |
 | `summaryTokenLimit` | 私有 | 摘要模型的 `MaxTokens` 上限 |
