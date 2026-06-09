@@ -32,13 +32,13 @@ func TestNewChatModelConfigSetsMaxCompletionTokens(t *testing.T) {
 	}
 }
 
-func TestNewAgentHandlersRegistersContentMiddleware(t *testing.T) {
+func TestNewAgentHandlersRegistersContextMiddlewares(t *testing.T) {
 	handlers, err := newAgentHandlers(&fakeAgentChatModel{}, testConfig())
 	if err != nil {
 		t.Fatalf("newAgentHandlers() error = %v", err)
 	}
-	if len(handlers) != 1 || handlers[0] == nil {
-		t.Fatalf("handlers = %#v, want one handler", handlers)
+	if len(handlers) != 2 || handlers[0] == nil || handlers[1] == nil {
+		t.Fatalf("handlers = %#v, want content and budget handlers", handlers)
 	}
 }
 

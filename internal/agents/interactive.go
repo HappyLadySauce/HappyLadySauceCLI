@@ -13,6 +13,7 @@ import (
 	"github.com/cloudwego/eino/schema"
 	"k8s.io/klog/v2"
 
+	contextcommon "github.com/HappyLadySauce/HappyLadySauceCLI/internal/context/common"
 	"github.com/HappyLadySauce/HappyLadySauceCLI/internal/context/compact"
 	"github.com/HappyLadySauce/HappyLadySauceCLI/internal/input"
 	"github.com/HappyLadySauce/HappyLadySauceCLI/internal/middlewares"
@@ -38,12 +39,13 @@ func RunLoop(ctx context.Context, cfg *config.Config) error {
 	history := []*schema.Message{}
 	promptReader := input.NewPromptReader(ctx, os.Stdin)
 	renderer := terminal.NewRenderer(os.Stdout, os.Stderr)
+	agentInstruction := prompts.SystemPrompt
 
 	agent, err := adk.NewChatModelAgent(ctx, &adk.ChatModelAgentConfig{
 		Model:       chatModel,
 		Name:        "HappyLadySauce",
 		Description: "A Agent for HAPPLADYSAUCECLI",
-		Instruction: prompts.SystemPrompt,
+		Instruction: agentInstruction,
 		ToolsConfig: agentTools,
 		Handlers:    handlers,
 	})
@@ -78,7 +80,9 @@ func RunLoop(ctx context.Context, cfg *config.Config) error {
 		renderer.AfterUserInput()
 		history = append(history, schema.UserMessage(prompt))
 
-		iter := runner.Run(ctx, history)
+		budgetWriter := contextcommon.NewBudgetWriter()
+		runCtx := contextcommon.WithBudgetWriter(ctx, budgetWriter)
+		iter := runner.Run(runCtx, history)
 		assistantMessage, exited, err := ConsumeAgentEvents(iter, renderer)
 		if err != nil {
 			return err
@@ -89,6 +93,7 @@ func RunLoop(ctx context.Context, cfg *config.Config) error {
 		if exited {
 			return nil
 		}
+		renderer.WriteContextStatus(budgetWriter.Read())
 		renderer.FinishTurn()
 	}
 }
@@ -121,5 +126,12 @@ func newAgentHandlers(chatModel model.BaseChatModel, cfg *config.Config) ([]adk.
 	if err != nil {
 		return nil, fmt.Errorf("new content middleware: %w", err)
 	}
-	return []adk.ChatModelAgentMiddleware{contentMiddleware}, nil
+	budgetMiddleware, err := middlewares.NewBudgetMiddleware(
+		contextcommon.NewTokenEstimator(cfg.Model.Model),
+		cfg.Model.MaxModelContext,
+	)
+	if err != nil {
+		return nil, fmt.Errorf("new budget middleware: %w", err)
+	}
+	return []adk.ChatModelAgentMiddleware{contentMiddleware, budgetMiddleware}, nil
 }

@@ -12,3 +12,6 @@
 
 # Build artifacts
 bin/
+
+# Temporary files
+.tmp/
