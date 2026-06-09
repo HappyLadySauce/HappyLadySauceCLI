@@ -1,16 +1,18 @@
-package common
+package budget
 
 import (
 	"errors"
 	"testing"
 
 	"github.com/cloudwego/eino/schema"
+
+	"github.com/HappyLadySauce/HappyLadySauceCLI/internal/context/common/usage"
 )
 
 func TestEstimateBudgetSplitsSystemAndConversationWithoutDoubleCounting(t *testing.T) {
 	t.Parallel()
 
-	estimator := NewTokenEstimator("gpt-4o")
+	estimator := usage.NewTokenEstimator("gpt-4o")
 	messages := []*schema.Message{
 		schema.SystemMessage("system policy"),
 		schema.UserMessage("hello"),
@@ -35,7 +37,7 @@ func TestEstimateBudgetSplitsSystemAndConversationWithoutDoubleCounting(t *testi
 func TestEstimateBudgetUsesFallbackInstructionWhenMessagesHaveNoSystem(t *testing.T) {
 	t.Parallel()
 
-	estimator := NewTokenEstimator("gpt-4o")
+	estimator := usage.NewTokenEstimator("gpt-4o")
 	messages := []*schema.Message{schema.UserMessage("hello")}
 
 	budget, err := EstimateBudget(BudgetInput{
@@ -57,7 +59,7 @@ func TestEstimateBudgetUsesFallbackInstructionWhenMessagesHaveNoSystem(t *testin
 func TestEstimateBudgetAllocatesReplyPrimingToSystemWhenOnlySystemExists(t *testing.T) {
 	t.Parallel()
 
-	estimator := NewTokenEstimator("gpt-4o")
+	estimator := usage.NewTokenEstimator("gpt-4o")
 	message := schema.SystemMessage("system only")
 
 	budget, err := EstimateBudget(BudgetInput{Messages: []*schema.Message{message}}, estimator, 1000)
@@ -65,7 +67,7 @@ func TestEstimateBudgetAllocatesReplyPrimingToSystemWhenOnlySystemExists(t *test
 		t.Fatalf("EstimateBudget() error = %v", err)
 	}
 
-	if got, want := budget.Segments[SegmentSystem], estimator.CountMessage(message)+replyPrimingTokens; got != want {
+	if got, want := budget.Segments[SegmentSystem], estimator.CountMessage(message)+usage.ReplyPrimingTokens; got != want {
 		t.Fatalf("system-only segment = %d, want %d", got, want)
 	}
 	if _, ok := budget.Segments[SegmentConversation]; ok {
@@ -76,7 +78,7 @@ func TestEstimateBudgetAllocatesReplyPrimingToSystemWhenOnlySystemExists(t *test
 func TestEstimateBudgetAllSegmentsAndPercent(t *testing.T) {
 	t.Parallel()
 
-	estimator := NewTokenEstimator("gpt-4o")
+	estimator := usage.NewTokenEstimator("gpt-4o")
 	budget, err := EstimateBudget(BudgetInput{
 		Messages:      []*schema.Message{schema.SystemMessage("system"), schema.UserMessage("hello")},
 		ToolInfos:     []*schema.ToolInfo{{Name: "lookup", Desc: "lookup data"}},
@@ -117,7 +119,7 @@ func TestEstimateBudgetAllSegmentsAndPercent(t *testing.T) {
 func TestEstimateBudgetCountsToolDefinitionsAsStaticSystemContext(t *testing.T) {
 	t.Parallel()
 
-	estimator := NewTokenEstimator("gpt-4o")
+	estimator := usage.NewTokenEstimator("gpt-4o")
 	messages := []*schema.Message{
 		schema.SystemMessage("system"),
 		schema.UserMessage("weather in Beijing"),
@@ -157,7 +159,7 @@ func TestEstimateBudgetCountsToolDefinitionsAsStaticSystemContext(t *testing.T) 
 	wantMessageTokens := countMessageBodies(estimator, systemMessages) +
 		countMessageBodies(estimator, conversationMessages) +
 		countMessageBodies(estimator, toolMessages) +
-		replyPrimingTokens +
+		usage.ReplyPrimingTokens +
 		toolDefinitionTokens
 	gotMessageTokens := budget.Segments[SegmentSystem] + budget.Segments[SegmentConversation] + budget.Segments[SegmentTools]
 	if gotMessageTokens != wantMessageTokens {
@@ -168,7 +170,7 @@ func TestEstimateBudgetCountsToolDefinitionsAsStaticSystemContext(t *testing.T) 
 func TestEstimateBudgetDoesNotShowToolSegmentWithoutToolMessages(t *testing.T) {
 	t.Parallel()
 
-	estimator := NewTokenEstimator("gpt-4o")
+	estimator := usage.NewTokenEstimator("gpt-4o")
 	toolInfos := []*schema.ToolInfo{{Name: "lookup", Desc: "lookup data"}}
 	toolDefinitionTokens, err := estimator.CountTools(toolInfos)
 	if err != nil {
@@ -193,7 +195,7 @@ func TestEstimateBudgetDoesNotShowToolSegmentWithoutToolMessages(t *testing.T) {
 func TestEstimateBudgetOmitsEmptyFutureSegments(t *testing.T) {
 	t.Parallel()
 
-	budget, err := EstimateBudget(BudgetInput{Messages: []*schema.Message{schema.UserMessage("hello")}}, NewTokenEstimator("gpt-4o"), 1000)
+	budget, err := EstimateBudget(BudgetInput{Messages: []*schema.Message{schema.UserMessage("hello")}}, usage.NewTokenEstimator("gpt-4o"), 1000)
 	if err != nil {
 		t.Fatalf("EstimateBudget() error = %v", err)
 	}
@@ -222,7 +224,7 @@ func TestEstimateBudgetReturnsToolCountError(t *testing.T) {
 		Extra: map[string]any{"bad": func() {}},
 	}
 
-	_, err := EstimateBudget(BudgetInput{ToolInfos: []*schema.ToolInfo{badTool}}, NewTokenEstimator("gpt-4o"), 1000)
+	_, err := EstimateBudget(BudgetInput{ToolInfos: []*schema.ToolInfo{badTool}}, usage.NewTokenEstimator("gpt-4o"), 1000)
 	if err == nil {
 		t.Fatal("EstimateBudget() error = nil, want tool marshal error")
 	}

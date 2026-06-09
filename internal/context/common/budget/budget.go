@@ -1,9 +1,11 @@
-package common
+package budget
 
 import (
 	"errors"
 
 	"github.com/cloudwego/eino/schema"
+
+	"github.com/HappyLadySauce/HappyLadySauceCLI/internal/context/common/usage"
 )
 
 // Segment identifies one model-visible context budget bucket.
@@ -57,7 +59,7 @@ type ContextBudget struct {
 
 // EstimateBudget estimates segmented model-visible prompt tokens.
 // EstimateBudget 估算模型可见 prompt 的分段 token。
-func EstimateBudget(input BudgetInput, estimator *TokenEstimator, maxContextTokens int) (*ContextBudget, error) {
+func EstimateBudget(input BudgetInput, estimator *usage.TokenEstimator, maxContextTokens int) (*ContextBudget, error) {
 	if estimator == nil {
 		return nil, errors.New("token estimator is required")
 	}
@@ -73,11 +75,11 @@ func EstimateBudget(input BudgetInput, estimator *TokenEstimator, maxContextToke
 	toolMessageTokens := countMessageBodies(estimator, toolMessages)
 	switch {
 	case len(conversationMessages) > 0:
-		conversationTokens += replyPrimingTokens
+		conversationTokens += usage.ReplyPrimingTokens
 	case len(toolMessages) > 0:
-		toolMessageTokens += replyPrimingTokens
+		toolMessageTokens += usage.ReplyPrimingTokens
 	case systemTokens > 0:
-		systemTokens += replyPrimingTokens
+		systemTokens += usage.ReplyPrimingTokens
 	}
 
 	addSegment(segments, SegmentSystem, systemTokens)
@@ -166,7 +168,7 @@ func isToolInteractionMessage(msg *schema.Message) bool {
 	return msg.Role == schema.Tool || len(msg.ToolCalls) > 0 || msg.ToolCallID != "" || msg.ToolName != ""
 }
 
-func countMessageBodies(estimator *TokenEstimator, messages []*schema.Message) int {
+func countMessageBodies(estimator *usage.TokenEstimator, messages []*schema.Message) int {
 	total := 0
 	for _, msg := range messages {
 		total += estimator.CountMessage(msg)

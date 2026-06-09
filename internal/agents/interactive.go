@@ -9,12 +9,10 @@ import (
 
 	"github.com/cloudwego/eino-ext/components/model/openai"
 	"github.com/cloudwego/eino/adk"
-	"github.com/cloudwego/eino/components/model"
 	"github.com/cloudwego/eino/schema"
 	"k8s.io/klog/v2"
 
-	contextcommon "github.com/HappyLadySauce/HappyLadySauceCLI/internal/context/common"
-	"github.com/HappyLadySauce/HappyLadySauceCLI/internal/context/compact"
+	contextbudget "github.com/HappyLadySauce/HappyLadySauceCLI/internal/context/common/budget"
 	"github.com/HappyLadySauce/HappyLadySauceCLI/internal/input"
 	"github.com/HappyLadySauce/HappyLadySauceCLI/internal/middlewares"
 	"github.com/HappyLadySauce/HappyLadySauceCLI/internal/prompts"
@@ -30,7 +28,12 @@ func RunLoop(ctx context.Context, cfg *config.Config) error {
 		return fmt.Errorf("new chat model: %w", err)
 	}
 
-	handlers, err := newAgentHandlers(chatModel, cfg)
+	handlers, err := middlewares.NewChatModelAgentMiddlewares(middlewares.ChatModelAgentMiddlewareConfig{
+		Model:           chatModel,
+		ModelName:       cfg.Model.Model,
+		MaxModelContext: cfg.Model.MaxModelContext,
+		MaxOutputTokens: cfg.Model.MaxOutputTokens,
+	})
 	if err != nil {
 		return err
 	}
@@ -80,8 +83,8 @@ func RunLoop(ctx context.Context, cfg *config.Config) error {
 		renderer.AfterUserInput()
 		history = append(history, schema.UserMessage(prompt))
 
-		budgetWriter := contextcommon.NewBudgetWriter()
-		runCtx := contextcommon.WithBudgetWriter(ctx, budgetWriter)
+		budgetWriter := contextbudget.NewBudgetWriter()
+		runCtx := contextbudget.WithBudgetWriter(ctx, budgetWriter)
 		iter := runner.Run(runCtx, history)
 		assistantMessage, exited, err := ConsumeAgentEvents(iter, renderer)
 		if err != nil {
@@ -108,30 +111,4 @@ func newChatModelConfig(cfg *config.Config) *openai.ChatModelConfig {
 		APIKey:              cfg.Model.APIKey,
 		MaxCompletionTokens: &maxOutputTokens,
 	}
-}
-
-// newAgentHandlers builds ChatModelAgent handlers.
-// newAgentHandlers 构建 ChatModelAgent handlers。
-func newAgentHandlers(chatModel model.BaseChatModel, cfg *config.Config) ([]adk.ChatModelAgentMiddleware, error) {
-	compactor, err := compact.NewCompactor(compact.Config{
-		Model:           chatModel,
-		ModelName:       cfg.Model.Model,
-		MaxModelContext: cfg.Model.MaxModelContext,
-		MaxOutputTokens: cfg.Model.MaxOutputTokens,
-	})
-	if err != nil {
-		return nil, fmt.Errorf("new context compactor: %w", err)
-	}
-	contentMiddleware, err := middlewares.NewContentMiddleware(compactor)
-	if err != nil {
-		return nil, fmt.Errorf("new content middleware: %w", err)
-	}
-	budgetMiddleware, err := middlewares.NewBudgetMiddleware(
-		contextcommon.NewTokenEstimator(cfg.Model.Model),
-		cfg.Model.MaxModelContext,
-	)
-	if err != nil {
-		return nil, fmt.Errorf("new budget middleware: %w", err)
-	}
-	return []adk.ChatModelAgentMiddleware{contentMiddleware, budgetMiddleware}, nil
 }

@@ -1,4 +1,4 @@
-package middlewares
+package budget
 
 import (
 	"context"
@@ -7,20 +7,21 @@ import (
 	"github.com/cloudwego/eino/adk"
 	"k8s.io/klog/v2"
 
-	contextcommon "github.com/HappyLadySauce/HappyLadySauceCLI/internal/context/common"
+	contextbudget "github.com/HappyLadySauce/HappyLadySauceCLI/internal/context/common/budget"
+	"github.com/HappyLadySauce/HappyLadySauceCLI/internal/context/common/usage"
 )
 
 // budgetMiddleware records model-visible context budget snapshots before model calls.
 // budgetMiddleware 在模型调用前记录模型可见上下文预算快照。
 type budgetMiddleware struct {
 	*adk.BaseChatModelAgentMiddleware
-	estimator        *contextcommon.TokenEstimator
+	estimator        *usage.TokenEstimator
 	maxContextTokens int
 }
 
 // NewBudgetMiddleware creates a read-only context budget middleware.
 // NewBudgetMiddleware 创建只读的上下文预算中间件。
-func NewBudgetMiddleware(estimator *contextcommon.TokenEstimator, maxContextTokens int) (adk.ChatModelAgentMiddleware, error) {
+func NewBudgetMiddleware(estimator *usage.TokenEstimator, maxContextTokens int) (adk.ChatModelAgentMiddleware, error) {
 	if estimator == nil {
 		return nil, errors.New("budget middleware token estimator is required")
 	}
@@ -37,12 +38,12 @@ func NewBudgetMiddleware(estimator *contextcommon.TokenEstimator, maxContextToke
 // BeforeModelRewriteState estimates the current model-visible context budget.
 // BeforeModelRewriteState 估算当前模型可见上下文预算。
 func (m *budgetMiddleware) BeforeModelRewriteState(ctx context.Context, state *adk.ChatModelAgentState, mc *adk.ModelContext) (context.Context, *adk.ChatModelAgentState, error) {
-	writer := contextcommon.BudgetWriterFromContext(ctx)
+	writer := contextbudget.BudgetWriterFromContext(ctx)
 	if writer == nil || state == nil {
 		return ctx, state, nil
 	}
 
-	budget, err := contextcommon.EstimateBudget(contextcommon.BudgetInput{
+	budget, err := contextbudget.EstimateBudget(contextbudget.BudgetInput{
 		Messages:  state.Messages,
 		ToolInfos: state.ToolInfos,
 	}, m.estimator, m.maxContextTokens)

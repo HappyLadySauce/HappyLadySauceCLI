@@ -1,15 +1,35 @@
-package middlewares
+package budget
 
 import (
 	"context"
+	"strings"
 	"testing"
 
 	"github.com/cloudwego/eino/adk"
+	"github.com/cloudwego/eino/components/model"
 	"github.com/cloudwego/eino/schema"
 
-	contextcommon "github.com/HappyLadySauce/HappyLadySauceCLI/internal/context/common"
+	contextbudget "github.com/HappyLadySauce/HappyLadySauceCLI/internal/context/common/budget"
+	"github.com/HappyLadySauce/HappyLadySauceCLI/internal/context/common/usage"
 	"github.com/HappyLadySauce/HappyLadySauceCLI/internal/context/compact"
+	contentmiddleware "github.com/HappyLadySauce/HappyLadySauceCLI/internal/middlewares/content"
 )
+
+type fakeChatModel struct {
+	response *schema.Message
+	err      error
+}
+
+func (m *fakeChatModel) Generate(ctx context.Context, input []*schema.Message, opts ...model.Option) (*schema.Message, error) {
+	if m.err != nil {
+		return nil, m.err
+	}
+	return m.response, nil
+}
+
+func (m *fakeChatModel) Stream(ctx context.Context, input []*schema.Message, opts ...model.Option) (*schema.StreamReader[*schema.Message], error) {
+	return schema.StreamReaderFromArray([]*schema.Message{}), nil
+}
 
 func TestNewBudgetMiddlewareValidation(t *testing.T) {
 	t.Parallel()
@@ -17,7 +37,7 @@ func TestNewBudgetMiddlewareValidation(t *testing.T) {
 	if _, err := NewBudgetMiddleware(nil, 1000); err == nil {
 		t.Fatal("NewBudgetMiddleware(nil) error = nil, want error")
 	}
-	if _, err := NewBudgetMiddleware(contextcommon.NewTokenEstimator("gpt-4o"), 0); err == nil {
+	if _, err := NewBudgetMiddleware(usage.NewTokenEstimator("gpt-4o"), 0); err == nil {
 		t.Fatal("NewBudgetMiddleware(max=0) error = nil, want error")
 	}
 }
@@ -40,8 +60,8 @@ func TestBudgetMiddlewareNoWriterDoesNotModifyState(t *testing.T) {
 func TestBudgetMiddlewareWritesBudget(t *testing.T) {
 	t.Parallel()
 
-	writer := contextcommon.NewBudgetWriter()
-	ctx := contextcommon.WithBudgetWriter(context.Background(), writer)
+	writer := contextbudget.NewBudgetWriter()
+	ctx := contextbudget.WithBudgetWriter(context.Background(), writer)
 	middleware := newTestBudgetMiddleware(t, 1000)
 	state := &adk.ChatModelAgentState{
 		Messages: []*schema.Message{
@@ -62,11 +82,11 @@ func TestBudgetMiddlewareWritesBudget(t *testing.T) {
 	if budget == nil {
 		t.Fatal("budget writer has nil snapshot")
 	}
-	if budget.Segments[contextcommon.SegmentSystem] <= 0 ||
-		budget.Segments[contextcommon.SegmentConversation] <= 0 {
+	if budget.Segments[contextbudget.SegmentSystem] <= 0 ||
+		budget.Segments[contextbudget.SegmentConversation] <= 0 {
 		t.Fatalf("budget segments missing expected values: %#v", budget.Segments)
 	}
-	if _, ok := budget.Segments[contextcommon.SegmentTools]; ok {
+	if _, ok := budget.Segments[contextbudget.SegmentTools]; ok {
 		t.Fatalf("tool interaction segment exists without tool messages: %#v", budget.Segments)
 	}
 }
@@ -74,8 +94,8 @@ func TestBudgetMiddlewareWritesBudget(t *testing.T) {
 func TestBudgetMiddlewareNilAndEmptyState(t *testing.T) {
 	t.Parallel()
 
-	writer := contextcommon.NewBudgetWriter()
-	ctx := contextcommon.WithBudgetWriter(context.Background(), writer)
+	writer := contextbudget.NewBudgetWriter()
+	ctx := contextbudget.WithBudgetWriter(context.Background(), writer)
 	middleware := newTestBudgetMiddleware(t, 1000)
 
 	_, got, err := middleware.BeforeModelRewriteState(ctx, nil, nil)
@@ -102,8 +122,8 @@ func TestBudgetMiddlewareNilAndEmptyState(t *testing.T) {
 func TestBudgetMiddlewareSwallowsEstimateError(t *testing.T) {
 	t.Parallel()
 
-	writer := contextcommon.NewBudgetWriter()
-	ctx := contextcommon.WithBudgetWriter(context.Background(), writer)
+	writer := contextbudget.NewBudgetWriter()
+	ctx := contextbudget.WithBudgetWriter(context.Background(), writer)
 	middleware := newTestBudgetMiddleware(t, 1000)
 	state := &adk.ChatModelAgentState{
 		ToolInfos: []*schema.ToolInfo{{Name: "bad", Extra: map[string]any{"bad": func() {}}}},
@@ -132,13 +152,13 @@ func TestBudgetMiddlewareAfterContentSeesCompactedMessages(t *testing.T) {
 	if err != nil {
 		t.Fatalf("NewCompactor() error = %v", err)
 	}
-	contentMiddleware, err := NewContentMiddleware(compactor)
+	contentMiddleware, err := contentmiddleware.NewContentMiddleware(compactor)
 	if err != nil {
 		t.Fatalf("NewContentMiddleware() error = %v", err)
 	}
 	budgetMiddleware := newTestBudgetMiddleware(t, 180)
-	writer := contextcommon.NewBudgetWriter()
-	ctx := contextcommon.WithBudgetWriter(context.Background(), writer)
+	writer := contextbudget.NewBudgetWriter()
+	ctx := contextbudget.WithBudgetWriter(context.Background(), writer)
 	state := &adk.ChatModelAgentState{Messages: append([]*schema.Message{schema.SystemMessage("system")}, longConversation()...)}
 
 	_, compacted, err := contentMiddleware.BeforeModelRewriteState(ctx, state, nil)
@@ -157,16 +177,16 @@ func TestBudgetMiddlewareAfterContentSeesCompactedMessages(t *testing.T) {
 	if budget == nil {
 		t.Fatal("budget writer has nil snapshot")
 	}
-	estimator := contextcommon.NewTokenEstimator("unknown-local-model")
+	estimator := usage.NewTokenEstimator("unknown-local-model")
 	_, originalConversation := splitMessagesForTest(state.Messages)
-	if budget.Segments[contextcommon.SegmentConversation] >= estimator.CountMessages(originalConversation) {
-		t.Fatalf("budget conversation segment = %d, want less than original conversation tokens", budget.Segments[contextcommon.SegmentConversation])
+	if budget.Segments[contextbudget.SegmentConversation] >= estimator.CountMessages(originalConversation) {
+		t.Fatalf("budget conversation segment = %d, want less than original conversation tokens", budget.Segments[contextbudget.SegmentConversation])
 	}
 }
 
 func newTestBudgetMiddleware(t *testing.T, maxContextTokens int) adk.ChatModelAgentMiddleware {
 	t.Helper()
-	middleware, err := NewBudgetMiddleware(contextcommon.NewTokenEstimator("unknown-local-model"), maxContextTokens)
+	middleware, err := NewBudgetMiddleware(usage.NewTokenEstimator("unknown-local-model"), maxContextTokens)
 	if err != nil {
 		t.Fatalf("NewBudgetMiddleware() error = %v", err)
 	}
@@ -187,4 +207,16 @@ func splitMessagesForTest(messages []*schema.Message) ([]*schema.Message, []*sch
 		conversationMessages = append(conversationMessages, msg)
 	}
 	return systemMessages, conversationMessages
+}
+
+func longConversation() []*schema.Message {
+	return []*schema.Message{
+		schema.UserMessage("head user"),
+		schema.AssistantMessage("head answer", nil),
+		schema.UserMessage(strings.Repeat("middle ", 80)),
+		schema.AssistantMessage(strings.Repeat("middle answer ", 80), nil),
+		schema.UserMessage("latest"),
+		schema.AssistantMessage("answer", nil),
+		schema.UserMessage("final"),
+	}
 }

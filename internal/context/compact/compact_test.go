@@ -9,7 +9,7 @@ import (
 	"github.com/cloudwego/eino/components/model"
 	"github.com/cloudwego/eino/schema"
 
-	"github.com/HappyLadySauce/HappyLadySauceCLI/internal/context/common"
+	"github.com/HappyLadySauce/HappyLadySauceCLI/internal/context/common/usage"
 	"github.com/HappyLadySauce/HappyLadySauceCLI/internal/prompts"
 )
 
@@ -252,7 +252,7 @@ func TestCompactIfNeededReturnsErrorWithoutDroppingMessages(t *testing.T) {
 }
 
 func TestTokenEstimatorCountsFallbackContent(t *testing.T) {
-	estimator := common.NewTokenEstimator("unknown-local-model")
+	estimator := usage.NewTokenEstimator("unknown-local-model")
 	tokens := estimator.CountMessages([]*schema.Message{
 		{
 			Role:             schema.Assistant,
