@@ -19,8 +19,8 @@ const (
 	// compactionTriggerPercent is the prompt budget fraction that starts compaction.
 	// compactionTriggerPercent 为触发压缩的 prompt 预算比例。
 	compactionTriggerPercent = 80
-	// defaultHeadMessages is the non-system head message count kept after system messages are filtered.
-	// defaultHeadMessages 为过滤 system 消息后保留的头部消息数。
+	// defaultHeadMessages is the head message count kept from non-system context.
+	// defaultHeadMessages 为非 system 上下文保留的头部消息数。
 	defaultHeadMessages = 2
 	// defaultTailMessages is the minimum recent messages protected in the tail.
 	// defaultTailMessages 为尾部至少保留的最近消息条数。
@@ -42,7 +42,6 @@ var ErrUnsafeBoundary = errors.New("unsafe context compaction boundary")
 type Config struct {
 	Model           model.BaseChatModel
 	ModelName       string
-	Instruction     string
 	MaxModelContext int
 	MaxOutputTokens int
 }
@@ -50,11 +49,10 @@ type Config struct {
 // Compactor rewrites message history when context pressure is high.
 // Compactor 在上下文压力过高时重写消息历史。
 type Compactor struct {
-	model             model.BaseChatModel
-	estimator         *common.TokenEstimator
-	instructionTokens int
-	maxContextTokens  int
-	maxOutputTokens   int
+	model            model.BaseChatModel
+	estimator        *common.TokenEstimator
+	maxContextTokens int
+	maxOutputTokens  int
 }
 
 // NewCompactor creates a context compactor from model options.
@@ -73,13 +71,11 @@ func NewCompactor(cfg Config) (*Compactor, error) {
 		return nil, errors.New("max model context must be greater than max output tokens")
 	}
 
-	estimator := common.NewTokenEstimator(cfg.ModelName)
 	return &Compactor{
-		model:             cfg.Model,
-		estimator:         estimator,
-		instructionTokens: estimator.CountInstruction(cfg.Instruction),
-		maxContextTokens:  cfg.MaxModelContext,
-		maxOutputTokens:   cfg.MaxOutputTokens,
+		model:            cfg.Model,
+		estimator:        common.NewTokenEstimator(cfg.ModelName),
+		maxContextTokens: cfg.MaxModelContext,
+		maxOutputTokens:  cfg.MaxOutputTokens,
 	}, nil
 }
 
@@ -102,7 +98,8 @@ func (c *Compactor) CompactIfNeeded(ctx stdcontext.Context, messages []*schema.M
 		return messages, false, nil
 	}
 
-	boundary := selectBoundary(messages)
+	systemMessages, contextMessages := splitSystemAndContextMessages(messages)
+	boundary := selectBoundary(contextMessages)
 	if !boundary.ok {
 		return messages, false, ErrUnsafeBoundary
 	}
@@ -113,14 +110,17 @@ func (c *Compactor) CompactIfNeeded(ctx stdcontext.Context, messages []*schema.M
 		return messages, false, err
 	}
 
-	next := assembleCompactedMessages(boundary.head, summary, boundary.tail)
+	next := assembleCompactedMessages(systemMessages, boundary.head, summary, boundary.tail)
 	return next, true, nil
 }
 
 // estimateTotalTokens sums message and tool-schema tokens for compaction decisions.
+// Eino's defaultGenModelInput prepends Instruction as a SystemMessage, so CountMessages
+// inherently accounts for it — no separate instruction tracking is needed.
 // estimateTotalTokens 汇总消息与工具 schema token，用于压缩决策。
+// Eino 的 defaultGenModelInput 会将 Instruction 以 SystemMessage 形式注入，因此 CountMessages 已天然包含该开销，无需单独跟踪。
 func (c *Compactor) estimateTotalTokens(messages []*schema.Message, tools []*schema.ToolInfo) (int, error) {
-	total := c.instructionTokens + c.estimator.CountMessages(messages)
+	total := c.estimator.CountMessages(messages)
 	toolTokens, err := c.estimator.CountTools(tools)
 	if err != nil {
 		return 0, fmt.Errorf("estimate tool tokens: %w", err)

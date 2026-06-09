@@ -92,6 +92,9 @@ func TestBeforeModelRewriteStateCompactsWithCopiedState(t *testing.T) {
 	if got == state {
 		t.Fatal("compacted state should be copied")
 	}
+	if len(got.Messages) == 0 || got.Messages[0].Role != schema.System || got.Messages[0].Content != "system" {
+		t.Fatalf("compacted state should preserve system message first: %#v", got.Messages)
+	}
 	foundSummary := false
 	for _, msg := range got.Messages {
 		if msg != nil && strings.Contains(msg.Content, "## Goal\nsummary") {

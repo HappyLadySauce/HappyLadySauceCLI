@@ -33,7 +33,7 @@ func TestNewChatModelConfigSetsMaxCompletionTokens(t *testing.T) {
 }
 
 func TestNewAgentHandlersRegistersContentMiddleware(t *testing.T) {
-	handlers, err := newAgentHandlers(&fakeAgentChatModel{}, testConfig(), "agent-specific instruction")
+	handlers, err := newAgentHandlers(&fakeAgentChatModel{}, testConfig())
 	if err != nil {
 		t.Fatalf("newAgentHandlers() error = %v", err)
 	}

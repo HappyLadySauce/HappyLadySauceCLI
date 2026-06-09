@@ -61,10 +61,10 @@ Key detail: trailing newlines in streaming reasoning chunks are deferred (`pendi
 
 ### Context Compaction (`internal/context/`)
 
-Hermes-style semantic summarization that triggers when prompt tokens exceed 80% of the safe budget (`maxModelContext - maxOutputTokens`), targeting 60% post-compaction.
+Hermes-style semantic summarization that triggers when prompt tokens exceed 80% of the safe budget (`maxModelContext - maxOutputTokens`). v1 does not enforce a post-compaction target ratio.
 
-- **`compact.go`** — `Compactor.CompactIfNeeded()`: checks token pressure via `TokenEstimator`, calls `selectBoundary()`, generates summary via the auxiliary model, and assembles `[head, summary, tail]`
-- **`boundary.go`** — Splits conversation into head (2 messages) + middle (summarized) + tail (4 messages). Walks `tailStart` backward to avoid breaking tool call/result pairs. System messages are stripped (Eino injects `Instruction` separately).
+- **`compact.go`** — `Compactor.CompactIfNeeded()`: checks token pressure via `TokenEstimator`（Eino's `defaultGenModelInput` already injects Instruction as a SystemMessage, so `CountMessages` naturally accounts for it）, calls `selectBoundary()`, generates summary via the auxiliary model, and assembles `[system, head, summary, tail]`
+- **`boundary.go`** — Splits non-system conversation context into head (2 messages) + middle (summarized) + tail (4 messages). Walks `tailStart` backward to avoid breaking tool call/result pairs. Existing system messages are preserved and prepended after compaction.
 - **`assemble.go`** — Assembles the compacted message list with cloned messages (to avoid mutating originals)
 - **`usage.go`** — `TokenEstimator` using tiktoken-go for known models, character-count fallback for unknown ones
 

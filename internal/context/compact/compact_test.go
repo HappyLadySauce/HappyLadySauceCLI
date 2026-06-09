@@ -82,13 +82,8 @@ func TestCompactIfNeededSummarizesMiddleMessages(t *testing.T) {
 	if model.generateCalls != 1 {
 		t.Fatalf("Generate calls = %d, want 1", model.generateCalls)
 	}
-	if got[0].Role == schema.System || got[0].Content != "first user request" || got[len(got)-1].Content != "final question" {
+	if got[0].Role != schema.System || got[0].Content != "system" || got[1].Content != "first user request" || got[len(got)-1].Content != "final question" {
 		t.Fatalf("unexpected head/tail preservation: %#v", got)
-	}
-	for _, msg := range got {
-		if msg != nil && msg.Role == schema.System {
-			t.Fatalf("compacted messages should not preserve system messages: %#v", got)
-		}
 	}
 
 	var summary *schema.Message
@@ -112,10 +107,11 @@ func TestCompactIfNeededSummarizesMiddleMessages(t *testing.T) {
 	}
 }
 
-func TestCompactIfNeededCountsInstructionPressure(t *testing.T) {
-	model := &fakeChatModel{response: schema.AssistantMessage("## Goal\nInstruction summary", nil)}
-	compactor := newTestCompactorWithInstruction(t, model, 1000, 100, strings.Repeat("system policy ", 600))
+func TestCompactIfNeededCountsSystemMessagePressure(t *testing.T) {
+	model := &fakeChatModel{response: schema.AssistantMessage("## Goal\nSystem message summary", nil)}
+	compactor := newTestCompactor(t, model, 1000, 100)
 	messages := []*schema.Message{
+		schema.SystemMessage(strings.Repeat("system policy ", 600)),
 		schema.UserMessage("head user"),
 		schema.AssistantMessage("head assistant", nil),
 		schema.UserMessage("middle user"),
@@ -130,15 +126,21 @@ func TestCompactIfNeededCountsInstructionPressure(t *testing.T) {
 		t.Fatalf("CompactIfNeeded() error = %v", err)
 	}
 	if !changed {
-		t.Fatal("CompactIfNeeded() did not compact despite instruction pressure")
+		t.Fatal("CompactIfNeeded() did not compact despite system message pressure")
 	}
 	if len(model.input) != 2 || strings.Contains(model.input[1].Content, "system policy") {
 		t.Fatalf("summary input should summarize only middle history, got %#v", model.input)
 	}
+	// system messages are preserved through compaction
+	found := false
 	for _, msg := range got {
 		if msg != nil && msg.Role == schema.System {
-			t.Fatalf("compacted messages should not include instruction as system message: %#v", got)
+			found = true
+			break
 		}
+	}
+	if !found {
+		t.Fatalf("compacted messages should preserve system messages: %#v", got)
 	}
 }
 
@@ -283,15 +285,9 @@ func TestSummaryTokenLimitHasMinimumFloor(t *testing.T) {
 
 func newTestCompactor(t *testing.T, chatModel model.BaseChatModel, maxContext, maxOutput int) *Compactor {
 	t.Helper()
-	return newTestCompactorWithInstruction(t, chatModel, maxContext, maxOutput, "")
-}
-
-func newTestCompactorWithInstruction(t *testing.T, chatModel model.BaseChatModel, maxContext, maxOutput int, instruction string) *Compactor {
-	t.Helper()
 	compactor, err := NewCompactor(Config{
 		Model:           chatModel,
 		ModelName:       "unknown-local-model",
-		Instruction:     instruction,
 		MaxModelContext: maxContext,
 		MaxOutputTokens: maxOutput,
 	})

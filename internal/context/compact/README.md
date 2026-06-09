@@ -29,10 +29,10 @@ flowchart TD
 
 | 阶段 | 职责 | 关键函数 |
 |------|------|----------|
-| 1. 压力检测 | 估算 Instruction + 消息 + 工具 schema token，与触发水位比较 | `estimateTotalTokens`, `triggerTokens`, `safePromptBudget` |
-| 2. 边界切分 | 过滤 system 消息，划分 head/middle/tail，保证 tool 配对完整 | `selectBoundary` 及辅助函数 |
+| 1. 压力检测 | 估算消息 + 工具 schema token（Eino 注入的 Instruction 作为 SystemMessage 自然计入），与触发水位比较 | `estimateTotalTokens`, `triggerTokens`, `safePromptBudget` |
+| 2. 边界切分 | 拆分并保留 system 消息，仅对非 system 上下文划分 head/middle/tail，保证 tool 配对完整 | `splitSystemAndContextMessages`, `selectBoundary` 及辅助函数 |
 | 3. 中间段摘要 | 调用主模型生成六段式结构化摘要 | `generateSummary`, `summaryTokenLimit` |
-| 4. 结果组装 | 不修改原消息，拼接 `[head, summary, tail]` | `assembleCompactedMessages` |
+| 4. 结果组装 | 不修改原消息，拼接 `[system, head, summary, tail]` | `assembleCompactedMessages` |
 
 ### 触发条件
 
@@ -41,13 +41,13 @@ safePromptBudget = maxContextTokens - maxOutputTokens
 triggerTokens    = safePromptBudget × 80%
 ```
 
-当 `estimateTotalTokens(messages, tools) >= triggerTokens` 时进入压缩流程。`Instruction` 由具体 agent wiring 显式传入 `NewCompactor`，作为静态 prompt 成本计入预算，但不会进入消息切分或压缩结果。
+当 `estimateTotalTokens(messages, tools) >= triggerTokens` 时进入压缩流程。Eino 的 `defaultGenModelInput` 会将 Instruction 以 `SystemMessage` 形式注入 `state.Messages` 头部，因此 `CountMessages` 已天然包含 Instruction 的 token 开销，无需在 `Compactor` 中单独跟踪。
 
 ### 默认边界参数
 
 | 常量 | 值 | 含义 |
 |------|-----|------|
-| `defaultHeadMessages` | 2 | 过滤 system 后保留的头部消息数 |
+| `defaultHeadMessages` | 2 | 非 system 上下文中保留的头部消息数 |
 | `defaultTailMessages` | 4 | 尾部至少保留的最近消息数 |
 | `compactionTriggerPercent` | 80 | 触发压缩的 prompt 预算比例 |
 | `defaultSummaryTokens` | 2048 | 摘要输出 token 上限（大模型场景） |
@@ -75,17 +75,15 @@ triggerTokens    = safePromptBudget × 80%
 ```text
 NewCompactor(cfg)
   └── common.NewTokenEstimator(modelName)
-  └── TokenEstimator.CountInstruction(cfg.Instruction)
 
 CompactIfNeeded(ctx, messages, tools)
   ├── estimateTotalTokens(messages, tools)
-  │     ├── instructionTokens
-  │     ├── TokenEstimator.CountMessages(messages)
+  │     ├── TokenEstimator.CountMessages(messages)   # 含 Eino 注入的 SystemMessage(Instruction)
   │     └── TokenEstimator.CountTools(tools)
   ├── triggerTokens()
   │     └── safePromptBudget()
-  ├── selectBoundary(messages)                    [boundary.go]
-  │     ├── withoutSystemMessages(messages)
+  ├── splitSystemAndContextMessages(messages)     [boundary.go]
+  ├── selectBoundary(contextMessages)             [boundary.go]
   │     ├── adjustHeadEndForToolPairs(...)
   │     │     ├── toolCallIDs(...)
   │     │     └── findToolResult(...)
@@ -98,7 +96,7 @@ CompactIfNeeded(ctx, messages, tools)
   │     ├── prompts.ContextCompactionSystemPrompt
   │     ├── prompts.ContextCompactionUserPrompt(...)
   │     └── model.Generate(...)
-  └── assembleCompactedMessages(head, summary, tail)  [assemble.go]
+  └── assembleCompactedMessages(system, head, summary, tail)  [assemble.go]
 ```
 
 ### 调用关系图
@@ -162,9 +160,9 @@ flowchart LR
 
 | 函数 | 可见性 | 说明 |
 |------|--------|------|
-| `NewCompactor` | 导出 | 校验配置，创建 `Compactor`，初始化 `TokenEstimator` 并缓存调用方传入的 Instruction token |
+| `NewCompactor` | 导出 | 校验配置，创建 `Compactor` 并初始化 `TokenEstimator` |
 | `CompactIfNeeded` | 导出 | **主入口**：检测压力 → 切分 → 摘要 → 组装 |
-| `estimateTotalTokens` | 私有 | Instruction token + 消息 token + 工具 schema token |
+| `estimateTotalTokens` | 私有 | 消息 token（含 Eino 注入的 SystemMessage）+ 工具 schema token |
 | `triggerTokens` | 私有 | 返回 80% 安全预算水位线 |
 | `safePromptBudget` | 私有 | `maxContextTokens - maxOutputTokens` |
 | `summaryTokenLimit` | 私有 | 摘要模型的 `MaxTokens` 上限 |
@@ -174,8 +172,9 @@ flowchart LR
 
 | 函数 | 可见性 | 说明 |
 |------|--------|------|
-| `selectBoundary` | 包内 | 选择 head/middle/tail 切分点；失败时 `ok=false` |
-| `withoutSystemMessages` | 包内 | 移除 system 消息（Eino 通过 Instruction 单独注入） |
+| `splitSystemAndContextMessages` | 包内 | 拆分 system messages 与可压缩上下文，确保压缩后能 prepend system |
+| `selectBoundary` | 包内 | 在非 system 上下文中选择 head/middle/tail 切分点；失败时 `ok=false` |
+| `withoutSystemMessages` | 包内 | 保留给包内旧语义的过滤 helper；需要保留 system 时优先使用 `splitSystemAndContextMessages` |
 | `adjustHeadEndForToolPairs` | 包内 | 若 head 含 tool_call，向前扩展 headEnd 以包含对应 tool_result |
 | `adjustTailStartForToolPairs` | 包内 | 若 tail 含 tool_result，向后扩展 tailStart 以包含对应 assistant tool_call |
 | `hasCompleteToolPairs` | 包内 | 校验 segment 内 tool_call 与 tool_result 一一配对 |
@@ -188,14 +187,14 @@ flowchart LR
 
 | 函数 | 可见性 | 说明 |
 |------|--------|------|
-| `assembleCompactedMessages` | 包内 | 按顺序拼接 head、summary（可选）、tail，返回新切片 |
+| `assembleCompactedMessages` | 包内 | 按顺序拼接 system、head、summary（可选）、tail，返回新切片 |
 
 ---
 
 ## 边界切分算法（selectBoundary）
 
 ```text
-messages (已过滤 system)
+messages (非 system context)
 ├── head   : messages[0 : headEnd)           默认 2 条
 ├── middle : messages[headEnd : tailStart)   待摘要
 └── tail   : messages[tailStart : ]          默认 4 条
@@ -203,7 +202,7 @@ messages (已过滤 system)
 
 处理顺序：
 
-1. **过滤 system** — `withoutSystemMessages`
+1. **拆分 system/context** — `splitSystemAndContextMessages`；system messages 会 prepend 回压缩结果，不进入摘要
 2. **长度校验** — 至少 `head + tail + 1` 条 middle 才允许压缩
 3. **初始切点** — `headEnd=2`, `tailStart=len-4`
 4. **head 扩展** — `adjustHeadEndForToolPairs`：head 内未闭合的 tool_call 需把对应 result 纳入 head

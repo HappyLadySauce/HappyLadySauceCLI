@@ -8,7 +8,7 @@
 - 兼容 OpenAI 兼容网关的 **厂商/路径前缀模型名**（如 `openrouter/anthropic/claude-3.5-sonnet`）
 - 对未知模型 **保守回退到 cl100k**，仅在 tiktoken 完全不可用时才用字符粗估
 
-主要消费者：[`internal/context/compact`](../compact/README.md) 在 `CompactIfNeeded` 中调用 `CountInstruction` / `CountMessages` / `CountTools` 决定是否触发压缩。
+主要消费者：[`internal/context/compact`](../compact/README.md) 在 `CompactIfNeeded` 中调用 `CountMessages` / `CountTools` 决定是否触发压缩。Eino 的 `defaultGenModelInput` 会将 Instruction 以 `SystemMessage` 注入消息列表，因此 `CountMessages` 已天然包含 Instruction 开销，compact 包无需单独跟踪。
 
 ---
 
@@ -232,27 +232,26 @@ tokensPerName    = 1    # 仅当 msg.Name 非空时额外加 1 + CountText(name)
 ```text
 compact.NewCompactor(cfg)
   └── common.NewTokenEstimator(cfg.ModelName)
-  └── estimator.CountInstruction(cfg.Instruction)
 
 compact.Compactor.CompactIfNeeded(...)
   └── estimateTotalTokens(messages, tools)
-        ├── instructionTokens                   # Eino 每轮注入的 Instruction 静态成本
-        ├── estimator.CountMessages(messages)   # 是否达到 80% 触发水位
+        ├── estimator.CountMessages(messages)   # 含 Eino 注入的 SystemMessage(Instruction)
         └── estimator.CountTools(tools)         # 工具 schema 计入 prompt
   └── estimator.CountMessages(boundary.middle)  # 传给摘要 prompt 的估算 token
 ```
 
-压缩触发比较的是 **Instruction + 消息 + 工具 schema** 的本地估算值，与 provider 实际 billing 可能略有偏差；估算仅用于内部决策，不对外承诺精确计数。
+压缩触发比较的是 **消息（含 Instruction）+ 工具 schema** 的本地估算值，与 provider 实际 billing 可能略有偏差；估算仅用于内部决策，不对外承诺精确计数。
 
 ---
 
 ## 设计约束与注意事项
 
 1. **本地估算，非 billing 真相** — 不同厂商 tokenizer 与 OpenAI BPE 不完全一致；cl100k 对 Claude/Gemini 等是保守近似。
-2. **Instruction 只计预算，不进 history** — `compact` 在初始化时计入 `cfg.Instruction` 的静态 token；压缩边界仍只处理 `state.Messages`，避免重复保留 Eino 每轮自动注入的 system instruction。
-3. **工具 schema 按 JSON 全长计数** — 与 provider 侧 tool definition 格式可能不同，但方向一致（schema 越大，prompt 越满）。
-4. **family 匹配用 token 边界** — 避免 `biology-o10-research` 之类误匹配 `o1` 系列（见 `TestInferEncodingDoesNotUseUnsafeSubstringMatching`）。
-5. **CJK 文本** — 未知模型走 cl100k BPE 时，中文 token 数通常 **大于** 字符 fallback，压缩会更早触发，属保守行为。
+2. **Instruction 天然计入消息列表** — Eino 的 `defaultGenModelInput` 将 Instruction 注入为 `SystemMessage`；`CountMessages` 直接计完整 `state.Messages`，compact 无需单独跟踪 Instruction。
+3. **System 保留但不参与摘要** — 压缩边界只处理非 system 上下文；压缩输出会把原 system messages prepend 回去，保证同一个 ReAct/tool loop 内后续模型调用仍看到 Instruction。
+4. **工具 schema 按 JSON 全长计数** — 与 provider 侧 tool definition 格式可能不同，但方向一致（schema 越大，prompt 越满）。
+5. **family 匹配用 token 边界** — 避免 `biology-o10-research` 之类误匹配 `o1` 系列（见 `TestInferEncodingDoesNotUseUnsafeSubstringMatching`）。
+6. **CJK 文本** — 未知模型走 cl100k BPE 时，中文 token 数通常 **大于** 字符 fallback，压缩会更早触发，属保守行为。
 
 ---
 

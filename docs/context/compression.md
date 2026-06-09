@@ -116,7 +116,7 @@ estimated_prompt_tokens >= internal_compaction_watermark(safe_prompt_budget)
 v1 算法固定为三步，但参数内部化：
 
 1. **Select Boundary**  
-   过滤历史中的 system message，保留必要 head 和最新 tail，对中间段进行摘要。ChatModelAgent 每次调用会通过 `Instruction` 注入系统信息，压缩后的历史不重复携带 system message。边界不得切断 assistant tool call 与 tool result 的配对关系。
+   拆分已注入的 system message 与非 system 对话上下文，保留必要 head 和最新 tail，对中间段进行摘要。ChatModelAgent 在 `genModelInput` 阶段注入 `Instruction`，因此压缩触发预算需要计入 system message；同一次 ReAct/tool loop 内压缩后的 `state.Messages` 仍需 prepend 原 system message，避免后续模型调用丢失 Instruction。边界不得切断 assistant tool call 与 tool result 的配对关系。
 
 2. **Summarize Middle**  
    复用主模型生成结构化摘要。摘要失败返回 error，不修改原始 messages。

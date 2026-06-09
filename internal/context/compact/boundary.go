@@ -12,9 +12,10 @@ type compactionBoundary struct {
 }
 
 // selectBoundary chooses a safe head/middle/tail split without breaking tool call pairs.
+// The caller should pass context messages without system messages.
 // selectBoundary 选择安全的头/中/尾切分点，避免拆开 tool_call 与 tool_result。
+// 调用方应传入不含 system 消息的上下文消息。
 func selectBoundary(messages []*schema.Message) compactionBoundary {
-	messages = withoutSystemMessages(messages)
 	if len(messages) < defaultHeadMessages+defaultTailMessages+1 {
 		return compactionBoundary{}
 	}
@@ -64,6 +65,24 @@ func selectBoundary(messages []*schema.Message) compactionBoundary {
 	}
 }
 
+// splitSystemAndContextMessages separates system messages from compactable conversation context.
+// splitSystemAndContextMessages 将 system 消息与可压缩的对话上下文拆开。
+func splitSystemAndContextMessages(messages []*schema.Message) ([]*schema.Message, []*schema.Message) {
+	systemMessages := make([]*schema.Message, 0, 1)
+	contextMessages := make([]*schema.Message, 0, len(messages))
+	for _, msg := range messages {
+		if msg == nil {
+			continue
+		}
+		if msg.Role == schema.System {
+			systemMessages = append(systemMessages, msg)
+			continue
+		}
+		contextMessages = append(contextMessages, msg)
+	}
+	return cloneMessages(systemMessages), contextMessages
+}
+
 // adjustHeadEndForToolPairs extends headEnd to include tool results for tool calls kept in head.
 // adjustHeadEndForToolPairs 扩展 headEnd，以包含头部 tool_call 对应的 tool_result。
 func adjustHeadEndForToolPairs(messages []*schema.Message, headEnd, tailStart int) int {
@@ -94,21 +113,6 @@ func adjustHeadEndForToolPairs(messages []*schema.Message, headEnd, tailStart in
 		}
 	}
 	return headEnd
-}
-
-// withoutSystemMessages removes system messages from compaction candidates.
-// ChatModelAgent injects Instruction separately, so compacted history should not duplicate it.
-// withoutSystemMessages 从压缩候选中移除 system 消息。
-// ChatModelAgent 会单独注入 Instruction，因此压缩后的历史不应重复携带 system 信息。
-func withoutSystemMessages(messages []*schema.Message) []*schema.Message {
-	filtered := make([]*schema.Message, 0, len(messages))
-	for _, msg := range messages {
-		if msg == nil || msg.Role == schema.System {
-			continue
-		}
-		filtered = append(filtered, msg)
-	}
-	return filtered
 }
 
 // adjustTailStartForToolPairs walks tailStart backward to include parent assistant tool calls.
