@@ -9,10 +9,13 @@ import (
 
 	"github.com/cloudwego/eino-ext/components/model/openai"
 	"github.com/cloudwego/eino/adk"
+	"github.com/cloudwego/eino/components/model"
 	"github.com/cloudwego/eino/schema"
 	"k8s.io/klog/v2"
 
+	contextx "github.com/HappyLadySauce/HappyLadySauceCLI/internal/context"
 	"github.com/HappyLadySauce/HappyLadySauceCLI/internal/input"
+	"github.com/HappyLadySauce/HappyLadySauceCLI/internal/middlewares"
 	"github.com/HappyLadySauce/HappyLadySauceCLI/internal/prompts"
 	"github.com/HappyLadySauce/HappyLadySauceCLI/internal/terminal"
 	"github.com/HappyLadySauce/HappyLadySauceCLI/internal/tools"
@@ -21,16 +24,17 @@ import (
 
 func RunLoop(ctx context.Context, cfg *config.Config) error {
 
-	chatModel, err := openai.NewChatModel(ctx, &openai.ChatModelConfig{
-		BaseURL: cfg.Model.BaseURL,
-		Model:   cfg.Model.Model,
-		APIKey:  cfg.Model.APIKey,
-	})
+	chatModel, err := openai.NewChatModel(ctx, newChatModelConfig(cfg))
 	if err != nil {
 		return fmt.Errorf("new chat model: %w", err)
 	}
 
-	tools := tools.NewAgentTools()
+	handlers, err := newAgentHandlers(chatModel, cfg)
+	if err != nil {
+		return err
+	}
+
+	agentTools := tools.NewAgentTools()
 	history := []*schema.Message{}
 	promptReader := input.NewPromptReader(ctx, os.Stdin)
 	renderer := terminal.NewRenderer(os.Stdout, os.Stderr)
@@ -40,7 +44,8 @@ func RunLoop(ctx context.Context, cfg *config.Config) error {
 		Name:        "HappyLadySauce",
 		Description: "A Agent for HAPPLADYSAUCECLI",
 		Instruction: prompts.SystemPrompt,
-		ToolsConfig: tools,
+		ToolsConfig: agentTools,
+		Handlers:    handlers,
 	})
 	if err != nil {
 		return fmt.Errorf("new chat model agent: %w", err)
@@ -86,4 +91,35 @@ func RunLoop(ctx context.Context, cfg *config.Config) error {
 		}
 		renderer.FinishTurn()
 	}
+}
+
+// newChatModelConfig builds the OpenAI-compatible chat model configuration.
+// newChatModelConfig 构建 OpenAI-compatible chat model 配置。
+func newChatModelConfig(cfg *config.Config) *openai.ChatModelConfig {
+	maxOutputTokens := cfg.Model.MaxOutputTokens
+	return &openai.ChatModelConfig{
+		BaseURL:             cfg.Model.BaseURL,
+		Model:               cfg.Model.Model,
+		APIKey:              cfg.Model.APIKey,
+		MaxCompletionTokens: &maxOutputTokens,
+	}
+}
+
+// newAgentHandlers builds ChatModelAgent handlers.
+// newAgentHandlers 构建 ChatModelAgent handlers。
+func newAgentHandlers(chatModel model.BaseChatModel, cfg *config.Config) ([]adk.ChatModelAgentMiddleware, error) {
+	compactor, err := contextx.NewCompactor(contextx.Config{
+		Model:           chatModel,
+		ModelName:       cfg.Model.Model,
+		MaxModelContext: cfg.Model.MaxModelContext,
+		MaxOutputTokens: cfg.Model.MaxOutputTokens,
+	})
+	if err != nil {
+		return nil, fmt.Errorf("new context compactor: %w", err)
+	}
+	contentMiddleware, err := middlewares.NewContentMiddleware(compactor)
+	if err != nil {
+		return nil, fmt.Errorf("new content middleware: %w", err)
+	}
+	return []adk.ChatModelAgentMiddleware{contentMiddleware}, nil
 }

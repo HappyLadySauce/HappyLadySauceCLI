@@ -120,13 +120,13 @@ v1 算法固定为四步，但参数内部化：
    清理明显过大的旧 tool output、空消息、不可用 tool pair。只处理可安全删除或替换的低价值内容。
 
 2. **Select Boundary**  
-   保留 system message 和最新 tail，对中间段进行摘要。边界不得切断 assistant tool call 与 tool result 的配对关系。
+   过滤历史中的 system message，保留必要 head 和最新 tail，对中间段进行摘要。ChatModelAgent 每次调用会通过 `Instruction` 注入系统信息，压缩后的历史不重复携带 system message。边界不得切断 assistant tool call 与 tool result 的配对关系。
 
 3. **Summarize Middle**  
    复用主模型生成结构化摘要。摘要失败返回 error，不修改原始 messages。
 
 4. **Assemble Messages**  
-   输出 `[system/head] + [summary message] + [tail]`，并修复剩余 tool pair。
+   输出 `[head] + [summary message] + [tail]`，并修复剩余 tool pair。
 
 摘要消息必须包含安全前缀：
 
