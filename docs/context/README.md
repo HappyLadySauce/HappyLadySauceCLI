@@ -74,8 +74,7 @@ internal/context/
   compact.go           # Compactor
   usage.go             # token/字符估算
   boundary.go          # head/middle/tail
-  summarize.go         # 摘要生成
-  assemble.go          # message 组装与 tool pair 修复
+  assemble.go          # message 组装
 
 internal/middlewares/
   content.go           # Eino middleware adapter
@@ -136,13 +135,10 @@ internal/terminal/
 
 ---
 
-## v1 实施顺序
+## v1 当前状态
 
-1. 修复 `internal/middlewares/content.go` 骨架，使其可编译。
-2. 创建 `internal/context.Compactor` 空实现，未超限时返回原 messages。
-3. 接入 middleware 到 `ChatModelAgentConfig.Handlers`。
-4. 实现 token/字符估算。
-5. 实现边界选择与摘要组装。
-6. 最后接入 LLM 摘要调用。
-
-每一步都要有单元测试，避免一次性实现完整 Hermes 级系统。
+1. `internal/context.Compactor` 已实现内部水位、token 估算、边界选择、摘要生成和消息组装。
+2. `internal/middlewares/content.go` 已通过 `BeforeModelRewriteState` 接入 compactor。
+3. `internal/agents/interactive.go` 已注册 content handler，并将 `MaxOutputTokens` 传入模型输出上限。
+4. 当前压缩只影响单次模型调用的可见 messages，不回写 `RunLoop` 完整 history。
+5. Normalize / Prune、prompt caching、session search、独立摘要模型属于后续迭代。

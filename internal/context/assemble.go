@@ -10,10 +10,10 @@ func assembleCompactedMessages(head []*schema.Message, summary *schema.Message, 
 		total++
 	}
 	messages := make([]*schema.Message, 0, total)
-	messages = append(messages, cloneMessages(head)...)
+	messages = append(messages, head...)
 	if summary != nil {
-		messages = append(messages, cloneMessages([]*schema.Message{summary})...)
+		messages = append(messages, summary)
 	}
-	messages = append(messages, cloneMessages(tail)...)
+	messages = append(messages, tail...)
 	return messages
 }

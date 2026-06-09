@@ -145,6 +145,41 @@ func TestCompactIfNeededDoesNotCutToolPairs(t *testing.T) {
 	}
 }
 
+func TestCompactIfNeededDoesNotLeaveOpenToolCallInHead(t *testing.T) {
+	model := &fakeChatModel{response: schema.AssistantMessage("## Goal\nHead tool summary", nil)}
+	compactor := newTestCompactor(t, model, 160, 20)
+	messages := []*schema.Message{
+		schema.UserMessage("head user"),
+		schema.AssistantMessage("calling", []schema.ToolCall{
+			{
+				ID:   "call_1",
+				Type: "function",
+				Function: schema.FunctionCall{
+					Name:      "lookup",
+					Arguments: `{"q":"x"}`,
+				},
+			},
+		}),
+		schema.ToolMessage("result", "call_1", schema.WithToolName("lookup")),
+		schema.UserMessage(strings.Repeat("middle ", 80)),
+		schema.AssistantMessage(strings.Repeat("middle detail ", 80), nil),
+		schema.AssistantMessage(strings.Repeat("middle answer ", 80), nil),
+		schema.UserMessage("latest"),
+		schema.AssistantMessage("answer", nil),
+	}
+
+	got, changed, err := compactor.CompactIfNeeded(stdcontext.Background(), messages, nil)
+	if err != nil {
+		t.Fatalf("CompactIfNeeded() error = %v", err)
+	}
+	if !changed {
+		t.Fatal("CompactIfNeeded() did not compact")
+	}
+	if !headHasToolPair(got, "call_1") {
+		t.Fatalf("compacted messages left open tool call in head: %#v", got)
+	}
+}
+
 func TestCompactIfNeededReturnsUnchangedWhenToolPairCannotBeCutSafely(t *testing.T) {
 	model := &fakeChatModel{response: schema.AssistantMessage("summary", nil)}
 	compactor := newTestCompactor(t, model, 120, 20)
@@ -160,8 +195,8 @@ func TestCompactIfNeededReturnsUnchangedWhenToolPairCannotBeCutSafely(t *testing
 	}
 
 	got, changed, err := compactor.CompactIfNeeded(stdcontext.Background(), messages, nil)
-	if err != nil {
-		t.Fatalf("CompactIfNeeded() error = %v", err)
+	if !errors.Is(err, ErrUnsafeBoundary) {
+		t.Fatalf("CompactIfNeeded() error = %v, want %v", err, ErrUnsafeBoundary)
 	}
 	if changed || len(got) != len(messages) || model.generateCalls != 0 {
 		t.Fatalf("expected unchanged, changed=%v len=%d calls=%d", changed, len(got), model.generateCalls)
@@ -208,6 +243,13 @@ func TestTokenEstimatorCountsFallbackContent(t *testing.T) {
 	}
 }
 
+func TestSummaryTokenLimitHasMinimumFloor(t *testing.T) {
+	compactor := newTestCompactor(t, &fakeChatModel{response: schema.AssistantMessage("summary", nil)}, 1000, 200)
+	if got := compactor.summaryTokenLimit(); got != minimumSummaryTokens {
+		t.Fatalf("summaryTokenLimit() = %d, want %d", got, minimumSummaryTokens)
+	}
+}
+
 func newTestCompactor(t *testing.T, chatModel model.BaseChatModel, maxContext, maxOutput int) *Compactor {
 	t.Helper()
 	compactor, err := NewCompactor(Config{
@@ -232,6 +274,30 @@ func longConversation() []*schema.Message {
 		schema.AssistantMessage("latest assistant", nil),
 		schema.UserMessage("final user"),
 	}
+}
+
+func headHasToolPair(messages []*schema.Message, callID string) bool {
+	assistantIndex := -1
+	toolIndex := -1
+	for i, msg := range messages {
+		if msg == nil {
+			continue
+		}
+		if strings.Contains(msg.Content, prompts.ContextCompactionSummaryPrefix) {
+			break
+		}
+		if msg.Role == schema.Assistant {
+			for _, call := range msg.ToolCalls {
+				if call.ID == callID {
+					assistantIndex = i
+				}
+			}
+		}
+		if msg.Role == schema.Tool && msg.ToolCallID == callID {
+			toolIndex = i
+		}
+	}
+	return assistantIndex >= 0 && toolIndex > assistantIndex
 }
 
 func tailHasToolPair(messages []*schema.Message, callID string) bool {

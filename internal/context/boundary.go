@@ -34,6 +34,10 @@ func selectBoundary(messages []*schema.Message) compactionBoundary {
 	if tailStart < headEnd+1 {
 		return compactionBoundary{}
 	}
+	headEnd = adjustHeadEndForToolPairs(messages, headEnd, tailStart)
+	if headEnd < 0 || tailStart <= headEnd {
+		return compactionBoundary{}
+	}
 	tailStart = adjustTailStartForToolPairs(messages, tailStart)
 	if tailStart <= headEnd {
 		headEnd = tailStart - 1
@@ -48,7 +52,7 @@ func selectBoundary(messages []*schema.Message) compactionBoundary {
 	head := cloneMessages(messages[:headEnd])
 	middle := cloneMessages(messages[headEnd:tailStart])
 	tail := cloneMessages(messages[tailStart:])
-	if len(middle) == 0 || !hasSafeToolPairs(tail) {
+	if len(middle) == 0 || !hasCompleteToolPairs(head) || !hasCompleteToolPairs(tail) {
 		return compactionBoundary{}
 	}
 
@@ -58,6 +62,38 @@ func selectBoundary(messages []*schema.Message) compactionBoundary {
 		tail:   tail,
 		ok:     true,
 	}
+}
+
+// adjustHeadEndForToolPairs extends headEnd to include tool results for tool calls kept in head.
+// adjustHeadEndForToolPairs 扩展 headEnd，以包含头部 tool_call 对应的 tool_result。
+func adjustHeadEndForToolPairs(messages []*schema.Message, headEnd, tailStart int) int {
+	if headEnd <= 0 {
+		return headEnd
+	}
+
+	changed := true
+	for changed {
+		changed = false
+		required := toolCallIDs(messages[:headEnd])
+		for callID := range required {
+			if findToolResult(messages, callID, 0, headEnd) >= 0 {
+				continue
+			}
+			resultIndex := findToolResult(messages, callID, headEnd, tailStart)
+			if resultIndex < 0 {
+				return -1
+			}
+			if resultIndex >= headEnd {
+				headEnd = resultIndex + 1
+				if headEnd >= tailStart {
+					return -1
+				}
+				changed = true
+				break
+			}
+		}
+	}
+	return headEnd
 }
 
 // withoutSystemMessages removes system messages from compaction candidates.
@@ -105,6 +141,16 @@ func adjustTailStartForToolPairs(messages []*schema.Message, tailStart int) int 
 	return tailStart
 }
 
+func findToolResult(messages []*schema.Message, toolCallID string, from, before int) int {
+	for i := from; i < before && i < len(messages); i++ {
+		msg := messages[i]
+		if msg != nil && msg.Role == schema.Tool && msg.ToolCallID == toolCallID {
+			return i
+		}
+	}
+	return -1
+}
+
 // findAssistantToolCall locates the assistant message that owns the given tool call ID.
 // findAssistantToolCall 查找拥有指定 tool call ID 的 assistant 消息索引。
 func findAssistantToolCall(messages []*schema.Message, toolCallID string, before int) int {
@@ -122,10 +168,11 @@ func findAssistantToolCall(messages []*schema.Message, toolCallID string, before
 	return -1
 }
 
-// hasSafeToolPairs reports whether every tool result in messages has a matching assistant call.
-// hasSafeToolPairs 判断消息列表中的 tool_result 是否都有对应的 assistant tool_call。
-func hasSafeToolPairs(messages []*schema.Message) bool {
+// hasCompleteToolPairs reports whether every preserved tool call/result pair is complete.
+// hasCompleteToolPairs 判断保留下来的 tool_call/tool_result 是否完整配对。
+func hasCompleteToolPairs(messages []*schema.Message) bool {
 	seenCalls := map[string]struct{}{}
+	seenResults := map[string]struct{}{}
 	for _, msg := range messages {
 		if msg == nil {
 			continue
@@ -138,12 +185,35 @@ func hasSafeToolPairs(messages []*schema.Message) bool {
 			}
 		}
 		if msg.Role == schema.Tool && msg.ToolCallID != "" {
-			if _, ok := seenCalls[msg.ToolCallID]; !ok {
-				return false
-			}
+			seenResults[msg.ToolCallID] = struct{}{}
+		}
+	}
+	for callID := range seenCalls {
+		if _, ok := seenResults[callID]; !ok {
+			return false
+		}
+	}
+	for callID := range seenResults {
+		if _, ok := seenCalls[callID]; !ok {
+			return false
 		}
 	}
 	return true
+}
+
+func toolCallIDs(messages []*schema.Message) map[string]struct{} {
+	ids := map[string]struct{}{}
+	for _, msg := range messages {
+		if msg == nil || msg.Role != schema.Assistant {
+			continue
+		}
+		for _, call := range msg.ToolCalls {
+			if call.ID != "" {
+				ids[call.ID] = struct{}{}
+			}
+		}
+	}
+	return ids
 }
 
 // cloneMessages returns a shallow copy of messages with duplicated ToolCalls and Extra maps.

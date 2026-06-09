@@ -18,9 +18,6 @@ const (
 	// compactionTriggerPercent is the prompt budget fraction that starts compaction.
 	// compactionTriggerPercent 为触发压缩的 prompt 预算比例。
 	compactionTriggerPercent = 80
-	// compactionTargetPercent is the post-compaction target as a fraction of safe prompt budget.
-	// compactionTargetPercent 为压缩后期望占用的安全 prompt 预算比例。
-	compactionTargetPercent = 60
 	// defaultHeadMessages is the non-system head message count kept after system messages are filtered.
 	// defaultHeadMessages 为过滤 system 消息后保留的头部消息数。
 	defaultHeadMessages = 2
@@ -30,7 +27,14 @@ const (
 	// defaultSummaryTokens caps auxiliary summary output when model max tokens is large.
 	// defaultSummaryTokens 在模型 max tokens 较大时限制辅助摘要输出上限。
 	defaultSummaryTokens = 2048
+	// minimumSummaryTokens keeps structured six-section summaries usable when max output is small.
+	// minimumSummaryTokens 在 max output 较小时保证六段式摘要仍有可用输出空间。
+	minimumSummaryTokens = 256
 )
+
+// ErrUnsafeBoundary indicates that compaction would break message ordering constraints.
+// ErrUnsafeBoundary 表示压缩会破坏消息顺序约束。
+var ErrUnsafeBoundary = errors.New("unsafe context compaction boundary")
 
 // Config contains the internal compactor settings derived from model options.
 // Config 包含从模型配置派生出的压缩器内部设置。
@@ -95,7 +99,7 @@ func (c *Compactor) CompactIfNeeded(ctx stdcontext.Context, messages []*schema.M
 
 	boundary := selectBoundary(messages)
 	if !boundary.ok {
-		return messages, false, nil
+		return messages, false, ErrUnsafeBoundary
 	}
 
 	middleTokens := c.estimator.CountMessages(boundary.middle)
@@ -125,17 +129,17 @@ func (c *Compactor) triggerTokens() int {
 	return c.safePromptBudget() * compactionTriggerPercent / 100
 }
 
-// targetTokens returns the desired prompt size after compaction completes.
-// targetTokens 返回压缩完成后期望的 prompt 规模。
-func (c *Compactor) targetTokens() int {
-	return c.safePromptBudget() * compactionTargetPercent / 100
-}
-
 // summaryTokenLimit bounds the auxiliary model output for middle-turn summarization.
 // summaryTokenLimit 限制中间段摘要时辅助模型的输出 token 上限。
 func (c *Compactor) summaryTokenLimit() int {
 	limit := c.maxOutputTokens / 4
-	if limit <= 0 || limit > defaultSummaryTokens {
+	if limit <= 0 {
+		return defaultSummaryTokens
+	}
+	if limit < minimumSummaryTokens {
+		return minimumSummaryTokens
+	}
+	if limit > defaultSummaryTokens {
 		return defaultSummaryTokens
 	}
 	return limit
@@ -176,5 +180,7 @@ func (c *Compactor) generateSummary(ctx stdcontext.Context, middle []*schema.Mes
 		return nil, errors.New("generate context summary: empty content")
 	}
 
+	// Use a user message so later compaction passes preserve the accumulated summary.
+	// 使用 user message，确保后续压缩轮次不会像 system message 一样过滤掉累计摘要。
 	return schema.UserMessage(prompts.ContextCompactionSummaryPrefix + content), nil
 }
