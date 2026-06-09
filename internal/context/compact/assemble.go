@@ -1,4 +1,4 @@
-package context
+package compact
 
 import "github.com/cloudwego/eino/schema"
 

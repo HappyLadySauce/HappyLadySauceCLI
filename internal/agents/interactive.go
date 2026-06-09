@@ -13,7 +13,7 @@ import (
 	"github.com/cloudwego/eino/schema"
 	"k8s.io/klog/v2"
 
-	contextx "github.com/HappyLadySauce/HappyLadySauceCLI/internal/context"
+	"github.com/HappyLadySauce/HappyLadySauceCLI/internal/context/compact"
 	"github.com/HappyLadySauce/HappyLadySauceCLI/internal/input"
 	"github.com/HappyLadySauce/HappyLadySauceCLI/internal/middlewares"
 	"github.com/HappyLadySauce/HappyLadySauceCLI/internal/prompts"
@@ -108,7 +108,7 @@ func newChatModelConfig(cfg *config.Config) *openai.ChatModelConfig {
 // newAgentHandlers builds ChatModelAgent handlers.
 // newAgentHandlers 构建 ChatModelAgent handlers。
 func newAgentHandlers(chatModel model.BaseChatModel, cfg *config.Config) ([]adk.ChatModelAgentMiddleware, error) {
-	compactor, err := contextx.NewCompactor(contextx.Config{
+	compactor, err := compact.NewCompactor(compact.Config{
 		Model:           chatModel,
 		ModelName:       cfg.Model.Model,
 		MaxModelContext: cfg.Model.MaxModelContext,

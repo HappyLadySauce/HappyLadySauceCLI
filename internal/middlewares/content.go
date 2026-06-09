@@ -7,19 +7,19 @@ import (
 	"github.com/cloudwego/eino/adk"
 	"k8s.io/klog/v2"
 
-	contextx "github.com/HappyLadySauce/HappyLadySauceCLI/internal/context"
+	"github.com/HappyLadySauce/HappyLadySauceCLI/internal/context/compact"
 )
 
 // contentMiddleware is a ChatModelAgent middleware for context-window compaction.
 // contentMiddleware 是一个用于上下文窗口压缩的 ChatModelAgent middleware。
 type contentMiddleware struct {
 	*adk.BaseChatModelAgentMiddleware
-	compactor *contextx.Compactor
+	compactor *compact.Compactor
 }
 
 // NewContentMiddleware creates a ChatModelAgent middleware for context-window compaction.
 // NewContentMiddleware 创建用于上下文窗口压缩的 ChatModelAgent middleware。
-func NewContentMiddleware(compactor *contextx.Compactor) (adk.ChatModelAgentMiddleware, error) {
+func NewContentMiddleware(compactor *compact.Compactor) (adk.ChatModelAgentMiddleware, error) {
 	if compactor == nil {
 		return nil, errors.New("content middleware compactor is required")
 	}

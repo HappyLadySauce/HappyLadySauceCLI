@@ -10,7 +10,7 @@ import (
 	"github.com/cloudwego/eino/components/model"
 	"github.com/cloudwego/eino/schema"
 
-	contextx "github.com/HappyLadySauce/HappyLadySauceCLI/internal/context"
+	"github.com/HappyLadySauce/HappyLadySauceCLI/internal/context/compact"
 )
 
 type fakeChatModel struct {
@@ -122,7 +122,7 @@ func TestBeforeModelRewriteStateSwallowsCompactionError(t *testing.T) {
 
 func newTestMiddleware(t *testing.T, chatModel model.BaseChatModel, maxContext, maxOutput int) adk.ChatModelAgentMiddleware {
 	t.Helper()
-	compactor, err := contextx.NewCompactor(contextx.Config{
+	compactor, err := compact.NewCompactor(compact.Config{
 		Model:           chatModel,
 		ModelName:       "unknown-local-model",
 		MaxModelContext: maxContext,

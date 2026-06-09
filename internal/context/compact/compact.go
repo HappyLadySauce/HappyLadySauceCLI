@@ -1,6 +1,6 @@
 // Package context implements Hermes-style semantic compaction for long agent conversations.
 // Package context 实现 Hermes 风格的对话语义压缩。
-package context
+package compact
 
 import (
 	stdcontext "context"
@@ -11,6 +11,7 @@ import (
 	"github.com/cloudwego/eino/components/model"
 	"github.com/cloudwego/eino/schema"
 
+	"github.com/HappyLadySauce/HappyLadySauceCLI/internal/context/common"
 	"github.com/HappyLadySauce/HappyLadySauceCLI/internal/prompts"
 )
 
@@ -49,7 +50,7 @@ type Config struct {
 // Compactor 在上下文压力过高时重写消息历史。
 type Compactor struct {
 	model            model.BaseChatModel
-	estimator        *TokenEstimator
+	estimator        *common.TokenEstimator
 	maxContextTokens int
 	maxOutputTokens  int
 }
@@ -72,7 +73,7 @@ func NewCompactor(cfg Config) (*Compactor, error) {
 
 	return &Compactor{
 		model:            cfg.Model,
-		estimator:        NewTokenEstimator(cfg.ModelName),
+		estimator:        common.NewTokenEstimator(cfg.ModelName),
 		maxContextTokens: cfg.MaxModelContext,
 		maxOutputTokens:  cfg.MaxOutputTokens,
 	}, nil

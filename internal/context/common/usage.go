@@ -1,4 +1,4 @@
-package context
+package common
 
 import (
 	"encoding/json"
@@ -71,6 +71,12 @@ func (e *TokenEstimator) CountMessage(msg *schema.Message) int {
 	}
 
 	return total
+}
+
+// CountInstruction estimates tokens for system instruction or other static prompt text.
+// CountInstruction 估算 system instruction 或其它静态 prompt 文本的 token 数。
+func (e *TokenEstimator) CountInstruction(text string) int {
+	return e.CountText(text)
 }
 
 // CountTools estimates tokens for tool schemas.
