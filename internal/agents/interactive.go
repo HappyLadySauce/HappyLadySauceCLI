@@ -13,6 +13,7 @@ import (
 	"k8s.io/klog/v2"
 
 	"github.com/HappyLadySauce/HappyLadySauceCLI/internal/context/budget"
+	"github.com/HappyLadySauce/HappyLadySauceCLI/internal/context/common/usage"
 	"github.com/HappyLadySauce/HappyLadySauceCLI/internal/input"
 	"github.com/HappyLadySauce/HappyLadySauceCLI/internal/middlewares"
 	"github.com/HappyLadySauce/HappyLadySauceCLI/internal/prompts"
@@ -23,10 +24,12 @@ import (
 
 func RunLoop(ctx context.Context, cfg *config.Config) error {
 
-	chatModel, err := openai.NewChatModel(ctx, newChatModelConfig(cfg))
+	rawChatModel, err := openai.NewChatModel(ctx, newChatModelConfig(cfg))
 	if err != nil {
 		return fmt.Errorf("new chat model: %w", err)
 	}
+	chatModel := usage.NewTrackingChatModel(rawChatModel)
+	sessionContext := usage.NewSessionContext()
 
 	agentInstruction := prompts.SystemPrompt
 	handlers, err := middlewares.NewChatModelAgentMiddlewares(middlewares.ChatModelAgentMiddlewareConfig{
@@ -34,7 +37,6 @@ func RunLoop(ctx context.Context, cfg *config.Config) error {
 		ModelName:       cfg.Model.Model,
 		MaxModelContext: cfg.Model.MaxModelContext,
 		MaxOutputTokens: cfg.Model.MaxOutputTokens,
-		Instruction:     agentInstruction,
 	})
 	if err != nil {
 		return err
@@ -85,7 +87,9 @@ func RunLoop(ctx context.Context, cfg *config.Config) error {
 		history = append(history, schema.UserMessage(prompt))
 
 		budgetWriter := budget.NewBudgetWriter()
-		runCtx := budget.WithBudgetWriter(ctx, budgetWriter)
+		runCtx := usage.WithSessionContext(ctx, sessionContext)
+		runCtx = budget.WithBudgetWriter(runCtx, budgetWriter)
+		runCtx = usage.WithTurnRecorder(runCtx, budgetWriter)
 		iter := runner.Run(runCtx, history)
 		turnMessages, exited, err := ConsumeAgentEvents(iter, renderer)
 		if err != nil {

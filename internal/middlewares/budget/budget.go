@@ -5,7 +5,6 @@ import (
 	"errors"
 
 	"github.com/cloudwego/eino/adk"
-	"github.com/cloudwego/eino/schema"
 
 	"github.com/HappyLadySauce/HappyLadySauceCLI/internal/context/budget"
 	"github.com/HappyLadySauce/HappyLadySauceCLI/internal/context/common/usage"
@@ -16,22 +15,17 @@ import (
 type budgetMiddleware struct {
 	*adk.BaseChatModelAgentMiddleware
 	maxContext int
-	estimator  *usage.TokenEstimator
 }
 
 // NewBudgetMiddleware creates a read-only turn stats middleware.
 // NewBudgetMiddleware 创建只读的回合统计中间件。
-func NewBudgetMiddleware(maxContext int, estimator *usage.TokenEstimator) (adk.ChatModelAgentMiddleware, error) {
+func NewBudgetMiddleware(maxContext int) (adk.ChatModelAgentMiddleware, error) {
 	if maxContext <= 0 {
 		return nil, errors.New("budget middleware max context must be greater than 0")
-	}
-	if estimator == nil {
-		return nil, errors.New("budget middleware token estimator is required")
 	}
 	return &budgetMiddleware{
 		BaseChatModelAgentMiddleware: &adk.BaseChatModelAgentMiddleware{},
 		maxContext:                   maxContext,
-		estimator:                    estimator,
 	}, nil
 }
 
@@ -44,44 +38,18 @@ func (m *budgetMiddleware) BeforeAgent(ctx context.Context, runCtx *adk.ChatMode
 	return ctx, runCtx, nil
 }
 
-// AfterModelRewriteState accumulates provider usage from each model hop.
-// AfterModelRewriteState 聚合同一轮内每次模型调用的 provider 用量。
-func (m *budgetMiddleware) AfterModelRewriteState(ctx context.Context, state *adk.ChatModelAgentState, mc *adk.ModelContext) (context.Context, *adk.ChatModelAgentState, error) {
-	writer := budget.BudgetWriterFromContext(ctx)
-	if writer == nil || state == nil {
-		return ctx, state, nil
-	}
-	if msg := lastAssistantMessage(state.Messages); msg != nil {
-		if snapshot, ok := usage.SnapshotFromMessage(msg); ok {
-			writer.AddUsage(snapshot)
-		}
-	}
-	return ctx, state, nil
-}
-
-// AfterAgent estimates context occupancy and finalizes the post-turn snapshot.
-// AfterAgent 估算上下文占用并完成回合结束快照。
+// AfterAgent finalizes the post-turn snapshot from provider session total.
+// AfterAgent 根据 provider session total 完成回合结束快照。
 func (m *budgetMiddleware) AfterAgent(ctx context.Context, state *adk.ChatModelAgentState) (context.Context, error) {
 	writer := budget.BudgetWriterFromContext(ctx)
-	if writer == nil || state == nil {
+	if writer == nil {
 		return ctx, nil
 	}
 
-	estimated, _ := m.estimator.EstimateVisiblePromptTokens(
-		state.Messages,
-		state.ToolInfos,
-		state.DeferredToolInfos,
-	)
-	writer.FinalizeTurn(m.maxContext, estimated)
-	return ctx, nil
-}
-
-func lastAssistantMessage(messages []*schema.Message) *schema.Message {
-	for i := len(messages) - 1; i >= 0; i-- {
-		msg := messages[i]
-		if msg != nil && msg.Role == schema.Assistant {
-			return msg
-		}
+	sessionTotal := 0
+	if session := usage.SessionFromContext(ctx); session != nil {
+		sessionTotal = session.TotalTokens()
 	}
-	return nil
+	writer.FinalizeTurn(m.maxContext, sessionTotal)
+	return ctx, nil
 }

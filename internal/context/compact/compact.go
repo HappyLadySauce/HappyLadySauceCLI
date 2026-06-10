@@ -16,8 +16,8 @@ import (
 )
 
 const (
-	// compactionTriggerPercent is the prompt budget fraction that starts compaction.
-	// compactionTriggerPercent 为触发压缩的 prompt 预算比例。
+	// compactionTriggerPercent is the safe context budget fraction that starts compaction.
+	// compactionTriggerPercent 为触发压缩的安全上下文预算比例。
 	compactionTriggerPercent = 80
 	// defaultHeadMessages is the head message count kept from non-system context.
 	// defaultHeadMessages 为非 system 上下文保留的头部消息数。
@@ -47,18 +47,15 @@ type Config struct {
 	ModelName       string
 	MaxModelContext int
 	MaxOutputTokens int
-	// Estimator is the shared local token estimator; when nil, one is created from ModelName.
-	// Estimator 为共享的本地 token 估算器；为 nil 时根据 ModelName 创建。
-	Estimator *usage.TokenEstimator
 }
 
 // Compactor rewrites message history when context pressure is high.
 // Compactor 在上下文压力过高时重写消息历史。
 type Compactor struct {
 	model            model.BaseChatModel
-	estimator        *usage.TokenEstimator
 	maxContextTokens int
 	maxOutputTokens  int
+	estimator        *usage.TokenEstimator
 }
 
 // NewCompactor creates a context compactor from model options.
@@ -77,23 +74,18 @@ func NewCompactor(cfg Config) (*Compactor, error) {
 		return nil, errors.New("max model context must be greater than max output tokens")
 	}
 
-	estimator := cfg.Estimator
-	if estimator == nil {
-		estimator = usage.NewTokenEstimator(cfg.ModelName)
-	}
-
 	return &Compactor{
 		model:            cfg.Model,
-		estimator:        estimator,
 		maxContextTokens: cfg.MaxModelContext,
 		maxOutputTokens:  cfg.MaxOutputTokens,
+		estimator:        usage.NewTokenEstimator(cfg.ModelName),
 	}, nil
 }
 
 // CompactIfNeeded checks prompt pressure, summarizes the middle segment when needed,
 // and returns [head, summary, tail]. On summary failure it returns the original messages unchanged.
 // CompactIfNeeded 检查 prompt 压力，必要时摘要中间段并返回 [头部, 摘要, 尾部]；摘要失败时原样返回输入。
-func (c *Compactor) CompactIfNeeded(ctx stdcontext.Context, messages []*schema.Message, toolInfos, deferredToolInfos []*schema.ToolInfo) ([]*schema.Message, bool, error) {
+func (c *Compactor) CompactIfNeeded(ctx stdcontext.Context, messages []*schema.Message) ([]*schema.Message, bool, error) {
 	if c == nil {
 		return messages, false, errors.New("compactor is nil")
 	}
@@ -101,11 +93,11 @@ func (c *Compactor) CompactIfNeeded(ctx stdcontext.Context, messages []*schema.M
 		return messages, false, nil
 	}
 
-	totalTokens, err := c.estimateTotalTokens(messages, toolInfos, deferredToolInfos)
-	if err != nil {
-		return messages, false, err
+	sessionTotal := 0
+	if session := usage.SessionFromContext(ctx); session != nil {
+		sessionTotal = session.TotalTokens()
 	}
-	if totalTokens < c.triggerTokens() {
+	if sessionTotal < c.triggerTokens() {
 		return messages, false, nil
 	}
 
@@ -125,22 +117,8 @@ func (c *Compactor) CompactIfNeeded(ctx stdcontext.Context, messages []*schema.M
 	return next, true, nil
 }
 
-// estimateTotalTokens sums message and tool-schema tokens for compaction decisions.
-// Eino's defaultGenModelInput prepends Instruction as a SystemMessage, so CountMessages
-// inherently accounts for it — no separate instruction tracking is needed.
-// estimateTotalTokens 汇总消息与工具 schema token，用于压缩决策。
-// Eino 的 defaultGenModelInput 会将 Instruction 以 SystemMessage 形式注入，因此 CountMessages 已天然包含该开销，无需单独跟踪。
-func (c *Compactor) estimateTotalTokens(messages []*schema.Message, toolInfos, deferredToolInfos []*schema.ToolInfo) (int, error) {
-	total := c.estimator.CountMessages(messages)
-	toolTokens, err := c.estimator.CountModelToolContext(toolInfos, deferredToolInfos)
-	if err != nil {
-		return 0, fmt.Errorf("estimate tool tokens: %w", err)
-	}
-	return total + toolTokens, nil
-}
-
-// triggerTokens returns the prompt token watermark that starts compaction.
-// triggerTokens 返回开始压缩的 prompt token 水位线。
+// triggerTokens returns the session total watermark that starts compaction.
+// triggerTokens 返回开始压缩的 session total 水位线。
 func (c *Compactor) triggerTokens() int {
 	return c.safePromptBudget() * compactionTriggerPercent / 100
 }
@@ -180,7 +158,7 @@ func (c *Compactor) generateSummary(ctx stdcontext.Context, middle []*schema.Mes
 		})),
 	}
 
-	resp, err := c.model.Generate(ctx, input, model.WithMaxTokens(targetTokens))
+	resp, err := c.model.Generate(usage.WithSkipTracking(ctx), input, model.WithMaxTokens(targetTokens))
 	if err != nil {
 		return nil, fmt.Errorf("generate context summary: %w", err)
 	}

@@ -85,7 +85,6 @@ type Compactor struct {
 func (c *Compactor) CompactIfNeeded(
     ctx context.Context,
     messages []*schema.Message,
-    tools []*schema.ToolInfo,
 ) ([]*schema.Message, bool, error)
 ```
 
@@ -98,16 +97,16 @@ v1 不做 `ContextEngine` 插件接口。后续如确实需要替换策略，再
 触发条件使用内部默认策略：
 
 ```text
-safe_prompt_budget = maxContextTokens - maxOutputTokens
-estimated_prompt_tokens >= internal_compaction_watermark(safe_prompt_budget)
+safe_context_budget = maxContextTokens - maxOutputTokens
+session_total_tokens >= internal_compaction_watermark(safe_context_budget)
 ```
 
 说明：
 
 - `maxContextTokens` 与 `maxOutputTokens` 来自现有 model 配置。
 - `internal_compaction_watermark` 是代码内常量或私有函数，不进入用户配置。
-- token 估算优先使用 `tiktoken-go`；模型编码不可识别时使用字符粗估。
-- 粗估只作为兜底，不能成为对外承诺的精确计数。
+- `session_total_tokens` 来自 ChatModel 层记录的 provider `ResponseMeta.Usage.TotalTokens`，为 0 时回退到 `PromptTokens + CompletionTokens`。
+- 本地 `TokenEstimator` 不参与压缩触发，仅用于摘要 middle 段规模提示。
 
 ---
 
@@ -156,7 +155,7 @@ func (m *contentMiddleware) BeforeModelRewriteState(
     state *adk.ChatModelAgentState,
     mc *adk.ModelContext,
 ) (context.Context, *adk.ChatModelAgentState, error) {
-    messages, changed, err := m.compactor.CompactIfNeeded(ctx, state.Messages, state.ToolInfos)
+    messages, changed, err := m.compactor.CompactIfNeeded(ctx, state.Messages)
     if err != nil {
         klog.Warningf("context compaction skipped: %v", err)
         return ctx, state, nil

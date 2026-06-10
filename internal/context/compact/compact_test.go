@@ -44,7 +44,7 @@ func TestCompactIfNeededDoesNothingBelowWatermark(t *testing.T) {
 		schema.AssistantMessage("ok", nil),
 	}
 
-	got, changed, err := compactor.CompactIfNeeded(stdcontext.Background(), messages, nil, nil)
+	got, changed, err := compactor.CompactIfNeeded(stdcontext.Background(), messages)
 	if err != nil {
 		t.Fatalf("CompactIfNeeded() error = %v", err)
 	}
@@ -70,9 +70,7 @@ func TestCompactIfNeededSummarizesMiddleMessages(t *testing.T) {
 		schema.UserMessage("final question"),
 	}
 
-	got, changed, err := compactor.CompactIfNeeded(stdcontext.Background(), messages, []*schema.ToolInfo{
-		{Name: "search", Desc: "search docs"},
-	}, nil)
+	got, changed, err := compactor.CompactIfNeeded(testCtxAtCompactionTrigger(180, 20), messages)
 	if err != nil {
 		t.Fatalf("CompactIfNeeded() error = %v", err)
 	}
@@ -121,12 +119,12 @@ func TestCompactIfNeededCountsSystemMessagePressure(t *testing.T) {
 		schema.UserMessage("final user"),
 	}
 
-	got, changed, err := compactor.CompactIfNeeded(stdcontext.Background(), messages, nil, nil)
+	got, changed, err := compactor.CompactIfNeeded(testCtxAtCompactionTrigger(1000, 100), messages)
 	if err != nil {
 		t.Fatalf("CompactIfNeeded() error = %v", err)
 	}
 	if !changed {
-		t.Fatal("CompactIfNeeded() did not compact despite system message pressure")
+		t.Fatal("CompactIfNeeded() did not compact despite session total above trigger")
 	}
 	if len(model.input) != 2 || strings.Contains(model.input[1].Content, "system policy") {
 		t.Fatalf("summary input should summarize only middle history, got %#v", model.input)
@@ -166,7 +164,7 @@ func TestCompactIfNeededDoesNotCutToolPairs(t *testing.T) {
 		schema.AssistantMessage("answer", nil),
 	}
 
-	got, changed, err := compactor.CompactIfNeeded(stdcontext.Background(), messages, nil, nil)
+	got, changed, err := compactor.CompactIfNeeded(testCtxAtCompactionTrigger(160, 20), messages)
 	if err != nil {
 		t.Fatalf("CompactIfNeeded() error = %v", err)
 	}
@@ -201,7 +199,7 @@ func TestCompactIfNeededDoesNotLeaveOpenToolCallInHead(t *testing.T) {
 		schema.AssistantMessage("answer", nil),
 	}
 
-	got, changed, err := compactor.CompactIfNeeded(stdcontext.Background(), messages, nil, nil)
+	got, changed, err := compactor.CompactIfNeeded(testCtxAtCompactionTrigger(160, 20), messages)
 	if err != nil {
 		t.Fatalf("CompactIfNeeded() error = %v", err)
 	}
@@ -227,7 +225,7 @@ func TestCompactIfNeededReturnsUnchangedWhenToolPairCannotBeCutSafely(t *testing
 		schema.UserMessage("final"),
 	}
 
-	got, changed, err := compactor.CompactIfNeeded(stdcontext.Background(), messages, nil, nil)
+	got, changed, err := compactor.CompactIfNeeded(testCtxAtCompactionTrigger(120, 20), messages)
 	if !errors.Is(err, ErrUnsafeBoundary) {
 		t.Fatalf("CompactIfNeeded() error = %v, want %v", err, ErrUnsafeBoundary)
 	}
@@ -242,7 +240,7 @@ func TestCompactIfNeededReturnsErrorWithoutDroppingMessages(t *testing.T) {
 	compactor := newTestCompactor(t, model, 160, 20)
 	messages := longConversation()
 
-	got, changed, err := compactor.CompactIfNeeded(stdcontext.Background(), messages, nil, nil)
+	got, changed, err := compactor.CompactIfNeeded(testCtxAtCompactionTrigger(160, 20), messages)
 	if err == nil || !strings.Contains(err.Error(), wantErr.Error()) {
 		t.Fatalf("CompactIfNeeded() error = %v, want %v", err, wantErr)
 	}
@@ -251,7 +249,7 @@ func TestCompactIfNeededReturnsErrorWithoutDroppingMessages(t *testing.T) {
 	}
 }
 
-func TestTokenEstimatorCountsFallbackContent(t *testing.T) {
+func TestTokenEstimatorCountsMiddleMessages(t *testing.T) {
 	estimator := usage.NewTokenEstimator("unknown-local-model")
 	tokens := estimator.CountMessages([]*schema.Message{
 		{
@@ -265,14 +263,7 @@ func TestTokenEstimatorCountsFallbackContent(t *testing.T) {
 		schema.ToolMessage("result", "call_1", schema.WithToolName("lookup")),
 	})
 	if tokens <= 0 {
-		t.Fatalf("fallback token count = %d, want > 0", tokens)
-	}
-	toolTokens, err := estimator.CountTools([]*schema.ToolInfo{{Name: "lookup", Desc: "lookup data"}})
-	if err != nil {
-		t.Fatalf("CountTools() error = %v", err)
-	}
-	if toolTokens <= 0 {
-		t.Fatalf("tool token count = %d, want > 0", toolTokens)
+		t.Fatalf("middle message token count = %d, want > 0", tokens)
 	}
 }
 
@@ -290,6 +281,13 @@ func TestSummaryTokenLimitHitsDefaultCap(t *testing.T) {
 	if got := compactor.summaryTokenLimit(); got != defaultSummaryTokens {
 		t.Fatalf("summaryTokenLimit() = %d, want %d", got, defaultSummaryTokens)
 	}
+}
+
+func testCtxAtCompactionTrigger(maxContext, maxOutput int) stdcontext.Context {
+	session := usage.NewSessionContext()
+	trigger := (maxContext - maxOutput) * compactionTriggerPercent / 100
+	session.UpdateFromSnapshot(usage.UsageSnapshot{TotalTokens: trigger})
+	return usage.WithSessionContext(stdcontext.Background(), session)
 }
 
 func newTestCompactor(t *testing.T, chatModel model.BaseChatModel, maxContext, maxOutput int) *Compactor {

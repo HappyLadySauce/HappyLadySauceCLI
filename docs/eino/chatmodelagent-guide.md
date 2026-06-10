@@ -464,8 +464,8 @@ Token 用量在 Eino 各层（`schema` / `callbacks` / ChatModel 装饰器 / ADK
 
 5. 每次模型调用前：
    ├─ contentMiddleware.BeforeModelRewriteState
-   │    └─ compactor.CompactIfNeeded(state.Messages, ...)
-   │         ├─ 估算 token → 超 80% 水位线?
+   │    └─ compactor.CompactIfNeeded(ctx, state.Messages)
+   │         ├─ 读取 SessionContext.TotalTokens → 超 80% 水位线?
    │         ├─ selectBoundary() → [head, middle, tail]
    │         ├─ 辅助模型 generateSummary(middle)
    │         └─ assembleCompactedMessages → 新 Messages
@@ -486,8 +486,7 @@ Token 用量在 Eino 各层（`schema` / `callbacks` / ChatModel 装饰器 / ADK
    → 本轮回复追加到对话历史
 
 9. budgetMiddleware.AfterAgent
-   └─ EstimateVisiblePromptTokens(messages, toolInfos, deferredToolInfos)
-        → writer.FinalizeTurn(maxContext, estimated)
+   └─ writer.FinalizeTurn(maxContext, session.TotalTokens())
 
 10. renderer.WriteTurnStatus(writer.ReadTurnStatus())
     → 输出单行统计（如 "[Stats: elapsed=0.77s prompt↑=318 completion↓=37 total↑↓=611 0.48% 128K]"；prompt↑=最后一跳输入，completion↓=本回合生成累加，total↑↓=会话上下文占用，百分比保留两位小数，TTY 下分段着色）
@@ -515,12 +514,12 @@ BeforeAgent:
   contentMiddleware.BeforeModelRewriteState (上下文压缩)
   budgetMiddleware.BeforeModelRewriteState (no-op)
   → 模型调用
-  budgetMiddleware.AfterModelRewriteState (读取 provider 用量)
+  budgetMiddleware.AfterModelRewriteState (no-op)
   contentMiddleware.AfterModelRewriteState (no-op)
 
 AfterAgent（成功结束时）:
   contentMiddleware.AfterAgent (no-op)
-  budgetMiddleware.AfterAgent (本地总量估算 + FinalizeTurn)
+  budgetMiddleware.AfterAgent (读取 session total + FinalizeTurn)
 ```
 
 ---
@@ -594,7 +593,7 @@ agent, err := adk.NewChatModelAgent(ctx, &adk.ChatModelAgentConfig{
 
 ## 10. 上下文压缩机制
 
-当 prompt token 超过安全预算的 80%（`(maxModelContext - maxOutputTokens) * 80%`）时，触发压缩：
+当 `SessionContext.TotalTokens()` 超过安全预算的 80%（`(maxModelContext - maxOutputTokens) * 80%`）时，触发压缩：
 
 ### 10.1 压缩策略
 
@@ -681,7 +680,7 @@ type ChatModelAgentMiddleware interface {
 
 ### 12.2 查看 state.Messages 变化
 
-在 `contentMiddleware.BeforeModelRewriteState` 中加入日志，对比压缩前后的消息数量和 token 估算值。
+在 `contentMiddleware.BeforeModelRewriteState` 中加入日志，对比压缩前后的消息数量与 `SessionContext.TotalTokens()`。
 
 ### 12.3 模拟 Agent 事件
 

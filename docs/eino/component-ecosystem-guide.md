@@ -501,10 +501,12 @@ chatModel（裸实例或装饰实例）
 
 ### 9.4 Provider 不可用时的回退
 
-部分本地模型 / 兼容端点不返回 `usage`，此时 `ResponseMeta.Usage == nil`。应用层常见回退：
+部分本地模型 / 兼容端点不返回 `usage`，此时 `ResponseMeta.Usage == nil`。应用层可用于观测的常见回退：
 
-- 本地 `TokenEstimator`（tiktoken / 字符估算）对 `state.Messages` + tools + instruction 估算
+- 本地 `TokenEstimator`（tiktoken / 字符估算）对需要展示的消息片段做估算
 - 在 UI 标注 `source: estimated` 与 `source: provider` 区分
+
+本项目当前不使用本地估算触发压缩；没有 provider usage 时 `SessionContext.TotalTokens()` 不更新，压缩不会被估算值触发。
 
 ---
 
@@ -591,21 +593,28 @@ type MessageVariant struct {
 
 ---
 
-## 13. 与本项目的关系（非本文重点）
+## 13. 与本项目的关系
 
 本项目组合方式：
 
 ```
 openai.NewChatModel
+  → usage.NewTrackingChatModel（ChatModel 层计量）
   → adk.NewChatModelAgent（Handlers: content + budget middleware）
   → adk.NewRunner（EnableStreaming: true）
-  → RunLoop 管理 history + BudgetWriter（context 传递）
+  → RunLoop：SessionContext（跨轮）+ BudgetWriter + TurnRecorder（context 传递）
 ```
 
-- **压缩**：`contentMiddleware` → `BeforeModelRewriteState` → `Compactor.CompactIfNeeded`（**直调** `model.Generate`）
-- **用量**：`budgetMiddleware` → `AfterModelRewriteState` 读 `ResponseMeta.Usage`；`AfterAgent` 本地估算回退
+| 能力 | 实现 |
+|------|------|
+| **provider 计量** | `UsageTrackingChatModel` 在每次 `Generate`/`Stream` 后读 `ResponseMeta.Usage`，更新 `SessionContext` 与 `BudgetWriter` |
+| **prompt↑ / completion↓** | 单轮 `BudgetWriter.AddUsage`（最后一跳 prompt、累加 completion） |
+| **total↑↓** | 跨 hop/跨用户轮的 `SessionContext.TotalTokens`（provider 真值，非 tiktoken 估算） |
+| **压缩触发** | `Compactor.CompactIfNeeded` 比较 `session.TotalTokens >= (maxContext-maxOutput)×80%`，不再 `estimateTotalTokens` |
+| **摘要旁路** | `generateSummary` 使用 `usage.WithSkipTracking(ctx)`，避免辅助调用污染 session total |
+| **回合展示** | `budgetMiddleware.AfterAgent` → `FinalizeTurn(maxContext, session.Total)` |
 
-架构讨论结论：若需覆盖 Compactor 等旁路调用，应将计量下沉至 **ChatModel 装饰器** 或 **callbacks**，Agent 层保留压缩与回合展示。详见各 `internal/` 包实现。
+`TokenEstimator` 仅保留于摘要 middle 段规模提示，不参与压缩触发与 Stats total。
 
 ---
 

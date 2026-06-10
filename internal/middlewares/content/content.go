@@ -36,7 +36,7 @@ func (m *contentMiddleware) BeforeModelRewriteState(ctx context.Context, state *
 		return ctx, state, nil
 	}
 
-	messages, changed, err := m.compactor.CompactIfNeeded(ctx, state.Messages, state.ToolInfos, state.DeferredToolInfos)
+	messages, changed, err := m.compactor.CompactIfNeeded(ctx, state.Messages)
 	if err != nil {
 		klog.Warningf("context compaction skipped: %v", err)
 		return ctx, state, nil

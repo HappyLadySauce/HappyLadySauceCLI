@@ -6,7 +6,6 @@ import (
 	"github.com/cloudwego/eino/adk"
 	"github.com/cloudwego/eino/components/model"
 
-	"github.com/HappyLadySauce/HappyLadySauceCLI/internal/context/common/usage"
 	"github.com/HappyLadySauce/HappyLadySauceCLI/internal/context/compact"
 	budgetmiddleware "github.com/HappyLadySauce/HappyLadySauceCLI/internal/middlewares/budget"
 	contentmiddleware "github.com/HappyLadySauce/HappyLadySauceCLI/internal/middlewares/content"
@@ -19,20 +18,16 @@ type ChatModelAgentMiddlewareConfig struct {
 	ModelName       string
 	MaxModelContext int
 	MaxOutputTokens int
-	Instruction     string
 }
 
 // NewChatModelAgentMiddlewares builds the default ChatModelAgent middleware chain.
 // NewChatModelAgentMiddlewares 构建默认 ChatModelAgent middleware 链。
 func NewChatModelAgentMiddlewares(cfg ChatModelAgentMiddlewareConfig) ([]adk.ChatModelAgentMiddleware, error) {
-	estimator := usage.NewTokenEstimator(cfg.ModelName)
-
 	compactor, err := compact.NewCompactor(compact.Config{
 		Model:           cfg.Model,
 		ModelName:       cfg.ModelName,
 		MaxModelContext: cfg.MaxModelContext,
 		MaxOutputTokens: cfg.MaxOutputTokens,
-		Estimator:       estimator,
 	})
 	if err != nil {
 		return nil, fmt.Errorf("new context compactor: %w", err)
@@ -42,7 +37,7 @@ func NewChatModelAgentMiddlewares(cfg ChatModelAgentMiddlewareConfig) ([]adk.Cha
 	if err != nil {
 		return nil, fmt.Errorf("new content middleware: %w", err)
 	}
-	budgetMiddleware, err := budgetmiddleware.NewBudgetMiddleware(cfg.MaxModelContext, estimator)
+	budgetMiddleware, err := budgetmiddleware.NewBudgetMiddleware(cfg.MaxModelContext)
 	if err != nil {
 		return nil, fmt.Errorf("new budget middleware: %w", err)
 	}

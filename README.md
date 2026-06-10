@@ -145,13 +145,13 @@ HAPPLADYSAUCECLI_MODEL=<loaded-model-id>
 [context 42% 128k | actual prompt 54.2k | out 1.2k | est 55.4k]
 ```
 
-- **actual prompt / out** — 来自 provider 响应的实际 token 用量（若 provider 返回）
-- **est** — 本地估算的总占用
-- 无 provider 用量时，会按分段（`conv`、`tools`、`sys` 等）展示估算值
+- **actual prompt / out** — 来自 provider 响应的本轮输入与输出 token 用量（若 provider 返回）
+- **total** — ChatModel 层记录的 provider 会话上下文窗口占用
+- 无 provider 用量时，`total` 保持为 0，压缩不会基于本地估算触发
 
 ### 上下文压缩
 
-当 prompt token 超过安全预算的 80%（`maxModelContext - maxOutputTokens`）时，中间对话会被自动摘要压缩，策略为：
+当 provider session total 超过安全预算的 80%（`maxModelContext - maxOutputTokens`）时，中间对话会被自动摘要压缩，策略为：
 
 - 保留头部 2 条 + 尾部 4 条非系统消息
 - 中间部分生成结构化摘要（目标、约束、进展、决策、相关文件、下一步）

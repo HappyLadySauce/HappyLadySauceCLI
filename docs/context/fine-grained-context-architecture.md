@@ -91,13 +91,13 @@ RunLoop history
   → runner.Run(ctx, history)
   → [每次模型调用]
        BeforeModelRewriteState (contentMiddleware)
-         → Compactor.CompactIfNeeded(messages, toolInfos)
-         → 若超 80% safe budget → head + summary + tail
+         → Compactor.CompactIfNeeded(ctx, messages)
+         → 若 provider session total 超 80% safe budget → head + summary + tail
   → 模型 / 工具循环
   → 仅最后 assistant 回写 history
 ```
 
-现有压缩触发估算：**conversation + tools**（`messages + toolInfos`）。`ContextBudget.Estimate` 扩展为**七段总和**，供观测与后续统一触发水位。
+现有压缩触发不再本地估算 `messages + toolInfos`，而是读取 ChatModel 层写入的 `SessionContext.TotalTokens()`。后续分段预算只用于观测与策略分析，不作为当前压缩触发真相源。
 
 ### 3.3 与 Cursor 的差异
 

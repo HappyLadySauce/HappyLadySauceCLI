@@ -11,6 +11,7 @@ import (
 	"github.com/cloudwego/eino/schema"
 
 	"github.com/HappyLadySauce/HappyLadySauceCLI/internal/context/compact"
+	"github.com/HappyLadySauce/HappyLadySauceCLI/internal/context/common/usage"
 )
 
 type fakeChatModel struct {
@@ -85,7 +86,8 @@ func TestBeforeModelRewriteStateCompactsWithCopiedState(t *testing.T) {
 		ToolInfos: []*schema.ToolInfo{{Name: "lookup", Desc: "lookup data"}},
 	}
 
-	_, got, err := middleware.BeforeModelRewriteState(context.Background(), state, nil)
+	ctx := testCtxAtCompactionTrigger(180, 20)
+	_, got, err := middleware.BeforeModelRewriteState(ctx, state, nil)
 	if err != nil {
 		t.Fatalf("BeforeModelRewriteState() error = %v", err)
 	}
@@ -114,13 +116,21 @@ func TestBeforeModelRewriteStateSwallowsCompactionError(t *testing.T) {
 	state := &adk.ChatModelAgentState{Messages: longConversation()}
 	middleware := newTestMiddleware(t, &fakeChatModel{err: errors.New("model down")}, 160, 20)
 
-	_, got, err := middleware.BeforeModelRewriteState(context.Background(), state, nil)
+	ctx := testCtxAtCompactionTrigger(160, 20)
+	_, got, err := middleware.BeforeModelRewriteState(ctx, state, nil)
 	if err != nil {
 		t.Fatalf("BeforeModelRewriteState() error = %v, want nil", err)
 	}
 	if got != state {
 		t.Fatal("failed compaction should return original state")
 	}
+}
+
+func testCtxAtCompactionTrigger(maxContext, maxOutput int) context.Context {
+	session := usage.NewSessionContext()
+	trigger := (maxContext - maxOutput) * 80 / 100
+	session.UpdateFromSnapshot(usage.UsageSnapshot{TotalTokens: trigger})
+	return usage.WithSessionContext(context.Background(), session)
 }
 
 func newTestMiddleware(t *testing.T, chatModel model.BaseChatModel, maxContext, maxOutput int) adk.ChatModelAgentMiddleware {

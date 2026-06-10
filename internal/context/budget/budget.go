@@ -98,12 +98,11 @@ func (w *BudgetWriter) AddUsage(snapshot usage.UsageSnapshot) {
 
 // FinalizeTurn closes elapsed-time tracking and stores context occupancy.
 //
-// total↑↓ prefers estimatedContextTokens from the post-turn model-visible state
-// (reflects compaction). When unavailable, falls back to last-hop prompt + completion.
+// total↑↓ uses provider sessionTotal from SessionContext (updated by UsageTrackingChatModel).
 //
 // FinalizeTurn 结束耗时统计并写入上下文占用。
-// total↑↓ 优先使用回合结束后模型可见状态的本地估算（反映压缩）；否则回退到最后一跳 prompt+completion。
-func (w *BudgetWriter) FinalizeTurn(maxContext, estimatedContextTokens int) {
+// total↑↓ 使用 SessionContext 中的 provider sessionTotal（由 UsageTrackingChatModel 更新）。
+func (w *BudgetWriter) FinalizeTurn(maxContext, sessionTotal int) {
 	if w == nil {
 		return
 	}
@@ -114,18 +113,7 @@ func (w *BudgetWriter) FinalizeTurn(maxContext, estimatedContextTokens int) {
 	}
 	w.stats.MaxContext = maxContext
 	w.stats.PromptTokens = w.lastHopPrompt
-	if w.stats.PromptTokens == 0 {
-		w.stats.PromptTokens = estimatedContextTokens
-	}
-
-	switch {
-	case estimatedContextTokens > 0:
-		w.stats.ContextTokens = estimatedContextTokens
-	case w.lastHopPrompt > 0:
-		w.stats.ContextTokens = w.lastHopPrompt + w.lastHopCompletion
-	default:
-		w.stats.ContextTokens = 0
-	}
+	w.stats.ContextTokens = sessionTotal
 }
 
 // ReadTurnStatus returns the post-turn snapshot.
