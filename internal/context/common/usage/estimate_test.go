@@ -239,6 +239,50 @@ func TestCountMessagesIncludesReplyPriming(t *testing.T) {
 	}
 }
 
+func TestCountDeferredToolsNameAndDescOnly(t *testing.T) {
+	t.Parallel()
+
+	estimator := NewTokenEstimator("gpt-4o")
+	tool := &schema.ToolInfo{
+		Name:        "search",
+		Desc:        "search documents",
+		ParamsOneOf: schema.NewParamsOneOfByParams(map[string]*schema.ParameterInfo{"q": {Type: schema.String}}),
+	}
+
+	deferred := estimator.CountDeferredTools([]*schema.ToolInfo{tool})
+	full, err := estimator.CountTools([]*schema.ToolInfo{tool})
+	if err != nil {
+		t.Fatalf("CountTools() error = %v", err)
+	}
+	if deferred <= 0 {
+		t.Fatalf("CountDeferredTools() = %d, want > 0", deferred)
+	}
+	if deferred >= full {
+		t.Fatalf("CountDeferredTools() = %d, want < full schema %d", deferred, full)
+	}
+}
+
+func TestCountModelToolContextMergesImmediateAndDeferred(t *testing.T) {
+	t.Parallel()
+
+	estimator := NewTokenEstimator("gpt-4o")
+	immediate := &schema.ToolInfo{Name: "weather", Desc: "get weather"}
+	deferred := &schema.ToolInfo{Name: "search", Desc: "search docs", ParamsOneOf: schema.NewParamsOneOfByParams(map[string]*schema.ParameterInfo{"q": {Type: schema.String}})}
+
+	total, err := estimator.CountModelToolContext([]*schema.ToolInfo{immediate}, []*schema.ToolInfo{deferred})
+	if err != nil {
+		t.Fatalf("CountModelToolContext() error = %v", err)
+	}
+	deferredOnly := estimator.CountDeferredTools([]*schema.ToolInfo{deferred})
+	immediateOnly, err := estimator.CountTools([]*schema.ToolInfo{immediate})
+	if err != nil {
+		t.Fatalf("CountTools() error = %v", err)
+	}
+	if got, want := total, immediateOnly+deferredOnly; got != want {
+		t.Fatalf("CountModelToolContext() = %d, want %d", got, want)
+	}
+}
+
 func TestCountMessageIncludesNameOverhead(t *testing.T) {
 	t.Parallel()
 

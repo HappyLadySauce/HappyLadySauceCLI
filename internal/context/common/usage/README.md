@@ -25,11 +25,11 @@
 与 ChatModelAgent `BeforeModelRewriteState` 的 `state` 输入对齐：
 
 - `system` — `state.Messages` 中的 system 消息，以及 Run 级 `Instruction`
-- `tools` — `state.ToolInfos` 工具 schema + `state.Messages` 中的工具轨迹（assistant `ToolCalls`、role=`tool` 结果）
+- `tools` — `state.ToolInfos` 完整 schema（`model.WithTools`）+ `state.DeferredToolInfos` 轻量定义（`model.WithDeferredTools`，仅 name+desc）+ `state.Messages` 中的工具轨迹（assistant `ToolCalls`、role=`tool` 结果）
 - `conversation` — 其余 user/assistant 对话（不含 tool call）
 - `rules` / `skills` / `mcp` / `subagents` — 预留
 
-工具边界说明：ReAct 循环中，每次模型调用前 provider 同时收到 `ToolInfos`（`model.WithTools`）与消息里的 tool trace；二者合并计入 `tools`，不再拆分为 call/result/def。
+工具边界说明：ReAct 循环中，每次模型调用前 provider 同时收到 `ToolInfos`（`model.WithTools`）、`DeferredToolInfos`（`model.WithDeferredTools`）与消息里的 tool trace；三者合并计入 `tools`。立即工具按完整 JSON schema 计数；延迟工具仅计 name+description，避免把未加载 schema 高估进预算。
 
 ## Provider 合并
 

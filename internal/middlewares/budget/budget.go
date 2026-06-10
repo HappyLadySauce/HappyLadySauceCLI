@@ -39,8 +39,9 @@ func (m *budgetMiddleware) BeforeModelRewriteState(ctx context.Context, state *a
 	}
 
 	budget, err := contextbudget.EstimateBudget(contextbudget.BudgetInput{
-		Messages:  state.Messages,
-		ToolInfos: state.ToolInfos,
+		Messages:          state.Messages,
+		ToolInfos:         state.ToolInfos,
+		DeferredToolInfos: state.DeferredToolInfos,
 	}, m.calculator)
 	if err != nil {
 		klog.Warningf("context budget estimate skipped: %v", err)

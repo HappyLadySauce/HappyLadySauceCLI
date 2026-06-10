@@ -93,7 +93,7 @@ func NewCompactor(cfg Config) (*Compactor, error) {
 // CompactIfNeeded checks prompt pressure, summarizes the middle segment when needed,
 // and returns [head, summary, tail]. On summary failure it returns the original messages unchanged.
 // CompactIfNeeded 检查 prompt 压力，必要时摘要中间段并返回 [头部, 摘要, 尾部]；摘要失败时原样返回输入。
-func (c *Compactor) CompactIfNeeded(ctx stdcontext.Context, messages []*schema.Message, tools []*schema.ToolInfo) ([]*schema.Message, bool, error) {
+func (c *Compactor) CompactIfNeeded(ctx stdcontext.Context, messages []*schema.Message, toolInfos, deferredToolInfos []*schema.ToolInfo) ([]*schema.Message, bool, error) {
 	if c == nil {
 		return messages, false, errors.New("compactor is nil")
 	}
@@ -101,7 +101,7 @@ func (c *Compactor) CompactIfNeeded(ctx stdcontext.Context, messages []*schema.M
 		return messages, false, nil
 	}
 
-	totalTokens, err := c.estimateTotalTokens(messages, tools)
+	totalTokens, err := c.estimateTotalTokens(messages, toolInfos, deferredToolInfos)
 	if err != nil {
 		return messages, false, err
 	}
@@ -130,9 +130,9 @@ func (c *Compactor) CompactIfNeeded(ctx stdcontext.Context, messages []*schema.M
 // inherently accounts for it — no separate instruction tracking is needed.
 // estimateTotalTokens 汇总消息与工具 schema token，用于压缩决策。
 // Eino 的 defaultGenModelInput 会将 Instruction 以 SystemMessage 形式注入，因此 CountMessages 已天然包含该开销，无需单独跟踪。
-func (c *Compactor) estimateTotalTokens(messages []*schema.Message, tools []*schema.ToolInfo) (int, error) {
+func (c *Compactor) estimateTotalTokens(messages []*schema.Message, toolInfos, deferredToolInfos []*schema.ToolInfo) (int, error) {
 	total := c.estimator.CountMessages(messages)
-	toolTokens, err := c.estimator.CountTools(tools)
+	toolTokens, err := c.estimator.CountModelToolContext(toolInfos, deferredToolInfos)
 	if err != nil {
 		return 0, fmt.Errorf("estimate tool tokens: %w", err)
 	}

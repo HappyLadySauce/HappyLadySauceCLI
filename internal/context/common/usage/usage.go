@@ -216,9 +216,10 @@ func (c *Calculator) Estimator() *TokenEstimator {
 // CountInput groups all model-visible context parts for a single count pass.
 // CountInput 聚合一次计数所需的模型可见上下文。
 type CountInput struct {
-	Messages    []*schema.Message
-	ToolInfos   []*schema.ToolInfo
-	Instruction string
+	Messages            []*schema.Message
+	ToolInfos           []*schema.ToolInfo
+	DeferredToolInfos   []*schema.ToolInfo
+	Instruction         string
 }
 
 // Count estimates and classifies tokens in a single pass through messages.
@@ -226,7 +227,7 @@ type CountInput struct {
 // Classification aligns with ChatModelAgent BeforeModelRewriteState inputs:
 //   - system messages + Instruction → Segs.System
 //   - non-system, non-tool messages → Segs.Conversation
-//   - tool trace messages + ToolInfos → Segs.Tools
+//   - tool trace + ToolInfos + DeferredToolInfos → Segs.Tools
 //
 // Count 单次遍历消息，同时完成估算与分类。
 func (c *Calculator) Count(input CountInput) *Breakdown {
@@ -256,9 +257,9 @@ func (c *Calculator) Count(input CountInput) *Breakdown {
 		}
 	}
 
-	// ToolInfos are model-visible on every call.
-	if len(input.ToolInfos) > 0 {
-		if toolTokens, err := c.estimator.CountTools(input.ToolInfos); err == nil && toolTokens > 0 {
+	// ToolInfos and DeferredToolInfos are model-visible on every call.
+	if len(input.ToolInfos) > 0 || len(input.DeferredToolInfos) > 0 {
+		if toolTokens, err := c.estimator.CountModelToolContext(input.ToolInfos, input.DeferredToolInfos); err == nil && toolTokens > 0 {
 			segs.Tools += toolTokens
 			estimatedTotal += toolTokens
 		}

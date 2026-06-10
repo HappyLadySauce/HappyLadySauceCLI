@@ -50,6 +50,33 @@ func TestCalculatorCountClassifiesToolMessages(t *testing.T) {
 	}
 }
 
+func TestCalculatorCountIncludesDeferredToolInfos(t *testing.T) {
+	t.Parallel()
+
+	tool := &schema.ToolInfo{
+		Name:        "dynamic_search",
+		Desc:        "search documents on demand",
+		ParamsOneOf: schema.NewParamsOneOfByParams(map[string]*schema.ParameterInfo{"query": {Type: schema.String}}),
+	}
+	calc := NewCalculator("gpt-4o", 128000)
+
+	fullSchema := calc.Count(CountInput{
+		Messages:  []*schema.Message{schema.UserMessage("hi")},
+		ToolInfos: []*schema.ToolInfo{tool},
+	})
+	deferredOnly := calc.Count(CountInput{
+		Messages:          []*schema.Message{schema.UserMessage("hi")},
+		DeferredToolInfos: []*schema.ToolInfo{tool},
+	})
+
+	if got := deferredOnly.Segs.Tools; got <= 0 {
+		t.Fatalf("Segs.Tools = %d, want > 0 for deferred tools", got)
+	}
+	if got := deferredOnly.Segs.Tools; got >= fullSchema.Segs.Tools {
+		t.Fatalf("deferred Segs.Tools = %d, want < full schema %d", got, fullSchema.Segs.Tools)
+	}
+}
+
 func TestCalculatorCountIncludesToolDefinitions(t *testing.T) {
 	t.Parallel()
 

@@ -44,7 +44,7 @@ func TestCompactIfNeededDoesNothingBelowWatermark(t *testing.T) {
 		schema.AssistantMessage("ok", nil),
 	}
 
-	got, changed, err := compactor.CompactIfNeeded(stdcontext.Background(), messages, nil)
+	got, changed, err := compactor.CompactIfNeeded(stdcontext.Background(), messages, nil, nil)
 	if err != nil {
 		t.Fatalf("CompactIfNeeded() error = %v", err)
 	}
@@ -72,7 +72,7 @@ func TestCompactIfNeededSummarizesMiddleMessages(t *testing.T) {
 
 	got, changed, err := compactor.CompactIfNeeded(stdcontext.Background(), messages, []*schema.ToolInfo{
 		{Name: "search", Desc: "search docs"},
-	})
+	}, nil)
 	if err != nil {
 		t.Fatalf("CompactIfNeeded() error = %v", err)
 	}
@@ -121,7 +121,7 @@ func TestCompactIfNeededCountsSystemMessagePressure(t *testing.T) {
 		schema.UserMessage("final user"),
 	}
 
-	got, changed, err := compactor.CompactIfNeeded(stdcontext.Background(), messages, nil)
+	got, changed, err := compactor.CompactIfNeeded(stdcontext.Background(), messages, nil, nil)
 	if err != nil {
 		t.Fatalf("CompactIfNeeded() error = %v", err)
 	}
@@ -166,7 +166,7 @@ func TestCompactIfNeededDoesNotCutToolPairs(t *testing.T) {
 		schema.AssistantMessage("answer", nil),
 	}
 
-	got, changed, err := compactor.CompactIfNeeded(stdcontext.Background(), messages, nil)
+	got, changed, err := compactor.CompactIfNeeded(stdcontext.Background(), messages, nil, nil)
 	if err != nil {
 		t.Fatalf("CompactIfNeeded() error = %v", err)
 	}
@@ -201,7 +201,7 @@ func TestCompactIfNeededDoesNotLeaveOpenToolCallInHead(t *testing.T) {
 		schema.AssistantMessage("answer", nil),
 	}
 
-	got, changed, err := compactor.CompactIfNeeded(stdcontext.Background(), messages, nil)
+	got, changed, err := compactor.CompactIfNeeded(stdcontext.Background(), messages, nil, nil)
 	if err != nil {
 		t.Fatalf("CompactIfNeeded() error = %v", err)
 	}
@@ -227,7 +227,7 @@ func TestCompactIfNeededReturnsUnchangedWhenToolPairCannotBeCutSafely(t *testing
 		schema.UserMessage("final"),
 	}
 
-	got, changed, err := compactor.CompactIfNeeded(stdcontext.Background(), messages, nil)
+	got, changed, err := compactor.CompactIfNeeded(stdcontext.Background(), messages, nil, nil)
 	if !errors.Is(err, ErrUnsafeBoundary) {
 		t.Fatalf("CompactIfNeeded() error = %v, want %v", err, ErrUnsafeBoundary)
 	}
@@ -242,7 +242,7 @@ func TestCompactIfNeededReturnsErrorWithoutDroppingMessages(t *testing.T) {
 	compactor := newTestCompactor(t, model, 160, 20)
 	messages := longConversation()
 
-	got, changed, err := compactor.CompactIfNeeded(stdcontext.Background(), messages, nil)
+	got, changed, err := compactor.CompactIfNeeded(stdcontext.Background(), messages, nil, nil)
 	if err == nil || !strings.Contains(err.Error(), wantErr.Error()) {
 		t.Fatalf("CompactIfNeeded() error = %v, want %v", err, wantErr)
 	}

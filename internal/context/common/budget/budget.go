@@ -13,6 +13,7 @@ import (
 type BudgetInput struct {
 	Messages            []*schema.Message
 	ToolInfos           []*schema.ToolInfo
+	DeferredToolInfos   []*schema.ToolInfo
 	FallbackInstruction string
 }
 
@@ -39,9 +40,10 @@ func EstimateBudget(input BudgetInput, calc *usage.Calculator) (*ContextBudget, 
 	}
 
 	breakdown := calc.Count(usage.CountInput{
-		Messages:    input.Messages,
-		ToolInfos:   input.ToolInfos,
-		Instruction: input.FallbackInstruction,
+		Messages:          input.Messages,
+		ToolInfos:         input.ToolInfos,
+		DeferredToolInfos: input.DeferredToolInfos,
+		Instruction:       input.FallbackInstruction,
 	})
 
 	return breakdownToContextBudget(breakdown), nil

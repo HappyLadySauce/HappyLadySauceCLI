@@ -99,8 +99,8 @@ func (e *TokenEstimator) CountInstruction(text string) int {
 	return e.CountText(text)
 }
 
-// CountTools estimates tokens for tool schemas.
-// CountTools 估算工具 schema 的 token 数。
+// CountTools estimates tokens for immediate tool schemas (model.WithTools).
+// CountTools 估算立即生效工具 schema 的 token 数（model.WithTools）。
 func (e *TokenEstimator) CountTools(tools []*schema.ToolInfo) (int, error) {
 	total := 0
 	for _, tool := range tools {
@@ -114,6 +114,44 @@ func (e *TokenEstimator) CountTools(tools []*schema.ToolInfo) (int, error) {
 		total += e.CountText(string(data))
 	}
 	return total, nil
+}
+
+// CountDeferredTools estimates deferred tool definitions (name + description only).
+// Deferred tools are sent via model.WithDeferredTools with defer_loading and are not
+// loaded as full schemas upfront.
+//
+// CountDeferredTools 估算延迟加载工具定义（仅 name + description）。
+// 延迟工具经 model.WithDeferredTools 发送，不会一次性以完整 schema 进入上下文。
+func (e *TokenEstimator) CountDeferredTools(tools []*schema.ToolInfo) int {
+	if e == nil {
+		return 0
+	}
+	total := 0
+	for _, tool := range tools {
+		if tool == nil {
+			continue
+		}
+		total += e.CountText(tool.Name)
+		total += e.CountText(tool.Desc)
+	}
+	return total
+}
+
+// CountModelToolContext estimates ToolInfos and DeferredToolInfos for one model call.
+// CountModelToolContext 估算一次模型调用中的 ToolInfos 与 DeferredToolInfos。
+func (e *TokenEstimator) CountModelToolContext(toolInfos, deferredToolInfos []*schema.ToolInfo) (int, error) {
+	if e == nil {
+		return 0, nil
+	}
+	total := e.CountDeferredTools(deferredToolInfos)
+	if len(toolInfos) == 0 {
+		return total, nil
+	}
+	immediate, err := e.CountTools(toolInfos)
+	if err != nil {
+		return 0, err
+	}
+	return total + immediate, nil
 }
 
 // CountText estimates tokens for text.
