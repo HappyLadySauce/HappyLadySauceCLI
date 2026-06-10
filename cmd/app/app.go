@@ -32,8 +32,6 @@ func NewAPICommand(ctx context.Context, basename string) *cobra.Command {
 			if err := viper.Unmarshal(opts); err != nil {
 				return fmt.Errorf("unmarshal options: %w", err)
 			}
-			opts.Model.MaxModelContextConfigured = isMaxModelContextConfigured(cmd)
-
 			// Keep the loaded config file path for user-facing validation errors.
 			// 保留已加载配置文件路径，供后续面向用户的校验报错使用。
 			opts.SetConfigPath(pkgoptions.LoadedConfigPath())
@@ -58,19 +56,6 @@ func NewAPICommand(ctx context.Context, basename string) *cobra.Command {
 	flag.SetUsageAndHelpFunc(cmd, *nfs, 80)
 
 	return cmd
-}
-
-func isMaxModelContextConfigured(cmd *cobra.Command) bool {
-	if cmd != nil {
-		if flag := cmd.Flags().Lookup("max-model-context"); flag != nil && flag.Changed {
-			return true
-		}
-	}
-	if viper.InConfig("model.HAPPLADYSAUCECLI_MAX_MODEL_CONTEXT") {
-		return true
-	}
-	_, ok := os.LookupEnv("HAPPLADYSAUCECLI_MAX_MODEL_CONTEXT")
-	return ok
 }
 
 func run(ctx context.Context, opts *options.Options) error {

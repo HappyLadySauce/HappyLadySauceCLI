@@ -17,10 +17,10 @@ type budgetWriterContextKey struct{}
 // TurnStats 记录回合结束后的耗时、API 用量与上下文窗口占用。
 type TurnStats struct {
 	ElapsedMs        int64
-	PromptTokens     int     // last-hop provider prompt = final model-call input / 最后一跳 prompt（最终模型调用输入）
-	CompletionTokens int     // accumulated provider completion across hops / 各跳累加 completion（本回合生成量）
-	ContextTokens    int     // session context occupancy in window / 会话上下文窗口占用总量
-	MaxContext       int     // model context window / 模型上下文窗口
+	PromptTokens     int // last-hop provider prompt = final model-call input / 最后一跳 prompt（最终模型调用输入）
+	CompletionTokens int // accumulated provider completion across hops / 各跳累加 completion（本回合生成量）
+	ContextTokens    int // session context occupancy in window / 会话上下文窗口占用总量
+	MaxContext       int // model context window / 模型上下文窗口
 }
 
 // IsZero reports whether the stats carry no displayable values.
@@ -47,11 +47,10 @@ func (s TurnStats) PercentUsed() float64 {
 // BudgetWriter stores the latest turn snapshot for one runner turn.
 // BudgetWriter 存储单轮 runner 的最新回合快照。
 type BudgetWriter struct {
-	mu                sync.RWMutex
-	stats             TurnStats
-	turnStart         time.Time
-	lastHopPrompt     int
-	lastHopCompletion int
+	mu            sync.RWMutex
+	stats         TurnStats
+	turnStart     time.Time
+	lastHopPrompt int
 }
 
 // NewBudgetWriter creates an empty budget writer.
@@ -71,7 +70,6 @@ func (w *BudgetWriter) BeginTurn() {
 	w.turnStart = time.Now()
 	w.stats = TurnStats{}
 	w.lastHopPrompt = 0
-	w.lastHopCompletion = 0
 }
 
 // AddUsage records provider usage from one model hop within the current turn.
@@ -90,9 +88,6 @@ func (w *BudgetWriter) AddUsage(snapshot usage.UsageSnapshot) {
 	w.stats.CompletionTokens += snapshot.CompletionTokens
 	if snapshot.PromptTokens > 0 {
 		w.lastHopPrompt = snapshot.PromptTokens
-	}
-	if snapshot.CompletionTokens > 0 {
-		w.lastHopCompletion = snapshot.CompletionTokens
 	}
 }
 

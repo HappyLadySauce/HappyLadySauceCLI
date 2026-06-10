@@ -8,10 +8,6 @@ import (
 	"github.com/HappyLadySauce/HappyLadySauceCLI/internal/tools/weather"
 )
 
-type AgentTools struct {
-	Tools []adk.ToolsConfig
-}
-
 func NewAgentTools() adk.ToolsConfig {
 	return adk.ToolsConfig{
 		ToolsNodeConfig: compose.ToolsNodeConfig{

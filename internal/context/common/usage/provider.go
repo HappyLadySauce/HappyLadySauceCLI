@@ -2,24 +2,12 @@ package usage
 
 import "github.com/cloudwego/eino/schema"
 
-const (
-	// UsageSourceProvider marks token usage returned by the model provider.
-	// UsageSourceProvider 表示 token 用量来自模型服务商返回值。
-	UsageSourceProvider = "provider"
-	// UsageSourceEstimated marks token usage estimated locally.
-	// UsageSourceEstimated 表示 token 用量来自本地估算。
-	UsageSourceEstimated = "estimated"
-)
-
 // UsageSnapshot is a normalized token usage snapshot for one model call.
 // UsageSnapshot 表示一次模型调用的标准化 token 用量快照。
 type UsageSnapshot struct {
 	PromptTokens     int
 	CompletionTokens int
 	TotalTokens      int
-	CachedTokens     int
-	ReasoningTokens  int
-	Source           string
 }
 
 // IsZero reports whether the snapshot carries any usage signal.
@@ -27,36 +15,28 @@ type UsageSnapshot struct {
 func (s UsageSnapshot) IsZero() bool {
 	return s.PromptTokens <= 0 &&
 		s.CompletionTokens <= 0 &&
-		s.TotalTokens <= 0 &&
-		s.CachedTokens <= 0 &&
-		s.ReasoningTokens <= 0
+		s.TotalTokens <= 0
 }
 
-// SnapshotFromMessage extracts provider usage from an Eino message.
-// SnapshotFromMessage 从 Eino message 中提取服务商返回的用量。
-func SnapshotFromMessage(msg *schema.Message) (UsageSnapshot, bool) {
+// snapshotFromMessage extracts provider usage from an Eino message.
+// snapshotFromMessage 从 Eino message 中提取服务商返回的用量。
+func snapshotFromMessage(msg *schema.Message) (UsageSnapshot, bool) {
 	if msg == nil || msg.ResponseMeta == nil || msg.ResponseMeta.Usage == nil {
 		return UsageSnapshot{}, false
 	}
-	return SnapshotFromTokenUsage(msg.ResponseMeta.Usage, UsageSourceProvider)
+	return snapshotFromTokenUsage(msg.ResponseMeta.Usage)
 }
 
-// SnapshotFromTokenUsage normalizes schema.TokenUsage.
-// SnapshotFromTokenUsage 标准化 schema.TokenUsage。
-func SnapshotFromTokenUsage(tokenUsage *schema.TokenUsage, source string) (UsageSnapshot, bool) {
+// snapshotFromTokenUsage normalizes schema.TokenUsage.
+// snapshotFromTokenUsage 标准化 schema.TokenUsage。
+func snapshotFromTokenUsage(tokenUsage *schema.TokenUsage) (UsageSnapshot, bool) {
 	if tokenUsage == nil {
 		return UsageSnapshot{}, false
-	}
-	if source == "" {
-		source = UsageSourceProvider
 	}
 	snapshot := UsageSnapshot{
 		PromptTokens:     tokenUsage.PromptTokens,
 		CompletionTokens: tokenUsage.CompletionTokens,
 		TotalTokens:      tokenUsage.TotalTokens,
-		CachedTokens:     tokenUsage.PromptTokenDetails.CachedTokens,
-		ReasoningTokens:  tokenUsage.CompletionTokensDetails.ReasoningTokens,
-		Source:           source,
 	}
 	return snapshot, !snapshot.IsZero()
 }

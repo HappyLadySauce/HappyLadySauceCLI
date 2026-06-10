@@ -19,9 +19,9 @@ func WithTurnRecorder(ctx context.Context, recorder TurnRecorder) context.Contex
 	return context.WithValue(ctx, turnRecorderContextKey{}, recorder)
 }
 
-// TurnRecorderFromContext returns the per-turn usage recorder attached to ctx.
-// TurnRecorderFromContext 返回附加在 ctx 上的单轮用量记录器。
-func TurnRecorderFromContext(ctx context.Context) TurnRecorder {
+// turnRecorderFromContext returns the per-turn usage recorder attached to ctx.
+// turnRecorderFromContext 返回附加在 ctx 上的单轮用量记录器。
+func turnRecorderFromContext(ctx context.Context) TurnRecorder {
 	if ctx == nil {
 		return nil
 	}

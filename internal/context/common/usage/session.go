@@ -82,9 +82,9 @@ func WithSkipTracking(ctx context.Context) context.Context {
 	return context.WithValue(ctx, skipTrackingContextKey{}, true)
 }
 
-// SkipTracking reports whether usage tracking is disabled for this ctx.
-// SkipTracking 判断当前 ctx 是否禁用用量追踪。
-func SkipTracking(ctx context.Context) bool {
+// skipTracking reports whether usage tracking is disabled for this ctx.
+// skipTracking 判断当前 ctx 是否禁用用量追踪。
+func skipTracking(ctx context.Context) bool {
 	if ctx == nil {
 		return false
 	}

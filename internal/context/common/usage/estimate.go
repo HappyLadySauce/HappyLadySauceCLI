@@ -24,9 +24,9 @@ const (
 	// tokensPerName 为消息包含 name 字段时的额外开销。
 	tokensPerName = 1
 
-	// ReplyPrimingTokens is the assistant reply priming overhead for a chat request.
-	// ReplyPrimingTokens 为 chat 请求中 assistant 回复预置的固定开销。
-	ReplyPrimingTokens = 3
+	// replyPrimingTokens is the assistant reply priming overhead for a chat request.
+	// replyPrimingTokens 为 chat 请求中 assistant 回复预置的固定开销。
+	replyPrimingTokens = 3
 )
 
 // TokenEstimator estimates model-visible prompt tokens.
@@ -51,7 +51,7 @@ func (e *TokenEstimator) CountMessages(messages []*schema.Message) int {
 		total += e.CountMessage(msg)
 	}
 	if len(messages) > 0 {
-		total += ReplyPrimingTokens
+		total += replyPrimingTokens
 	}
 	return total
 }

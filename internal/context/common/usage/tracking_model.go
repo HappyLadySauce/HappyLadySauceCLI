@@ -78,17 +78,17 @@ func (m *UsageTrackingChatModel) Stream(ctx context.Context, input []*schema.Mes
 }
 
 func recordModelUsage(ctx context.Context, msg *schema.Message) {
-	if SkipTracking(ctx) {
+	if skipTracking(ctx) {
 		return
 	}
-	snapshot, ok := SnapshotFromMessage(msg)
+	snapshot, ok := snapshotFromMessage(msg)
 	if !ok {
 		return
 	}
 	if session := SessionFromContext(ctx); session != nil {
 		session.UpdateFromSnapshot(snapshot)
 	}
-	if recorder := TurnRecorderFromContext(ctx); recorder != nil {
+	if recorder := turnRecorderFromContext(ctx); recorder != nil {
 		recorder.AddUsage(snapshot)
 	}
 }

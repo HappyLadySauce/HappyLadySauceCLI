@@ -12,10 +12,10 @@ import (
 const thinkingFrameInterval = 120 * time.Millisecond
 
 const (
-	colorReset    = "\x1b[0m"
-	colorUser     = "\x1b[32m"
-	colorAgent    = "\x1b[36m"
-	colorThinking = "\x1b[33m"
+	colorReset           = "\x1b[0m"
+	colorUser            = "\x1b[32m"
+	colorAgent           = "\x1b[36m"
+	colorThinking        = "\x1b[33m"
 	colorTool            = "\x1b[35m"
 	colorError           = "\x1b[31m"
 	colorStats           = "\x1b[90m"

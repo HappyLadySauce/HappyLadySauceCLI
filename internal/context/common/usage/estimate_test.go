@@ -234,7 +234,7 @@ func TestCountMessagesIncludesReplyPriming(t *testing.T) {
 	estimator := NewTokenEstimator("gpt-4o")
 	single := estimator.CountMessage(schema.UserMessage("hello"))
 	all := estimator.CountMessages([]*schema.Message{schema.UserMessage("hello")})
-	if got, want := all-single, ReplyPrimingTokens; got != want {
+	if got, want := all-single, replyPrimingTokens; got != want {
 		t.Fatalf("reply priming tokens = %d, want %d", got, want)
 	}
 }

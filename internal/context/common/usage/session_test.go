@@ -48,11 +48,11 @@ func TestSessionContextRoundTrip(t *testing.T) {
 func TestSkipTrackingRoundTrip(t *testing.T) {
 	t.Parallel()
 
-	if SkipTracking(context.Background()) {
-		t.Fatal("SkipTracking(default) = true, want false")
+	if skipTracking(context.Background()) {
+		t.Fatal("skipTracking(default) = true, want false")
 	}
 	ctx := WithSkipTracking(context.Background())
-	if !SkipTracking(ctx) {
-		t.Fatal("SkipTracking(marked) = false, want true")
+	if !skipTracking(ctx) {
+		t.Fatal("skipTracking(marked) = false, want true")
 	}
 }
