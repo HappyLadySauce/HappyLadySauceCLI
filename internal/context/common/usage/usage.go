@@ -7,6 +7,8 @@ import (
 
 	"github.com/cloudwego/eino/schema"
 	tiktoken "github.com/pkoukk/tiktoken-go"
+
+	"github.com/HappyLadySauce/HappyLadySauceCLI/internal/models/parse"
 )
 
 const (
@@ -236,7 +238,7 @@ func encodingCandidates(modelName string) []string {
 // normalizeModelName strips vendor/path prefixes and normalizes separators for API model identifiers.
 // normalizeModelName 剥离 API 模型标识中的厂商/路径前缀，并规范化分隔符。
 func normalizeModelName(modelName string) string {
-	return canonicalModelName(lastModelSegment(modelName))
+	return parse.Normalize(parse.LastSegment(modelName))
 }
 
 // inferEncodingName matches common API model aliases to a tiktoken encoding name.
@@ -260,7 +262,7 @@ func inferEncodingName(modelName string) string {
 func (r encodingRule) matches(aliases []string) bool {
 	tokenSet := make(map[string]struct{}, len(aliases)*4)
 	for _, alias := range aliases {
-		for _, token := range modelNameTokens(alias) {
+		for _, token := range parse.Tokens(alias) {
 			tokenSet[token] = struct{}{}
 		}
 	}
@@ -297,7 +299,7 @@ func (r encodingRule) matches(aliases []string) bool {
 // modelAliases returns normalized forms that preserve provider context and the final model segment.
 // modelAliases 返回保留厂商上下文与最终模型段的规范化形式。
 func modelAliases(modelName string) []string {
-	full := canonicalModelName(modelName)
+	full := parse.Normalize(modelName)
 	last := normalizeModelName(modelName)
 	if full == "" {
 		return nil
@@ -306,69 +308,6 @@ func modelAliases(modelName string) []string {
 		return []string{full}
 	}
 	return []string{last, full}
-}
-
-// lastModelSegment returns the provider-free model name used by OpenAI-compatible gateways.
-// lastModelSegment 返回 OpenAI 兼容网关中去除厂商路径后的模型名。
-func lastModelSegment(modelName string) string {
-	lower := strings.ToLower(strings.TrimSpace(modelName))
-	if lower == "" {
-		return ""
-	}
-	if idx := strings.LastIndex(lower, "/"); idx >= 0 {
-		lower = lower[idx+1:]
-	}
-	return lower
-}
-
-// canonicalModelName lowercases names and normalizes separators without losing version dots.
-// canonicalModelName 将模型名转小写并规范化分隔符，同时保留版本点号。
-func canonicalModelName(modelName string) string {
-	lower := strings.ToLower(strings.TrimSpace(modelName))
-	if lower == "" {
-		return ""
-	}
-
-	var b strings.Builder
-	lastWasDash := false
-	for _, r := range lower {
-		switch r {
-		case '/', ':', '_', ' ', '\t', '\n', '\r':
-			if !lastWasDash {
-				b.WriteByte('-')
-				lastWasDash = true
-			}
-		default:
-			b.WriteRune(r)
-			lastWasDash = r == '-'
-		}
-	}
-
-	return strings.Trim(b.String(), "-")
-}
-
-// modelNameTokens splits normalized model names on provider, version, and size separators.
-// modelNameTokens 按厂商、版本和规格分隔符切分规范化模型名。
-func modelNameTokens(modelName string) []string {
-	fields := strings.FieldsFunc(modelName, func(r rune) bool {
-		switch r {
-		case '/', ':', '_', '-', '.', ' ', '\t', '\n', '\r':
-			return true
-		default:
-			return false
-		}
-	})
-
-	tokens := make([]string, 0, len(fields))
-	for _, field := range fields {
-		if field != "" {
-			tokens = append(tokens, field)
-		}
-	}
-	if strings.Contains(modelName, "meta-llama") {
-		tokens = append(tokens, "meta-llama")
-	}
-	return tokens
 }
 
 // estimateTextByChars is the last-resort estimator when tiktoken cannot be loaded.
