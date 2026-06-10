@@ -6,7 +6,6 @@ import (
 
 	"github.com/cloudwego/eino/adk"
 	"github.com/cloudwego/eino/schema"
-	"k8s.io/klog/v2"
 
 	contextbudget "github.com/HappyLadySauce/HappyLadySauceCLI/internal/context/common/budget"
 	"github.com/HappyLadySauce/HappyLadySauceCLI/internal/context/common/usage"
@@ -57,27 +56,23 @@ func (m *budgetMiddleware) AfterModelRewriteState(ctx context.Context, state *ad
 	return ctx, state, nil
 }
 
-// AfterAgent classifies the final model-visible context locally, then FinalizeTurn
-// scales segments to the last provider prompt when available.
-// AfterAgent 在回合结束后本地分类最终上下文，FinalizeTurn 在可用时用最后一跳 provider prompt 缩放分段。
+// AfterAgent classifies the final model-visible context, then FinalizeTurn
+// scales segments to provider usage when available.
+// AfterAgent 在回合结束后分类最终上下文，FinalizeTurn 在可用时用 provider prompt 缩放分段。
 func (m *budgetMiddleware) AfterAgent(ctx context.Context, state *adk.ChatModelAgentState) (context.Context, error) {
 	writer := contextbudget.BudgetWriterFromContext(ctx)
 	if writer == nil || state == nil {
 		return ctx, nil
 	}
 
-	budget, err := contextbudget.EstimateBudget(contextbudget.BudgetInput{
-		Messages:            state.Messages,
-		ToolInfos:           state.ToolInfos,
-		DeferredToolInfos:   state.DeferredToolInfos,
-		FallbackInstruction: m.instruction,
-	}, m.calculator)
-	if err != nil {
-		klog.Warningf("context budget estimate skipped: %v", err)
-		return ctx, nil
-	}
-	contextbudget.RecalculateBudgetTotals(budget)
-	writer.FinalizeTurn(budget)
+	breakdown := m.calculator.Count(usage.CountInput{
+		Messages:          state.Messages,
+		ToolInfos:         state.ToolInfos,
+		DeferredToolInfos: state.DeferredToolInfos,
+		Instruction:       m.instruction,
+	})
+
+	writer.FinalizeTurn(breakdown)
 	return ctx, nil
 }
 

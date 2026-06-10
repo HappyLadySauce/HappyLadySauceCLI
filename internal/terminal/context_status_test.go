@@ -20,9 +20,9 @@ func TestRendererWriteTurnStatusUsesErrOut(t *testing.T) {
 			PromptTokens:     1340,
 			CompletionTokens: 31,
 		},
-		Budget: &contextbudget.ContextBudget{
-			MaxTokens:   128000,
-			PercentFull: 0.35,
+		Budget: &usage.Breakdown{
+			MaxContext:     128000,
+			EstimatedTotal: 458, // 318+103+37, for PercentUsed() ≈ 0.36% → "<1%"
 			Segs: usage.SegmentCounts{
 				Conversation: 318,
 				Tools:        103,

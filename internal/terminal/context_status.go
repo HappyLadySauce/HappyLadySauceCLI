@@ -4,6 +4,7 @@ import (
 	"fmt"
 
 	contextbudget "github.com/HappyLadySauce/HappyLadySauceCLI/internal/context/common/budget"
+	"github.com/HappyLadySauce/HappyLadySauceCLI/internal/context/common/usage"
 	terminalbudget "github.com/HappyLadySauce/HappyLadySauceCLI/internal/terminal/budget"
 )
 
@@ -27,6 +28,6 @@ func (r *Renderer) WriteTurnStatus(status contextbudget.TurnStatus) {
 
 // WriteContextStatus writes a context budget status line to stderr.
 // WriteContextStatus 将上下文预算状态行写入 stderr。
-func (r *Renderer) WriteContextStatus(budget *contextbudget.ContextBudget) {
+func (r *Renderer) WriteContextStatus(budget *usage.Breakdown) {
 	r.WriteTurnStatus(contextbudget.TurnStatus{Budget: budget})
 }

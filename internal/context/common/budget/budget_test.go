@@ -1,6 +1,8 @@
 package budget
 
 import (
+	"context"
+	"sync"
 	"testing"
 
 	"github.com/cloudwego/eino/schema"
@@ -12,7 +14,7 @@ func newTestCalculator() *usage.Calculator {
 	return usage.NewCalculator("gpt-4o", 1000)
 }
 
-func TestEstimateBudgetSplitsSystemAndConversation(t *testing.T) {
+func TestCountSplitsSystemAndConversation(t *testing.T) {
 	t.Parallel()
 
 	calc := newTestCalculator()
@@ -22,12 +24,9 @@ func TestEstimateBudgetSplitsSystemAndConversation(t *testing.T) {
 		schema.AssistantMessage("hi", nil),
 	}
 
-	budget, err := EstimateBudget(BudgetInput{Messages: messages}, calc)
-	if err != nil {
-		t.Fatalf("EstimateBudget() error = %v", err)
-	}
+	breakdown := calc.Count(usage.CountInput{Messages: messages})
 
-	got := budget.Segs.System + budget.Segs.Conversation
+	got := breakdown.Segs.System + breakdown.Segs.Conversation
 	raw := usage.NewTokenEstimator("gpt-4o")
 	want := raw.CountMessages(messages)
 	if got != want {
@@ -35,77 +34,67 @@ func TestEstimateBudgetSplitsSystemAndConversation(t *testing.T) {
 	}
 }
 
-func TestEstimateBudgetUsesFallbackInstruction(t *testing.T) {
+func TestCountUsesFallbackInstruction(t *testing.T) {
 	t.Parallel()
 
 	calc := newTestCalculator()
 	messages := []*schema.Message{schema.UserMessage("hello")}
 
-	budget, err := EstimateBudget(BudgetInput{
-		Messages:            messages,
-		FallbackInstruction: "fallback system",
-	}, calc)
-	if err != nil {
-		t.Fatalf("EstimateBudget() error = %v", err)
-	}
+	breakdown := calc.Count(usage.CountInput{
+		Messages:    messages,
+		Instruction: "fallback system",
+	})
 
 	raw := usage.NewTokenEstimator("gpt-4o")
 	wantInst := raw.CountText("fallback system")
-	if got := budget.Segs.System; got < wantInst {
+	if got := breakdown.Segs.System; got < wantInst {
 		t.Fatalf("Segs.System = %d, want at least %d (instruction tokens)", got, wantInst)
 	}
 }
 
-func TestEstimateBudgetReplyPriming(t *testing.T) {
+func TestCountReplyPriming(t *testing.T) {
 	t.Parallel()
 
 	calc := newTestCalculator()
 	message := schema.SystemMessage("system only")
 
-	budget, err := EstimateBudget(BudgetInput{Messages: []*schema.Message{message}}, calc)
-	if err != nil {
-		t.Fatalf("EstimateBudget() error = %v", err)
-	}
+	breakdown := calc.Count(usage.CountInput{Messages: []*schema.Message{message}})
 
 	raw := usage.NewTokenEstimator("gpt-4o")
 	want := raw.CountMessage(message) + usage.ReplyPrimingTokens
-	if got := budget.Segs.System; got != want {
+	if got := breakdown.Segs.System; got != want {
 		t.Fatalf("Segs.System = %d, want %d", got, want)
 	}
 }
 
-func TestEstimateBudgetAllSegmentsAndPercent(t *testing.T) {
+func TestCountAllSegmentsAndPercent(t *testing.T) {
 	t.Parallel()
 
 	calc := newTestCalculator()
-	budget, err := EstimateBudget(BudgetInput{
+	breakdown := calc.Count(usage.CountInput{
 		Messages:  []*schema.Message{schema.SystemMessage("system"), schema.UserMessage("hello")},
 		ToolInfos: []*schema.ToolInfo{{Name: "lookup", Desc: "lookup data"}},
-	}, calc)
-	if err != nil {
-		t.Fatalf("EstimateBudget() error = %v", err)
+	})
+
+	if breakdown.Segs.System <= 0 {
+		t.Fatalf("Segs.System = %d, want > 0", breakdown.Segs.System)
+	}
+	if breakdown.Segs.Conversation <= 0 {
+		t.Fatalf("Segs.Conversation = %d, want > 0", breakdown.Segs.Conversation)
+	}
+	if breakdown.Segs.Tools <= 0 {
+		t.Fatalf("Segs.Tools = %d, want > 0", breakdown.Segs.Tools)
 	}
 
-	if budget.Segs.System <= 0 {
-		t.Fatalf("Segs.System = %d, want > 0", budget.Segs.System)
+	if got, want := breakdown.Total(), breakdown.Segs.Total(); got != want {
+		t.Fatalf("Total() = %d, Segs.Total() = %d", got, want)
 	}
-	if budget.Segs.Conversation <= 0 {
-		t.Fatalf("Segs.Conversation = %d, want > 0", budget.Segs.Conversation)
-	}
-	if budget.Segs.Tools <= 0 {
-		t.Fatalf("Segs.Tools = %d, want > 0", budget.Segs.Tools)
-	}
-
-	got := budget.Segs.Total()
-	if budget.TotalTokens != got {
-		t.Fatalf("TotalTokens = %d, Segs.Total() = %d", budget.TotalTokens, got)
-	}
-	if got, want := budget.PercentFull, float64(budget.TotalTokens)/1000*100; got != want {
-		t.Fatalf("PercentFull = %f, want %f", got, want)
+	if got, want := breakdown.PercentUsed(), float64(breakdown.Total())/1000*100; got != want {
+		t.Fatalf("PercentUsed() = %f, want %f", got, want)
 	}
 }
 
-func TestEstimateBudgetClassifiesToolMessages(t *testing.T) {
+func TestCountClassifiesToolMessages(t *testing.T) {
 	t.Parallel()
 
 	calc := newTestCalculator()
@@ -130,61 +119,266 @@ func TestEstimateBudgetClassifiesToolMessages(t *testing.T) {
 	}
 	toolInfos := []*schema.ToolInfo{{Name: "get_weather", Desc: "get weather"}}
 
-	budget, err := EstimateBudget(BudgetInput{Messages: messages, ToolInfos: toolInfos}, calc)
-	if err != nil {
-		t.Fatalf("EstimateBudget() error = %v", err)
-	}
+	breakdown := calc.Count(usage.CountInput{Messages: messages, ToolInfos: toolInfos})
 
-	if budget.Segs.Tools <= 0 {
-		t.Fatalf("Segs.Tools = %d, want > 0", budget.Segs.Tools)
+	if breakdown.Segs.Tools <= 0 {
+		t.Fatalf("Segs.Tools = %d, want > 0", breakdown.Segs.Tools)
 	}
 }
 
-func TestEstimateBudgetToolDefWithoutToolMessages(t *testing.T) {
+func TestCountToolDefWithoutToolMessages(t *testing.T) {
 	t.Parallel()
 
 	calc := newTestCalculator()
 	toolInfos := []*schema.ToolInfo{{Name: "lookup", Desc: "lookup data"}}
-	budget, err := EstimateBudget(BudgetInput{
+	breakdown := calc.Count(usage.CountInput{
 		Messages:  []*schema.Message{schema.UserMessage("hello")},
 		ToolInfos: toolInfos,
-	}, calc)
-	if err != nil {
-		t.Fatalf("EstimateBudget() error = %v", err)
-	}
+	})
 
-	if budget.Segs.Tools <= 0 {
-		t.Fatalf("Segs.Tools = %d, want > 0", budget.Segs.Tools)
+	if breakdown.Segs.Tools <= 0 {
+		t.Fatalf("Segs.Tools = %d, want > 0", breakdown.Segs.Tools)
 	}
 }
 
-func TestEstimateBudgetRequiresCalculator(t *testing.T) {
+
+func TestBudgetWriterWriteReadClear(t *testing.T) {
 	t.Parallel()
 
-	_, err := EstimateBudget(BudgetInput{}, nil)
-	if err == nil {
-		t.Fatal("EstimateBudget(nil calculator) error = nil, want error")
+	writer := NewBudgetWriter()
+	if got := writer.Read(); got != nil {
+		t.Fatalf("initial Read() = %#v, want nil", got)
+	}
+
+	breakdown := &usage.Breakdown{
+		MaxContext:     100,
+		EstimatedTotal: 10,
+		Segs:           usage.SegmentCounts{Conversation: 10},
+	}
+	writer.Write(breakdown)
+	breakdown.Segs.Conversation = 99
+
+	got := writer.Read()
+	if got == nil {
+		t.Fatal("Read() = nil, want breakdown")
+	}
+	if got.Segs.Conversation != 10 {
+		t.Fatalf("Read().Segs.Conversation = %d, want defensive copy value 10", got.Segs.Conversation)
+	}
+	got.Segs.Conversation = 55
+	if reread := writer.Read(); reread.Segs.Conversation != 10 {
+		t.Fatalf("Read() returned non-defensive copy, got %d", reread.Segs.Conversation)
+	}
+
+	writer.Clear()
+	if got := writer.Read(); got != nil {
+		t.Fatalf("Read() after Clear() = %#v, want nil", got)
 	}
 }
 
-func TestRecalculateBudgetTotals(t *testing.T) {
+func TestBudgetWriterConcurrent(t *testing.T) {
+	writer := NewBudgetWriter()
+
+	var wg sync.WaitGroup
+	for i := 1; i <= 64; i++ {
+		i := i
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			writer.Write(&usage.Breakdown{
+				MaxContext:     1000,
+				EstimatedTotal: i,
+				Segs:           usage.SegmentCounts{Conversation: i},
+			})
+			_ = writer.Read()
+		}()
+	}
+	wg.Wait()
+
+	got := writer.Read()
+	if got == nil {
+		t.Fatal("Read() = nil after concurrent writes")
+	}
+	if got.EstimatedTotal <= 0 || got.Segs.Conversation <= 0 {
+		t.Fatalf("Read() returned incomplete breakdown: %#v", got)
+	}
+}
+
+func TestBudgetWriterContextRoundTrip(t *testing.T) {
 	t.Parallel()
 
-	budget := &ContextBudget{
-		MaxTokens: 100,
+	writer := NewBudgetWriter()
+	ctx := WithBudgetWriter(context.Background(), writer)
+	if got := BudgetWriterFromContext(ctx); got != writer {
+		t.Fatalf("BudgetWriterFromContext() = %#v, want original writer", got)
+	}
+	if got := BudgetWriterFromContext(context.Background()); got != nil {
+		t.Fatalf("BudgetWriterFromContext(empty) = %#v, want nil", got)
+	}
+}
+
+func TestBudgetWriterApplyUsage(t *testing.T) {
+	t.Parallel()
+
+	writer := NewBudgetWriter()
+	writer.Write(&usage.Breakdown{
+		MaxContext:     1000,
+		EstimatedTotal: 200,
+		Segs:           usage.SegmentCounts{Conversation: 200},
+	})
+
+	writer.ApplyUsage(usage.UsageSnapshot{
+		PromptTokens: 250,
+		Source:       usage.UsageSourceProvider,
+	})
+
+	got := writer.Read()
+	if got.ActualPrompt != 250 || got.Total() != 250 || got.PercentUsed() != 25 {
+		t.Fatalf("breakdown after usage = %#v, want actual usage merged", got)
+	}
+	if got.EstimatedTotal != 200 || got.Source != usage.UsageSourceProvider {
+		t.Fatalf("estimated/source after usage = %d/%q, want 200/provider", got.EstimatedTotal, got.Source)
+	}
+
+	got.Segs.Conversation = 999
+	if reread := writer.Read(); reread.Segs.Conversation != 250 {
+		t.Fatalf("Read() leaked after usage, got %d", reread.Segs.Conversation)
+	}
+}
+
+func TestBudgetWriterApplyUsageProportionalScaling(t *testing.T) {
+	t.Parallel()
+
+	writer := NewBudgetWriter()
+	writer.Write(&usage.Breakdown{
+		MaxContext:     128000,
+		EstimatedTotal: 1500,
 		Segs: usage.SegmentCounts{
-			Conversation: 20,
-			Tools:        5,
-			System:       -3,
+			System:       500,
+			Conversation: 800,
+			Tools:        200,
 		},
-	}
+	})
 
-	RecalculateBudgetTotals(budget)
+	writer.ApplyUsage(usage.UsageSnapshot{
+		PromptTokens:     1800,
+		CompletionTokens: 30,
+		Source:           usage.UsageSourceProvider,
+	})
 
-	if got, want := budget.TotalTokens, 25; got != want {
-		t.Fatalf("TotalTokens = %d, want %d", got, want)
+	got := writer.Read()
+	if got.Segs.System != 600 || got.Segs.Conversation != 960 || got.Segs.Tools != 240 {
+		t.Fatalf("Segs = %#v, want System=600 Conversation=960 Tools=240", got.Segs)
 	}
-	if got, want := budget.PercentFull, 25.0; got != want {
-		t.Fatalf("PercentFull = %f, want %f", got, want)
+	if got.ActualPrompt != 1800 || got.Total() != 1800 {
+		t.Fatalf("ActualPrompt/Total = %d/%d, want 1800/1800", got.ActualPrompt, got.Total())
+	}
+	if got.ActualOutput != 30 {
+		t.Fatalf("ActualOutput = %d, want 30", got.ActualOutput)
+	}
+	if got.Source != usage.UsageSourceProvider {
+		t.Fatalf("Source = %q, want provider", got.Source)
+	}
+}
+
+func TestBudgetWriterApplyUsageStoresCachedAndReasoning(t *testing.T) {
+	t.Parallel()
+
+	writer := NewBudgetWriter()
+	writer.Write(&usage.Breakdown{
+		MaxContext:     128000,
+		EstimatedTotal: 100,
+		Segs:           usage.SegmentCounts{Conversation: 100},
+	})
+
+	writer.ApplyUsage(usage.UsageSnapshot{
+		PromptTokens:     120,
+		CompletionTokens: 20,
+		CachedTokens:     10,
+		ReasoningTokens:  5,
+		Source:           usage.UsageSourceProvider,
+	})
+
+	got := writer.Read()
+	if got.CachedTokens != 10 || got.ReasoningTokens != 5 {
+		t.Fatalf("cached/reasoning = %d/%d, want 10/5", got.CachedTokens, got.ReasoningTokens)
+	}
+}
+
+func TestBudgetWriterFinalizeTurnUsesLastHopForContext(t *testing.T) {
+	t.Parallel()
+
+	writer := NewBudgetWriter()
+	writer.BeginTurn()
+	writer.AddUsage(usage.UsageSnapshot{PromptTokens: 400, CompletionTokens: 50})
+	writer.AddUsage(usage.UsageSnapshot{PromptTokens: 561, CompletionTokens: 52})
+
+	writer.FinalizeTurn(&usage.Breakdown{
+		MaxContext:     128000,
+		EstimatedTotal: 765,
+		Segs: usage.SegmentCounts{
+			System:       34,
+			Conversation: 483,
+			Tools:        248,
+		},
+		Source: usage.UsageSourceEstimated,
+	})
+
+	status := writer.ReadTurnStatus()
+	if status.Stats.PromptTokens != 961 || status.Stats.CompletionTokens != 102 {
+		t.Fatalf("stats = %#v, want accumulated prompt=961 completion=102", status.Stats)
+	}
+	if status.Budget == nil {
+		t.Fatal("budget = nil")
+	}
+	if status.Budget.ActualPrompt != 561 || status.Budget.Total() != 561 {
+		t.Fatalf("context total = %d/%d, want last-hop prompt 561", status.Budget.ActualPrompt, status.Budget.Total())
+	}
+	if status.Budget.Source != usage.UsageSourceProvider {
+		t.Fatalf("Source = %q, want provider", status.Budget.Source)
+	}
+	if got := status.Budget.Segs.Total(); got != 561 {
+		t.Fatalf("scaled segs total = %d, want 561", got)
+	}
+}
+
+func TestBudgetWriterFinalizeTurnFallsBackToEstimateWithoutProvider(t *testing.T) {
+	t.Parallel()
+
+	writer := NewBudgetWriter()
+	writer.BeginTurn()
+	writer.FinalizeTurn(&usage.Breakdown{
+		MaxContext:     128000,
+		EstimatedTotal: 188,
+		Segs: usage.SegmentCounts{
+			System:       34,
+			Conversation: 79,
+			Tools:        75,
+		},
+	})
+
+	status := writer.ReadTurnStatus()
+	if status.Budget == nil {
+		t.Fatal("budget = nil")
+	}
+	if status.Budget.Source != usage.UsageSourceEstimated {
+		t.Fatalf("Source = %q, want estimated", status.Budget.Source)
+	}
+	if status.Budget.Total() != 188 || status.Budget.Segs.Total() != 188 {
+		t.Fatalf("budget = %#v, want local estimate 188", status.Budget)
+	}
+}
+
+func TestBudgetWriterNilReceivers(t *testing.T) {
+	t.Parallel()
+
+	var writer *BudgetWriter
+	writer.Write(&usage.Breakdown{EstimatedTotal: 1})
+	writer.Clear()
+	if got := writer.Read(); got != nil {
+		t.Fatalf("nil writer Read() = %#v, want nil", got)
+	}
+	if got := WithBudgetWriter(nil, NewBudgetWriter()); got != nil {
+		t.Fatalf("WithBudgetWriter(nil, writer) = %#v, want nil", got)
 	}
 }

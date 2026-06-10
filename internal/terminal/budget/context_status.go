@@ -6,6 +6,7 @@ import (
 	"strings"
 
 	contextbudget "github.com/HappyLadySauce/HappyLadySauceCLI/internal/context/common/budget"
+	"github.com/HappyLadySauce/HappyLadySauceCLI/internal/context/common/usage"
 )
 
 // FormatStatsLine formats per-turn latency and provider token usage.
@@ -22,18 +23,18 @@ func FormatStatsLine(stats contextbudget.TurnStats) string {
 	)
 }
 
-// FormatContextStatusLine formats the post-turn context budget status line.
-// FormatContextStatusLine 格式化回合结束后的上下文预算状态行。
-func FormatContextStatusLine(budget *contextbudget.ContextBudget) string {
-	if budget == nil || budget.MaxTokens <= 0 {
+// FormatContextStatusLine formats the post-turn context budget status line from a Breakdown.
+// FormatContextStatusLine 基于 Breakdown 格式化回合结束后的上下文预算状态行。
+func FormatContextStatusLine(b *usage.Breakdown) string {
+	if b == nil || b.MaxContext <= 0 {
 		return ""
 	}
 
 	parts := []string{
-		fmt.Sprintf("[context %s %s", formatPercent(budget.PercentFull), formatWindowTokens(budget.MaxTokens)),
-		fmt.Sprintf("conv %s", formatSegmentTokens(budget.Segs.Conversation)),
-		fmt.Sprintf("tools %s", formatSegmentTokens(budget.Segs.Tools)),
-		fmt.Sprintf("sys %s", formatSegmentTokens(budget.Segs.System)),
+		fmt.Sprintf("[context %s %s", formatPercent(b.PercentUsed()), formatWindowTokens(b.MaxContext)),
+		fmt.Sprintf("conv %s", formatSegmentTokens(b.Segs.Conversation)),
+		fmt.Sprintf("tools %s", formatSegmentTokens(b.Segs.Tools)),
+		fmt.Sprintf("sys %s", formatSegmentTokens(b.Segs.System)),
 	}
 	return strings.Join(parts, " | ") + "]"
 }
