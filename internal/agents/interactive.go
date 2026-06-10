@@ -87,12 +87,12 @@ func RunLoop(ctx context.Context, cfg *config.Config) error {
 		budgetWriter := contextbudget.NewBudgetWriter()
 		runCtx := contextbudget.WithBudgetWriter(ctx, budgetWriter)
 		iter := runner.Run(runCtx, history)
-		assistantMessage, exited, err := ConsumeAgentEvents(iter, renderer)
+		turnMessages, exited, err := ConsumeAgentEvents(iter, renderer)
 		if err != nil {
 			return err
 		}
-		if assistantMessage != nil {
-			history = append(history, assistantMessage)
+		if len(turnMessages) > 0 {
+			history = append(history, turnMessages...)
 		}
 		if exited {
 			return nil

@@ -119,14 +119,14 @@ func (b *Breakdown) ApplyProvider(s UsageSnapshot) {
 	if b.EstimatedTotal <= 0 || s.PromptTokens <= 0 {
 		return
 	}
-	b.Segs = scaleSegmentCounts(b.Segs, b.EstimatedTotal, s.PromptTokens)
+	b.Segs = ScaleSegmentCounts(b.Segs, b.EstimatedTotal, s.PromptTokens)
 }
 
 // scaleSegmentCounts proportionally scales segment counts and absorbs rounding
 // remainder into the segment with the largest value.
 //
 // scaleSegmentCounts 按比例缩放各分段计数，舍入余量分配到值最大的分段。
-func scaleSegmentCounts(counts SegmentCounts, estimatedTotal, targetTotal int) SegmentCounts {
+func ScaleSegmentCounts(counts SegmentCounts, estimatedTotal, targetTotal int) SegmentCounts {
 	if counts.IsZero() || estimatedTotal <= 0 || targetTotal <= 0 {
 		return counts
 	}

@@ -57,8 +57,9 @@ func (m *budgetMiddleware) AfterModelRewriteState(ctx context.Context, state *ad
 	return ctx, state, nil
 }
 
-// AfterAgent estimates the final model-visible context after the turn completes.
-// AfterAgent 在回合结束后估算最终模型可见上下文。
+// AfterAgent classifies the final model-visible context locally, then FinalizeTurn
+// scales segments to the last provider prompt when available.
+// AfterAgent 在回合结束后本地分类最终上下文，FinalizeTurn 在可用时用最后一跳 provider prompt 缩放分段。
 func (m *budgetMiddleware) AfterAgent(ctx context.Context, state *adk.ChatModelAgentState) (context.Context, error) {
 	writer := contextbudget.BudgetWriterFromContext(ctx)
 	if writer == nil || state == nil {

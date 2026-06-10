@@ -178,6 +178,70 @@ func TestBudgetWriterApplyUsageStoresCachedAndReasoning(t *testing.T) {
 	}
 }
 
+func TestBudgetWriterFinalizeTurnUsesLastHopForContext(t *testing.T) {
+	t.Parallel()
+
+	writer := NewBudgetWriter()
+	writer.BeginTurn()
+	writer.AddUsage(usage.UsageSnapshot{PromptTokens: 400, CompletionTokens: 50})
+	writer.AddUsage(usage.UsageSnapshot{PromptTokens: 561, CompletionTokens: 52})
+
+	writer.FinalizeTurn(&ContextBudget{
+		MaxTokens:            128000,
+		EstimatedTotalTokens: 765,
+		Segs: usage.SegmentCounts{
+			System:       34,
+			Conversation: 483,
+			Tools:        248,
+		},
+		UsageSource: usage.UsageSourceEstimated,
+	})
+
+	status := writer.ReadTurnStatus()
+	if status.Stats.PromptTokens != 961 || status.Stats.CompletionTokens != 102 {
+		t.Fatalf("stats = %#v, want accumulated prompt=961 completion=102", status.Stats)
+	}
+	if status.Budget == nil {
+		t.Fatal("budget = nil")
+	}
+	if status.Budget.ActualPromptTokens != 561 || status.Budget.TotalTokens != 561 {
+		t.Fatalf("context total = %d/%d, want last-hop prompt 561", status.Budget.ActualPromptTokens, status.Budget.TotalTokens)
+	}
+	if status.Budget.UsageSource != usage.UsageSourceProvider {
+		t.Fatalf("UsageSource = %q, want provider", status.Budget.UsageSource)
+	}
+	if got := status.Budget.Segs.Total(); got != 561 {
+		t.Fatalf("scaled segs total = %d, want 561", got)
+	}
+}
+
+func TestBudgetWriterFinalizeTurnFallsBackToEstimateWithoutProvider(t *testing.T) {
+	t.Parallel()
+
+	writer := NewBudgetWriter()
+	writer.BeginTurn()
+	writer.FinalizeTurn(&ContextBudget{
+		MaxTokens:            128000,
+		EstimatedTotalTokens: 188,
+		Segs: usage.SegmentCounts{
+			System:       34,
+			Conversation: 79,
+			Tools:        75,
+		},
+	})
+
+	status := writer.ReadTurnStatus()
+	if status.Budget == nil {
+		t.Fatal("budget = nil")
+	}
+	if status.Budget.UsageSource != usage.UsageSourceEstimated {
+		t.Fatalf("UsageSource = %q, want estimated", status.Budget.UsageSource)
+	}
+	if status.Budget.TotalTokens != 188 || status.Budget.Segs.Total() != 188 {
+		t.Fatalf("budget = %#v, want local estimate 188", status.Budget)
+	}
+}
+
 func TestBudgetWriterNilReceivers(t *testing.T) {
 	t.Parallel()
 

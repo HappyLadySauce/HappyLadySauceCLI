@@ -28,10 +28,11 @@ type TurnStatus struct {
 // BudgetWriter stores the latest context budget snapshot for one runner turn.
 // BudgetWriter 存储单轮 runner 的最新上下文预算快照。
 type BudgetWriter struct {
-	mu        sync.RWMutex
-	data      *ContextBudget
-	turnStart time.Time
-	stats     TurnStats
+	mu            sync.RWMutex
+	data          *ContextBudget
+	turnStart     time.Time
+	stats         TurnStats
+	lastHopPrompt int // last model hop prompt for context occupancy / 最后一跳 prompt，用于上下文占用
 }
 
 // NewBudgetWriter creates an empty budget snapshot writer.
@@ -50,6 +51,7 @@ func (w *BudgetWriter) BeginTurn() {
 	defer w.mu.Unlock()
 	w.turnStart = time.Now()
 	w.stats = TurnStats{}
+	w.lastHopPrompt = 0
 }
 
 // AddUsage accumulates provider usage from one model hop within the current turn.
@@ -62,10 +64,28 @@ func (w *BudgetWriter) AddUsage(snapshot usage.UsageSnapshot) {
 	defer w.mu.Unlock()
 	w.stats.PromptTokens += snapshot.PromptTokens
 	w.stats.CompletionTokens += snapshot.CompletionTokens
+	if snapshot.PromptTokens > 0 {
+		// Context line uses the final hop prompt as current session occupancy.
+		// Context 行以最后一跳 prompt 表示当前会话占用。
+		w.lastHopPrompt = snapshot.PromptTokens
+	}
 }
 
 // FinalizeTurn stores the post-turn context budget and closes elapsed-time tracking.
+//
+// Context line policy:
+//   - Prefer the last model hop's provider prompt_tokens for window occupancy.
+//   - Scale locally classified segments proportionally to that prompt total.
+//   - Fall back to local estimates when provider usage is unavailable.
+//
+// Stats line continues to use accumulated provider usage from AddUsage.
+//
 // FinalizeTurn 写入回合结束后的上下文预算并结束耗时统计。
+//
+// Context 行策略：
+//   - 优先用最后一跳 provider prompt_tokens 表示当前会话占用；
+//   - 本地分类分段按比例缩放到该 prompt 总量；
+//   - 无 provider 用量时回退到本地估算。
 func (w *BudgetWriter) FinalizeTurn(budget *ContextBudget) {
 	if w == nil {
 		return
@@ -75,6 +95,27 @@ func (w *BudgetWriter) FinalizeTurn(budget *ContextBudget) {
 	if !w.turnStart.IsZero() {
 		w.stats.ElapsedMs = time.Since(w.turnStart).Milliseconds()
 	}
+
+	if budget != nil {
+		if w.lastHopPrompt > 0 && budget.EstimatedTotalTokens > 0 {
+			breakdown := BreakdownFromContextBudget(budget)
+			if breakdown == nil {
+				breakdown = &usage.Breakdown{MaxContext: budget.MaxTokens}
+			}
+			breakdown.ApplyProvider(usage.UsageSnapshot{
+				PromptTokens: w.lastHopPrompt,
+				Source:       usage.UsageSourceProvider,
+			})
+			budget = breakdownToContextBudget(breakdown)
+		} else {
+			RecalculateBudgetTotals(budget)
+			if budget.UsageSource == "" {
+				budget.UsageSource = usage.UsageSourceEstimated
+			}
+		}
+		budget.ActualCompletionTokens = w.stats.CompletionTokens
+	}
+
 	w.data = cloneContextBudget(budget)
 }
 

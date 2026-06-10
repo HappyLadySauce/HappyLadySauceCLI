@@ -5,7 +5,7 @@
 //  2. ConsumeAgentEvents walks each AgentEvent and delegates message rendering.
 //  3. renderMessageOutput chooses streaming vs complete-message rendering.
 //  4. Structured lifecycle signals go through EmitAgentEvent; token text goes through Write.
-//  5. The last assistant message is returned for conversation history; exit/error short-circuit the loop.
+//  5. All assistant and tool messages from the turn are returned for conversation history; exit/error short-circuit the loop.
 //
 // Package agents 将 Eino ADK agent 事件桥接为终端友好的流式输出。
 //
@@ -14,7 +14,7 @@
 //  2. ConsumeAgentEvents 遍历每个 AgentEvent 并委托消息渲染。
 //  3. renderMessageOutput 在流式与完整消息渲染之间分流。
 //  4. 结构化生命周期信号走 EmitAgentEvent，逐 token 文本走 Write。
-//  5. 返回最后一条 assistant 消息供会话历史使用；exit/error 会提前结束循环。
+//  5. 返回本轮全部 assistant 与 tool 消息供会话历史使用；exit/error 会提前结束循环。
 package agents
 
 import (
@@ -82,28 +82,28 @@ type AgentEventStream interface {
 // It processes events in order until the iterator is exhausted or a terminal condition occurs:
 //   - event.Err: emits AgentStreamEventError, returns (nil, false, err).
 //   - event.Action.Exit: emits AgentStreamEventExit, returns (lastAssistant, true, nil).
-//   - message output: rendered via renderMessageOutput; assistant messages update lastAssistant.
+//   - message output: rendered via renderMessageOutput; assistant and tool messages are collected for history.
 //
-// Returns the last assistant message for history append, whether the agent requested exit,
-// and any fatal consumption error.
+// Returns all assistant and tool messages produced during the turn (in event order), whether the agent
+// requested exit, and any fatal consumption error.
 //
 // ConsumeAgentEvents 消费 Eino ADK 事件迭代器，并以流式片段输出。
 //
 // 按顺序处理事件，直到迭代器结束或遇到终止条件：
 //   - event.Err：发出 AgentStreamEventError，返回 (nil, false, err)。
 //   - event.Action.Exit：发出 AgentStreamEventExit，返回 (lastAssistant, true, nil)。
-//   - 消息输出：经 renderMessageOutput 渲染；assistant 消息会更新 lastAssistant。
+//   - 消息输出：经 renderMessageOutput 渲染；assistant 与 tool 消息会进入历史收集列表。
 //
-// 返回值依次为：供历史追加的最后一条 assistant 消息、agent 是否请求退出、致命消费错误。
-func ConsumeAgentEvents(iter *adk.AsyncIterator[*adk.AgentEvent], stream AgentEventStream) (*schema.Message, bool, error) {
-	var lastAssistant *schema.Message
+// 返回值依次为：供历史追加的本轮消息列表、agent 是否请求退出、致命消费错误。
+func ConsumeAgentEvents(iter *adk.AsyncIterator[*adk.AgentEvent], stream AgentEventStream) ([]*schema.Message, bool, error) {
+	var turnMessages []*schema.Message
 
 	for {
 		event, ok := iter.Next()
 		if !ok {
-			// Iterator exhausted; return accumulated assistant reply for history.
-			// 迭代器耗尽；返回已累积的 assistant 回复供历史记录。
-			return lastAssistant, false, nil
+			// Iterator exhausted; return accumulated turn messages for history.
+			// 迭代器耗尽；返回已累积的本轮消息供历史记录。
+			return turnMessages, false, nil
 		}
 		if event.Err != nil {
 			klog.Errorf("agent loop error: %v", event.Err)
@@ -112,7 +112,7 @@ func ConsumeAgentEvents(iter *adk.AsyncIterator[*adk.AgentEvent], stream AgentEv
 		}
 		if event.Action != nil && event.Action.Exit {
 			stream.EmitAgentEvent(AgentStreamEventExit, event.AgentName, "", "", nil)
-			return lastAssistant, true, nil
+			return turnMessages, true, nil
 		}
 		if event.Output == nil || event.Output.MessageOutput == nil {
 			// Non-message events (e.g. intermediate actions) are ignored.
@@ -124,10 +124,43 @@ func ConsumeAgentEvents(iter *adk.AsyncIterator[*adk.AgentEvent], stream AgentEv
 		if err != nil {
 			return nil, false, fmt.Errorf("read agent message: %w", err)
 		}
-		if msg != nil && msg.Role == schema.Assistant {
-			lastAssistant = msg
+		if shouldAppendToHistory(msg) {
+			turnMessages = append(turnMessages, cloneMessageForHistory(msg))
 		}
 	}
+}
+
+// shouldAppendToHistory reports whether a message should persist across runner turns.
+// shouldAppendToHistory 判断消息是否应跨 runner 回合持久化。
+func shouldAppendToHistory(msg *schema.Message) bool {
+	if msg == nil {
+		return false
+	}
+	switch msg.Role {
+	case schema.Assistant, schema.Tool:
+		return true
+	default:
+		return false
+	}
+}
+
+// cloneMessageForHistory returns a defensive copy safe for long-lived conversation history.
+// cloneMessageForHistory 返回可长期保存在会话历史中的防御性副本。
+func cloneMessageForHistory(msg *schema.Message) *schema.Message {
+	if msg == nil {
+		return nil
+	}
+	next := *msg
+	if msg.ToolCalls != nil {
+		next.ToolCalls = append([]schema.ToolCall(nil), msg.ToolCalls...)
+	}
+	if msg.Extra != nil {
+		next.Extra = make(map[string]any, len(msg.Extra))
+		for k, v := range msg.Extra {
+			next.Extra[k] = v
+		}
+	}
+	return &next
 }
 
 // renderMessageOutput dispatches a single AgentEvent message output to the correct renderer.
@@ -290,14 +323,14 @@ func renderStreamingMessage(event *adk.AgentEvent, stream AgentEventStream) (*sc
 // renderCompleteMessage renders a fully materialized message in one pass.
 //
 // Role handling:
-//   - Tool: emits AgentStreamEventToolMessage with tool name and content (not appended to assistant history).
+//   - Tool: emits AgentStreamEventToolMessage with tool name and content.
 //   - Assistant (or empty role): reasoning block first, then answer block; each wrapped with content_started/finished events.
 //   - Other roles: treated as answer content with standard start/finish events.
 //
 // renderCompleteMessage 一次性渲染已完整落地的消息。
 //
 // 按角色处理：
-//   - Tool：发出 AgentStreamEventToolMessage，携带工具名与内容（不会进入 assistant 历史）。
+//   - Tool：发出 AgentStreamEventToolMessage，携带工具名与内容。
 //   - Assistant（或空 role）：先 reasoning 块，再 answer 块；各块用 content_started/finished 事件包裹。
 //   - 其他 role：按 answer 内容处理，使用标准 start/finish 事件。
 func renderCompleteMessage(event *adk.AgentEvent, stream AgentEventStream, msg *schema.Message) {
