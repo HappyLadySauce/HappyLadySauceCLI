@@ -16,8 +16,14 @@ const (
 	colorUser     = "\x1b[32m"
 	colorAgent    = "\x1b[36m"
 	colorThinking = "\x1b[33m"
-	colorTool     = "\x1b[35m"
-	colorError    = "\x1b[31m"
+	colorTool            = "\x1b[35m"
+	colorError           = "\x1b[31m"
+	colorStats           = "\x1b[90m"
+	colorStatsElapsed    = "\x1b[36m"
+	colorStatsPrompt     = "\x1b[32m"
+	colorStatsCompletion = "\x1b[35m"
+	colorStatsTotal      = "\x1b[37;1m"
+	colorStatsWindow     = "\x1b[33m"
 )
 
 // Renderer writes interactive CLI output.
@@ -38,7 +44,7 @@ func NewRenderer(out, errOut io.Writer) *Renderer {
 	return &Renderer{
 		out:          out,
 		errOut:       errOut,
-		colorEnabled: isTerminalWriter(out),
+		colorEnabled: isTerminalWriter(out) || isTerminalWriter(errOut),
 	}
 }
 

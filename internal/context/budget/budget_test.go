@@ -112,6 +112,15 @@ func TestTurnStatsIsZero(t *testing.T) {
 	}
 }
 
+func TestTurnStatsTotalTokens(t *testing.T) {
+	t.Parallel()
+
+	stats := TurnStats{PromptTokens: 318, CompletionTokens: 37}
+	if got, want := stats.TotalTokens(), 355; got != want {
+		t.Fatalf("TotalTokens() = %d, want %d", got, want)
+	}
+}
+
 func TestTurnStatsPercentUsed(t *testing.T) {
 	t.Parallel()
 

@@ -7,7 +7,7 @@
 用户发消息后、模型最终回答结束时，`Renderer.WriteTurnStatus` 输出一行：
 
 ```text
-[ Stats: elapsed=960ms prompt↑=1340 completion↓=31 context <1% 128K ]
+[Stats: elapsed=766ms prompt↑=318 completion↓=37 total↑↓=355 <1% 128K]
 ```
 
 | 字段 | 含义 | 数据来源 |
@@ -15,8 +15,11 @@
 | `elapsed` | 本轮耗时 | `BeginTurn` → `FinalizeTurn` 计时 |
 | `prompt↑` | 本轮 API prompt 消耗（多跳累加） | `AddUsage` 聚合各跳 provider `prompt_tokens` |
 | `completion↓` | 本轮 API completion 消耗（多跳累加） | `AddUsage` 聚合各跳 provider `completion_tokens` |
-| `context` | 当前会话占窗口比例 | **最后一跳** provider `prompt_tokens` ÷ `MaxContext`；无 provider 时回退本地 tiktoken 总量估算 |
+| `total↑↓` | 本轮 API token 总消耗 | `prompt↑ + completion↓` |
+| `<1%` | 当前会话占窗口比例 | **最后一跳** provider `prompt_tokens` ÷ `MaxContext`；无 provider 时回退本地 tiktoken 总量估算 |
 | `128K` | 模型上下文窗口上限 | 配置中的 `MaxModelContext` |
+
+终端会对各字段分段着色（括号灰、耗时青、prompt 绿、completion 紫、total 亮白、窗口占用黄）。
 
 多跳场景：`prompt↑` 为各跳之和；`context` 百分比以最后一跳 prompt 为准（与 provider 实际送入模型的上下文一致）。
 

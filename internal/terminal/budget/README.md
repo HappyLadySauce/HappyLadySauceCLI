@@ -5,8 +5,10 @@
 ## 输出格式
 
 ```text
-[ Stats: elapsed=960ms prompt↑=1340 completion↓=31 context <1% 128K ]
+[Stats: elapsed=766ms prompt↑=318 completion↓=37 total↑↓=355 <1% 128K]
 ```
+
+`Renderer.WriteTurnStatus` 在 TTY 下会对各字段分段着色。
 
 ## API
 

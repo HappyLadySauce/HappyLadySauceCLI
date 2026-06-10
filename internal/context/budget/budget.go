@@ -29,6 +29,12 @@ func (s TurnStats) IsZero() bool {
 	return s.ElapsedMs <= 0 && s.PromptTokens <= 0 && s.CompletionTokens <= 0 && s.ContextTokens <= 0
 }
 
+// TotalTokens returns accumulated prompt plus completion tokens for the turn.
+// TotalTokens 返回本回合累加的 prompt 与 completion token 总和。
+func (s TurnStats) TotalTokens() int {
+	return s.PromptTokens + s.CompletionTokens
+}
+
 // PercentUsed returns the percentage of MaxContext consumed by ContextTokens.
 // PercentUsed 返回 ContextTokens 占 MaxContext 的百分比。
 func (s TurnStats) PercentUsed() float64 {
