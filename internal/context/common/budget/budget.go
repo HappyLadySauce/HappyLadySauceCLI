@@ -51,10 +51,14 @@ type BudgetInput struct {
 // ContextBudget is a segmented token snapshot before one model call.
 // ContextBudget 表示一次模型调用前的分段 token 快照。
 type ContextBudget struct {
-	MaxTokens   int
-	TotalTokens int
-	Segments    map[Segment]int
-	PercentFull float64
+	MaxTokens              int
+	TotalTokens            int
+	EstimatedTotalTokens   int
+	ActualPromptTokens     int
+	ActualCompletionTokens int
+	UsageSource            string
+	Segments               map[Segment]int
+	PercentFull            float64
 }
 
 // EstimateBudget estimates segmented model-visible prompt tokens.
@@ -104,9 +108,10 @@ func EstimateBudget(input BudgetInput, estimator *usage.TokenEstimator, maxConte
 		total += tokens
 	}
 	budget := &ContextBudget{
-		MaxTokens:   maxContextTokens,
-		TotalTokens: total,
-		Segments:    segments,
+		MaxTokens:            maxContextTokens,
+		TotalTokens:          total,
+		EstimatedTotalTokens: total,
+		Segments:             segments,
 	}
 	if maxContextTokens > 0 {
 		budget.PercentFull = float64(total) / float64(maxContextTokens) * 100

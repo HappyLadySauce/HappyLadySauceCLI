@@ -8,11 +8,12 @@ import (
 )
 
 type ModelOptions struct {
-	APIKey          string `mapstructure:"HAPPLADYSAUCECLI_API_KEY"`
-	BaseURL         string `mapstructure:"HAPPLADYSAUCECLI_BASE_URL"`
-	Model           string `mapstructure:"HAPPLADYSAUCECLI_MODEL"`
-	MaxOutputTokens int    `mapstructure:"HAPPLADYSAUCECLI_MAX_OUTPUT_TOKENS"`
-	MaxModelContext int    `mapstructure:"HAPPLADYSAUCECLI_MAX_MODEL_CONTEXT"`
+	APIKey                    string `mapstructure:"HAPPLADYSAUCECLI_API_KEY"`
+	BaseURL                   string `mapstructure:"HAPPLADYSAUCECLI_BASE_URL"`
+	Model                     string `mapstructure:"HAPPLADYSAUCECLI_MODEL"`
+	MaxOutputTokens           int    `mapstructure:"HAPPLADYSAUCECLI_MAX_OUTPUT_TOKENS"`
+	MaxModelContext           int    `mapstructure:"HAPPLADYSAUCECLI_MAX_MODEL_CONTEXT"`
+	MaxModelContextConfigured bool   `mapstructure:"-"`
 }
 
 func NewModelOptions() *ModelOptions {

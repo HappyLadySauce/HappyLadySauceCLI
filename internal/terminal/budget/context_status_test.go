@@ -11,9 +11,10 @@ func TestFormatContextStatusLineFull(t *testing.T) {
 	t.Parallel()
 
 	line := FormatContextStatusLine(&contextbudget.ContextBudget{
-		MaxTokens:   128000,
-		TotalTokens: 52500,
-		PercentFull: 41,
+		MaxTokens:            128000,
+		TotalTokens:          52500,
+		EstimatedTotalTokens: 52500,
+		PercentFull:          41,
 		Segments: map[contextbudget.Segment]int{
 			contextbudget.SegmentConversation: 32600,
 			contextbudget.SegmentTools:        8600,
@@ -22,7 +23,7 @@ func TestFormatContextStatusLineFull(t *testing.T) {
 		},
 	})
 
-	want := "[context 41% 128K | conv 32.6k | tools 8.6k | sys 500]"
+	want := "[context 41% 128K | estimated 52.5k | conv 32.6k | tools 8.6k | sys 500]"
 	if line != want {
 		t.Fatalf("FormatContextStatusLine() = %q, want %q", line, want)
 	}
@@ -89,6 +90,23 @@ func TestFormatContextStatusLineStableTopThreeOrdering(t *testing.T) {
 	})
 
 	want := "[context 10% 100K | conv 100 | tools 100 | sys 100]"
+	if line != want {
+		t.Fatalf("FormatContextStatusLine() = %q, want %q", line, want)
+	}
+}
+
+func TestFormatContextStatusLineActualUsage(t *testing.T) {
+	t.Parallel()
+
+	line := FormatContextStatusLine(&contextbudget.ContextBudget{
+		MaxTokens:              128000,
+		EstimatedTotalTokens:   52600,
+		ActualPromptTokens:     54200,
+		ActualCompletionTokens: 1100,
+		PercentFull:            42.34375,
+	})
+
+	want := "[context 42% 128K | actual prompt 54.2k | out 1.1k | est 52.6k]"
 	if line != want {
 		t.Fatalf("FormatContextStatusLine() = %q, want %q", line, want)
 	}

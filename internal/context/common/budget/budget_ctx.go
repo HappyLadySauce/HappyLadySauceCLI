@@ -3,6 +3,8 @@ package budget
 import (
 	"context"
 	"sync"
+
+	"github.com/HappyLadySauce/HappyLadySauceCLI/internal/context/common/usage"
 )
 
 type budgetWriterContextKey struct{}
@@ -29,6 +31,32 @@ func (w *BudgetWriter) Write(budget *ContextBudget) {
 	w.mu.Lock()
 	defer w.mu.Unlock()
 	w.data = cloneContextBudget(budget)
+}
+
+// ApplyUsage merges provider token usage into the latest budget snapshot.
+// ApplyUsage 将服务商 token 用量合并进最新预算快照。
+func (w *BudgetWriter) ApplyUsage(snapshot usage.UsageSnapshot) {
+	if w == nil || snapshot.IsZero() {
+		return
+	}
+	w.mu.Lock()
+	defer w.mu.Unlock()
+	if w.data == nil {
+		w.data = &ContextBudget{}
+	}
+	if snapshot.PromptTokens > 0 {
+		w.data.ActualPromptTokens = snapshot.PromptTokens
+		w.data.TotalTokens = snapshot.PromptTokens
+		if w.data.MaxTokens > 0 {
+			w.data.PercentFull = float64(snapshot.PromptTokens) / float64(w.data.MaxTokens) * 100
+		}
+	}
+	if snapshot.CompletionTokens > 0 {
+		w.data.ActualCompletionTokens = snapshot.CompletionTokens
+	}
+	if snapshot.Source != "" {
+		w.data.UsageSource = snapshot.Source
+	}
 }
 
 // Read returns a defensive copy of the latest budget snapshot.

@@ -46,6 +46,19 @@ func FormatContextStatusLine(budget *contextbudget.ContextBudget) string {
 	parts := []string{
 		fmt.Sprintf("[context %s %s", formatPercent(budget.PercentFull), formatWindowTokens(budget.MaxTokens)),
 	}
+	if budget.ActualPromptTokens > 0 {
+		parts = append(parts, fmt.Sprintf("actual prompt %s", formatSegmentTokens(budget.ActualPromptTokens)))
+		if budget.ActualCompletionTokens > 0 {
+			parts = append(parts, fmt.Sprintf("out %s", formatSegmentTokens(budget.ActualCompletionTokens)))
+		}
+		if budget.EstimatedTotalTokens > 0 {
+			parts = append(parts, fmt.Sprintf("est %s", formatSegmentTokens(budget.EstimatedTotalTokens)))
+		}
+		return strings.Join(parts, " | ") + "]"
+	}
+	if budget.EstimatedTotalTokens > 0 {
+		parts = append(parts, fmt.Sprintf("estimated %s", formatSegmentTokens(budget.EstimatedTotalTokens)))
+	}
 	for _, segment := range topStatusSegments(budget.Segments) {
 		label := statusSegmentLabels[segment.segment]
 		if label == "" {

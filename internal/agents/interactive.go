@@ -13,8 +13,10 @@ import (
 	"k8s.io/klog/v2"
 
 	contextbudget "github.com/HappyLadySauce/HappyLadySauceCLI/internal/context/common/budget"
+	contextusage "github.com/HappyLadySauce/HappyLadySauceCLI/internal/context/common/usage"
 	"github.com/HappyLadySauce/HappyLadySauceCLI/internal/input"
 	"github.com/HappyLadySauce/HappyLadySauceCLI/internal/middlewares"
+	"github.com/HappyLadySauce/HappyLadySauceCLI/internal/models/metadata"
 	"github.com/HappyLadySauce/HappyLadySauceCLI/internal/prompts"
 	"github.com/HappyLadySauce/HappyLadySauceCLI/internal/terminal"
 	"github.com/HappyLadySauce/HappyLadySauceCLI/internal/tools"
@@ -22,6 +24,7 @@ import (
 )
 
 func RunLoop(ctx context.Context, cfg *config.Config) error {
+	applyProviderModelMetadata(ctx, cfg)
 
 	chatModel, err := openai.NewChatModel(ctx, newChatModelConfig(cfg))
 	if err != nil {
@@ -92,6 +95,9 @@ func RunLoop(ctx context.Context, cfg *config.Config) error {
 		}
 		if assistantMessage != nil {
 			history = append(history, assistantMessage)
+			if snapshot, ok := contextusage.SnapshotFromMessage(assistantMessage); ok {
+				budgetWriter.ApplyUsage(snapshot)
+			}
 		}
 		if exited {
 			return nil
@@ -99,6 +105,35 @@ func RunLoop(ctx context.Context, cfg *config.Config) error {
 		renderer.WriteContextStatus(budgetWriter.Read())
 		renderer.FinishTurn()
 	}
+}
+
+func applyProviderModelMetadata(ctx context.Context, cfg *config.Config) {
+	if cfg == nil || cfg.Model == nil {
+		return
+	}
+	resolver, err := metadata.NewResolver(metadata.ResolverConfig{
+		BaseURL: cfg.Model.BaseURL,
+		APIKey:  cfg.Model.APIKey,
+	})
+	if err != nil {
+		klog.Warningf("model metadata probe skipped: %v", err)
+		return
+	}
+	modelMetadata, err := resolver.Resolve(ctx, cfg.Model.Model)
+	if err != nil {
+		klog.Warningf("model metadata probe skipped: %v", err)
+		return
+	}
+	if modelMetadata.MaxContextTokens <= 0 {
+		klog.Warningf("model metadata for %q did not include context length; using configured max context tokens %d", cfg.Model.Model, cfg.Model.MaxModelContext)
+		return
+	}
+	if cfg.Model.MaxModelContextConfigured {
+		klog.Infof("model metadata resolved but configured context wins: model=%s provider_context_tokens=%d configured_context_tokens=%d source=%s", modelMetadata.ID, modelMetadata.MaxContextTokens, cfg.Model.MaxModelContext, modelMetadata.Source)
+		return
+	}
+	cfg.Model.MaxModelContext = modelMetadata.MaxContextTokens
+	klog.Infof("model metadata resolved: model=%s context_tokens=%d source=%s", modelMetadata.ID, modelMetadata.MaxContextTokens, modelMetadata.Source)
 }
 
 // newChatModelConfig builds the OpenAI-compatible chat model configuration.
