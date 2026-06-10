@@ -4,6 +4,12 @@
 
 适用版本：Eino ADK v0.9.4（`github.com/cloudwego/eino v0.9.4`）。
 
+相关文档：
+
+- [Eino 文档索引](./README.md)
+- [Eino 组件生态指南](./component-ecosystem-guide.md) — `schema` / `model` / `callbacks` / `tool` / `adk` 分层、消息与 Token 用量全链路
+- [ChatModelAgent 中间件实践](./middleware-guide.md)
+
 ---
 
 ## 1. 概述
@@ -406,7 +412,11 @@ if msg.ResponseMeta != nil && msg.ResponseMeta.Usage != nil {
 }
 ```
 
-本项目的 `budgetMiddleware.AfterModelRewriteState` 正是通过读取 `lastAssistantMessage(state.Messages)` 的 `ResponseMeta.Usage` 来收集 provider 用量。
+**注意**：`schema.Message` 没有顶层 `Usage` 字段；`ChatModelAgentState` 也没有 `Usage` / `Message`（单数）字段。用量在 `state.Messages` 各条 assistant 消息的 `ResponseMeta.Usage` 上。
+
+Token 用量在 Eino 各层（`schema` / `callbacks` / ChatModel 装饰器 / ADK middleware）的读取方式、调用路径与统计盲区，见 [组件生态指南 §9](./component-ecosystem-guide.md#9-token-用量各层读取方式对比)。
+
+本项目的 `budgetMiddleware.AfterModelRewriteState` 通过读取 `lastAssistantMessage(state.Messages)` 的 `ResponseMeta.Usage` 收集 provider 用量。
 
 ---
 

@@ -4,6 +4,12 @@
 
 适用版本：Eino ADK v0.9.x 及相近版本。`ChatModelAgentConfig.Handlers` 为推荐方式；`Middlewares`（`AgentMiddleware` 结构体）已标记为 Deprecated。
 
+相关文档：
+
+- [Eino 文档索引](./README.md)
+- [Eino 组件生态指南](./component-ecosystem-guide.md) — 扩展点对比、Token 用量各层读取、调用路径与统计盲区
+- [ChatModelAgent 工作机制](./chatmodelagent-guide.md)
+
 ---
 
 ## 1. 概述
@@ -453,7 +459,9 @@ func TestTrimHandlerKeepsLatestUser(t *testing.T) {
   └─ BeforeModelRewriteState
 
 需要记录 token、耗时、写审计日志？
-  └─ AfterModelRewriteState + WrapModel + context 传递
+  └─ 优先 ChatModel 装饰器或 callbacks OnEnd（覆盖旁路直调）；
+     Agent 内可用 AfterModelRewriteState + WrapModel + context 传递
+     （详见 [组件生态指南 §9–§10](./component-ecosystem-guide.md#9-token-用量各层读取方式对比)）
 
 需要拦截或包装工具执行？
   └─ WrapInvokableToolCall / WrapEnhanced*
