@@ -4,14 +4,14 @@ import (
 	"strings"
 	"testing"
 
-	contextbudget "github.com/HappyLadySauce/HappyLadySauceCLI/internal/context/common/budget"
+	"github.com/HappyLadySauce/HappyLadySauceCLI/internal/context/budget"
 	"github.com/HappyLadySauce/HappyLadySauceCLI/internal/context/common/usage"
 )
 
 func TestFormatStatsLine(t *testing.T) {
 	t.Parallel()
 
-	line := FormatStatsLine(contextbudget.TurnStats{
+	line := FormatStatsLine(budget.TurnStats{
 		ElapsedMs:        960,
 		PromptTokens:     1340,
 		CompletionTokens: 31,
@@ -25,7 +25,7 @@ func TestFormatStatsLine(t *testing.T) {
 func TestFormatStatsLineEmpty(t *testing.T) {
 	t.Parallel()
 
-	if got := FormatStatsLine(contextbudget.TurnStats{}); got != "" {
+	if got := FormatStatsLine(budget.TurnStats{}); got != "" {
 		t.Fatalf("FormatStatsLine(empty) = %q, want empty", got)
 	}
 }

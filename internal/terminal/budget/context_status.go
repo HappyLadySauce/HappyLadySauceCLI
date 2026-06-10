@@ -5,13 +5,13 @@ import (
 	"math"
 	"strings"
 
-	contextbudget "github.com/HappyLadySauce/HappyLadySauceCLI/internal/context/common/budget"
+	"github.com/HappyLadySauce/HappyLadySauceCLI/internal/context/budget"
 	"github.com/HappyLadySauce/HappyLadySauceCLI/internal/context/common/usage"
 )
 
 // FormatStatsLine formats per-turn latency and provider token usage.
 // FormatStatsLine 格式化单轮耗时与 provider token 用量。
-func FormatStatsLine(stats contextbudget.TurnStats) string {
+func FormatStatsLine(stats budget.TurnStats) string {
 	if stats.ElapsedMs <= 0 && stats.PromptTokens <= 0 && stats.CompletionTokens <= 0 {
 		return ""
 	}

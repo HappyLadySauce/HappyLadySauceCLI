@@ -7,7 +7,7 @@ import (
 	"github.com/cloudwego/eino/adk"
 	"github.com/cloudwego/eino/schema"
 
-	contextbudget "github.com/HappyLadySauce/HappyLadySauceCLI/internal/context/common/budget"
+	"github.com/HappyLadySauce/HappyLadySauceCLI/internal/context/budget"
 	"github.com/HappyLadySauce/HappyLadySauceCLI/internal/context/common/usage"
 )
 
@@ -35,7 +35,7 @@ func NewBudgetMiddleware(calculator *usage.Calculator, instruction string) (adk.
 // BeforeAgent starts per-turn timing and usage aggregation.
 // BeforeAgent 开始单轮耗时与用量聚合。
 func (m *budgetMiddleware) BeforeAgent(ctx context.Context, runCtx *adk.ChatModelAgentContext) (context.Context, *adk.ChatModelAgentContext, error) {
-	if writer := contextbudget.BudgetWriterFromContext(ctx); writer != nil {
+	if writer := budget.BudgetWriterFromContext(ctx); writer != nil {
 		writer.BeginTurn()
 	}
 	return ctx, runCtx, nil
@@ -44,7 +44,7 @@ func (m *budgetMiddleware) BeforeAgent(ctx context.Context, runCtx *adk.ChatMode
 // AfterModelRewriteState accumulates provider usage from each model hop.
 // AfterModelRewriteState 聚合同一轮内每次模型调用的 provider 用量。
 func (m *budgetMiddleware) AfterModelRewriteState(ctx context.Context, state *adk.ChatModelAgentState, mc *adk.ModelContext) (context.Context, *adk.ChatModelAgentState, error) {
-	writer := contextbudget.BudgetWriterFromContext(ctx)
+	writer := budget.BudgetWriterFromContext(ctx)
 	if writer == nil || state == nil {
 		return ctx, state, nil
 	}
@@ -60,7 +60,7 @@ func (m *budgetMiddleware) AfterModelRewriteState(ctx context.Context, state *ad
 // scales segments to provider usage when available.
 // AfterAgent 在回合结束后分类最终上下文，FinalizeTurn 在可用时用 provider prompt 缩放分段。
 func (m *budgetMiddleware) AfterAgent(ctx context.Context, state *adk.ChatModelAgentState) (context.Context, error) {
-	writer := contextbudget.BudgetWriterFromContext(ctx)
+	writer := budget.BudgetWriterFromContext(ctx)
 	if writer == nil || state == nil {
 		return ctx, nil
 	}

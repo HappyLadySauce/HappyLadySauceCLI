@@ -12,7 +12,7 @@ import (
 	"github.com/cloudwego/eino/schema"
 	"k8s.io/klog/v2"
 
-	contextbudget "github.com/HappyLadySauce/HappyLadySauceCLI/internal/context/common/budget"
+	"github.com/HappyLadySauce/HappyLadySauceCLI/internal/context/budget"
 	"github.com/HappyLadySauce/HappyLadySauceCLI/internal/input"
 	"github.com/HappyLadySauce/HappyLadySauceCLI/internal/middlewares"
 	"github.com/HappyLadySauce/HappyLadySauceCLI/internal/prompts"
@@ -84,8 +84,8 @@ func RunLoop(ctx context.Context, cfg *config.Config) error {
 		renderer.AfterUserInput()
 		history = append(history, schema.UserMessage(prompt))
 
-		budgetWriter := contextbudget.NewBudgetWriter()
-		runCtx := contextbudget.WithBudgetWriter(ctx, budgetWriter)
+		budgetWriter := budget.NewBudgetWriter()
+		runCtx := budget.WithBudgetWriter(ctx, budgetWriter)
 		iter := runner.Run(runCtx, history)
 		turnMessages, exited, err := ConsumeAgentEvents(iter, renderer)
 		if err != nil {

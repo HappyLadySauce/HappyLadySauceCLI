@@ -4,7 +4,7 @@ import (
 	"bytes"
 	"testing"
 
-	contextbudget "github.com/HappyLadySauce/HappyLadySauceCLI/internal/context/common/budget"
+	"github.com/HappyLadySauce/HappyLadySauceCLI/internal/context/budget"
 	"github.com/HappyLadySauce/HappyLadySauceCLI/internal/context/common/usage"
 )
 
@@ -14,8 +14,8 @@ func TestRendererWriteTurnStatusUsesErrOut(t *testing.T) {
 	var out bytes.Buffer
 	var errOut bytes.Buffer
 	renderer := NewRenderer(&out, &errOut)
-	renderer.WriteTurnStatus(contextbudget.TurnStatus{
-		Stats: contextbudget.TurnStats{
+	renderer.WriteTurnStatus(budget.TurnStatus{
+		Stats: budget.TurnStats{
 			ElapsedMs:        960,
 			PromptTokens:     1340,
 			CompletionTokens: 31,
@@ -39,7 +39,7 @@ func TestRendererWriteTurnStatusUsesErrOut(t *testing.T) {
 		t.Fatalf("stderr buffer = %q, want %q", got, want)
 	}
 
-	renderer.WriteTurnStatus(contextbudget.TurnStatus{})
+	renderer.WriteTurnStatus(budget.TurnStatus{})
 	if got := errOut.String(); got != want {
 		t.Fatalf("empty status should not write, got %q", got)
 	}

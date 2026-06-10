@@ -9,7 +9,7 @@ import (
 	"github.com/cloudwego/eino/components/model"
 	"github.com/cloudwego/eino/schema"
 
-	contextbudget "github.com/HappyLadySauce/HappyLadySauceCLI/internal/context/common/budget"
+	"github.com/HappyLadySauce/HappyLadySauceCLI/internal/context/budget"
 	"github.com/HappyLadySauce/HappyLadySauceCLI/internal/context/common/usage"
 	"github.com/HappyLadySauce/HappyLadySauceCLI/internal/context/compact"
 	contentmiddleware "github.com/HappyLadySauce/HappyLadySauceCLI/internal/middlewares/content"
@@ -46,8 +46,8 @@ func TestNewBudgetMiddlewareValidation(t *testing.T) {
 func TestBudgetMiddlewareBeforeAgentStartsTurn(t *testing.T) {
 	t.Parallel()
 
-	writer := contextbudget.NewBudgetWriter()
-	ctx := contextbudget.WithBudgetWriter(context.Background(), writer)
+	writer := budget.NewBudgetWriter()
+	ctx := budget.WithBudgetWriter(context.Background(), writer)
 	middleware := newTestBudgetMiddleware(t)
 
 	ctx, _, err := middleware.BeforeAgent(ctx, &adk.ChatModelAgentContext{})
@@ -62,8 +62,8 @@ func TestBudgetMiddlewareBeforeAgentStartsTurn(t *testing.T) {
 func TestBudgetMiddlewareAfterModelRewriteStateAccumulatesUsage(t *testing.T) {
 	t.Parallel()
 
-	writer := contextbudget.NewBudgetWriter()
-	ctx := contextbudget.WithBudgetWriter(context.Background(), writer)
+	writer := budget.NewBudgetWriter()
+	ctx := budget.WithBudgetWriter(context.Background(), writer)
 	middleware := newTestBudgetMiddleware(t)
 	writer.BeginTurn()
 
@@ -95,8 +95,8 @@ func TestBudgetMiddlewareAfterModelRewriteStateAccumulatesUsage(t *testing.T) {
 func TestBudgetMiddlewareAfterAgentWritesPostTurnBudget(t *testing.T) {
 	t.Parallel()
 
-	writer := contextbudget.NewBudgetWriter()
-	ctx := contextbudget.WithBudgetWriter(context.Background(), writer)
+	writer := budget.NewBudgetWriter()
+	ctx := budget.WithBudgetWriter(context.Background(), writer)
 	middleware := newTestBudgetMiddleware(t)
 	writer.BeginTurn()
 
@@ -135,8 +135,8 @@ func TestBudgetMiddlewareAfterAgentWritesPostTurnBudget(t *testing.T) {
 func TestBudgetMiddlewareAfterAgentNilStateNoops(t *testing.T) {
 	t.Parallel()
 
-	writer := contextbudget.NewBudgetWriter()
-	ctx := contextbudget.WithBudgetWriter(context.Background(), writer)
+	writer := budget.NewBudgetWriter()
+	ctx := budget.WithBudgetWriter(context.Background(), writer)
 	middleware := newTestBudgetMiddleware(t)
 
 	_, err := middleware.AfterAgent(ctx, nil)
@@ -151,8 +151,8 @@ func TestBudgetMiddlewareAfterAgentNilStateNoops(t *testing.T) {
 func TestBudgetMiddlewareAfterAgentBadToolStillWritesBudget(t *testing.T) {
 	t.Parallel()
 
-	writer := contextbudget.NewBudgetWriter()
-	ctx := contextbudget.WithBudgetWriter(context.Background(), writer)
+	writer := budget.NewBudgetWriter()
+	ctx := budget.WithBudgetWriter(context.Background(), writer)
 	middleware := newTestBudgetMiddleware(t)
 	writer.BeginTurn()
 
@@ -186,8 +186,8 @@ func TestBudgetMiddlewareAfterAgentUsesCompactedMessages(t *testing.T) {
 		t.Fatalf("NewContentMiddleware() error = %v", err)
 	}
 	budgetMiddleware := newTestBudgetMiddleware(t)
-	writer := contextbudget.NewBudgetWriter()
-	ctx := contextbudget.WithBudgetWriter(context.Background(), writer)
+	writer := budget.NewBudgetWriter()
+	ctx := budget.WithBudgetWriter(context.Background(), writer)
 	state := &adk.ChatModelAgentState{Messages: append([]*schema.Message{schema.SystemMessage("system")}, longConversation()...)}
 
 	_, compacted, err := contentMiddleware.BeforeModelRewriteState(ctx, state, nil)
