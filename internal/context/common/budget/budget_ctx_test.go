@@ -133,7 +133,7 @@ func TestBudgetWriterApplyUsageProportionalScaling(t *testing.T) {
 	})
 
 	writer.ApplyUsage(usage.UsageSnapshot{
-		PromptTokens:    1800,
+		PromptTokens:     1800,
 		CompletionTokens: 30,
 		Source:           usage.UsageSourceProvider,
 	})

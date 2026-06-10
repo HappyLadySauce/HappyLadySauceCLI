@@ -67,9 +67,9 @@ func (m *budgetMiddleware) AfterAgent(ctx context.Context, state *adk.ChatModelA
 	}
 
 	budget, err := contextbudget.EstimateBudget(contextbudget.BudgetInput{
-		Messages:          state.Messages,
-		ToolInfos:         state.ToolInfos,
-		DeferredToolInfos: state.DeferredToolInfos,
+		Messages:            state.Messages,
+		ToolInfos:           state.ToolInfos,
+		DeferredToolInfos:   state.DeferredToolInfos,
 		FallbackInstruction: m.instruction,
 	}, m.calculator)
 	if err != nil {

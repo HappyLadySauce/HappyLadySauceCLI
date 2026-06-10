@@ -37,8 +37,8 @@ func TestCalculatorCountClassifiesToolMessages(t *testing.T) {
 		Messages: []*schema.Message{
 			schema.UserMessage("call tool"),
 			{
-				Role:     schema.Assistant,
-				Content:  "",
+				Role:      schema.Assistant,
+				Content:   "",
 				ToolCalls: []schema.ToolCall{{ID: "1", Type: "function", Function: schema.FunctionCall{Name: "weather", Arguments: `{"city":"bj"}`}}},
 			},
 			{ToolCallID: "1", Role: schema.Tool, ToolName: "weather", Content: "sunny"},

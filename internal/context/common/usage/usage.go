@@ -135,9 +135,9 @@ func ScaleSegmentCounts(counts SegmentCounts, estimatedTotal, targetTotal int) S
 
 	// Collect non-zero fields with their scaled values.
 	type entry struct {
-		ptr    *int
-		raw    float64
-		value  int
+		ptr   *int
+		raw   float64
+		value int
 	}
 	entries := make([]entry, 0, 3)
 	add := func(ptr *int, val int) {
@@ -210,10 +210,10 @@ func (c *Calculator) Estimator() *TokenEstimator {
 // CountInput groups all model-visible context parts for a single count pass.
 // CountInput 聚合一次计数所需的模型可见上下文。
 type CountInput struct {
-	Messages            []*schema.Message
-	ToolInfos           []*schema.ToolInfo
-	DeferredToolInfos   []*schema.ToolInfo
-	Instruction         string
+	Messages          []*schema.Message
+	ToolInfos         []*schema.ToolInfo
+	DeferredToolInfos []*schema.ToolInfo
+	Instruction       string
 }
 
 // Count estimates and classifies tokens in a single pass through messages.
