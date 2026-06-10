@@ -5,6 +5,7 @@ import (
 	"testing"
 
 	contextbudget "github.com/HappyLadySauce/HappyLadySauceCLI/internal/context/common/budget"
+	"github.com/HappyLadySauce/HappyLadySauceCLI/internal/context/common/usage"
 )
 
 func TestRendererWriteContextStatusUsesErrOut(t *testing.T) {
@@ -16,7 +17,7 @@ func TestRendererWriteContextStatusUsesErrOut(t *testing.T) {
 	renderer.WriteContextStatus(&contextbudget.ContextBudget{
 		MaxTokens:   1000,
 		PercentFull: 1,
-		Segments:    map[contextbudget.Segment]int{contextbudget.SegmentConversation: 10},
+		Segs:        usage.SegmentCounts{Conversation: 10},
 	})
 
 	if out.Len() != 0 {

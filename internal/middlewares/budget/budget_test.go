@@ -34,18 +34,20 @@ func (m *fakeChatModel) Stream(ctx context.Context, input []*schema.Message, opt
 func TestNewBudgetMiddlewareValidation(t *testing.T) {
 	t.Parallel()
 
-	if _, err := NewBudgetMiddleware(nil, 1000); err == nil {
+	if _, err := NewBudgetMiddleware(nil); err == nil {
 		t.Fatal("NewBudgetMiddleware(nil) error = nil, want error")
 	}
-	if _, err := NewBudgetMiddleware(usage.NewTokenEstimator("gpt-4o"), 0); err == nil {
-		t.Fatal("NewBudgetMiddleware(max=0) error = nil, want error")
+	// calculator with zero context is fine — validation is in budget layer
+	calc := usage.NewCalculator("gpt-4o", 0)
+	if _, err := NewBudgetMiddleware(calc); err != nil {
+		t.Fatalf("NewBudgetMiddleware() error = %v", err)
 	}
 }
 
 func TestBudgetMiddlewareNoWriterDoesNotModifyState(t *testing.T) {
 	t.Parallel()
 
-	middleware := newTestBudgetMiddleware(t, 1000)
+	middleware := newTestBudgetMiddleware(t)
 	state := &adk.ChatModelAgentState{Messages: []*schema.Message{schema.UserMessage("hello")}}
 
 	_, got, err := middleware.BeforeModelRewriteState(context.Background(), state, nil)
@@ -62,7 +64,7 @@ func TestBudgetMiddlewareWritesBudget(t *testing.T) {
 
 	writer := contextbudget.NewBudgetWriter()
 	ctx := contextbudget.WithBudgetWriter(context.Background(), writer)
-	middleware := newTestBudgetMiddleware(t, 1000)
+	middleware := newTestBudgetMiddleware(t)
 	state := &adk.ChatModelAgentState{
 		Messages: []*schema.Message{
 			schema.SystemMessage("system"),
@@ -82,12 +84,12 @@ func TestBudgetMiddlewareWritesBudget(t *testing.T) {
 	if budget == nil {
 		t.Fatal("budget writer has nil snapshot")
 	}
-	if budget.Segments[contextbudget.SegmentSystem] <= 0 ||
-		budget.Segments[contextbudget.SegmentConversation] <= 0 {
-		t.Fatalf("budget segments missing expected values: %#v", budget.Segments)
+	if budget.Segs.System <= 0 ||
+		budget.Segs.Conversation <= 0 {
+		t.Fatalf("budget segments missing expected values: %#v", budget.Segs)
 	}
-	if _, ok := budget.Segments[contextbudget.SegmentTools]; ok {
-		t.Fatalf("tool interaction segment exists without tool messages: %#v", budget.Segments)
+	if budget.Segs.Tools <= 0 {
+		t.Fatalf("Segs.Tools = %d, want > 0 for tool definitions", budget.Segs.Tools)
 	}
 }
 
@@ -96,7 +98,7 @@ func TestBudgetMiddlewareNilAndEmptyState(t *testing.T) {
 
 	writer := contextbudget.NewBudgetWriter()
 	ctx := contextbudget.WithBudgetWriter(context.Background(), writer)
-	middleware := newTestBudgetMiddleware(t, 1000)
+	middleware := newTestBudgetMiddleware(t)
 
 	_, got, err := middleware.BeforeModelRewriteState(ctx, nil, nil)
 	if err != nil {
@@ -119,12 +121,12 @@ func TestBudgetMiddlewareNilAndEmptyState(t *testing.T) {
 	}
 }
 
-func TestBudgetMiddlewareSwallowsEstimateError(t *testing.T) {
+func TestBudgetMiddlewareBadToolDoesNotBlockBudget(t *testing.T) {
 	t.Parallel()
 
 	writer := contextbudget.NewBudgetWriter()
 	ctx := contextbudget.WithBudgetWriter(context.Background(), writer)
-	middleware := newTestBudgetMiddleware(t, 1000)
+	middleware := newTestBudgetMiddleware(t)
 	state := &adk.ChatModelAgentState{
 		ToolInfos: []*schema.ToolInfo{{Name: "bad", Extra: map[string]any{"bad": func() {}}}},
 	}
@@ -134,10 +136,12 @@ func TestBudgetMiddlewareSwallowsEstimateError(t *testing.T) {
 		t.Fatalf("BeforeModelRewriteState() error = %v", err)
 	}
 	if got != state {
-		t.Fatal("budget middleware should return original state on estimate error")
+		t.Fatal("budget middleware should return original state")
 	}
-	if budget := writer.Read(); budget != nil {
-		t.Fatalf("budget should not be written on estimate error: %#v", budget)
+	// Calculator swallows tool count errors — budget is written with estimated total 0.
+	budget := writer.Read()
+	if budget == nil {
+		t.Fatal("budget should still be written when tool counting fails")
 	}
 }
 
@@ -156,7 +160,7 @@ func TestBudgetMiddlewareAfterContentSeesCompactedMessages(t *testing.T) {
 	if err != nil {
 		t.Fatalf("NewContentMiddleware() error = %v", err)
 	}
-	budgetMiddleware := newTestBudgetMiddleware(t, 180)
+	budgetMiddleware := newTestBudgetMiddleware(t)
 	writer := contextbudget.NewBudgetWriter()
 	ctx := contextbudget.WithBudgetWriter(context.Background(), writer)
 	state := &adk.ChatModelAgentState{Messages: append([]*schema.Message{schema.SystemMessage("system")}, longConversation()...)}
@@ -179,14 +183,15 @@ func TestBudgetMiddlewareAfterContentSeesCompactedMessages(t *testing.T) {
 	}
 	estimator := usage.NewTokenEstimator("unknown-local-model")
 	_, originalConversation := splitMessagesForTest(state.Messages)
-	if budget.Segments[contextbudget.SegmentConversation] >= estimator.CountMessages(originalConversation) {
-		t.Fatalf("budget conversation segment = %d, want less than original conversation tokens", budget.Segments[contextbudget.SegmentConversation])
+	if budget.Segs.Conversation >= estimator.CountMessages(originalConversation) {
+		t.Fatalf("budget conversation segment = %d, want less than original conversation tokens", budget.Segs.Conversation)
 	}
 }
 
-func newTestBudgetMiddleware(t *testing.T, maxContextTokens int) adk.ChatModelAgentMiddleware {
+func newTestBudgetMiddleware(t *testing.T) adk.ChatModelAgentMiddleware {
 	t.Helper()
-	middleware, err := NewBudgetMiddleware(usage.NewTokenEstimator("unknown-local-model"), maxContextTokens)
+	calc := usage.NewCalculator("unknown-local-model", 180)
+	middleware, err := NewBudgetMiddleware(calc)
 	if err != nil {
 		t.Fatalf("NewBudgetMiddleware() error = %v", err)
 	}

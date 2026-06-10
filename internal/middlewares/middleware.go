@@ -10,7 +10,6 @@ import (
 	"github.com/HappyLadySauce/HappyLadySauceCLI/internal/context/compact"
 	budgetmiddleware "github.com/HappyLadySauce/HappyLadySauceCLI/internal/middlewares/budget"
 	contentmiddleware "github.com/HappyLadySauce/HappyLadySauceCLI/internal/middlewares/content"
-	usagemiddleware "github.com/HappyLadySauce/HappyLadySauceCLI/internal/middlewares/usage"
 )
 
 // ChatModelAgentMiddlewareConfig groups dependencies for the default agent middleware chain.
@@ -25,11 +24,16 @@ type ChatModelAgentMiddlewareConfig struct {
 // NewChatModelAgentMiddlewares builds the default ChatModelAgent middleware chain.
 // NewChatModelAgentMiddlewares 构建默认 ChatModelAgent middleware 链。
 func NewChatModelAgentMiddlewares(cfg ChatModelAgentMiddlewareConfig) ([]adk.ChatModelAgentMiddleware, error) {
+	// create best token calculator with model name and max context tokens
+	// 基于模型名和上下文窗口创建最佳的 token 计算器
+	calculator := usage.NewCalculator(cfg.ModelName, cfg.MaxModelContext)
+
 	compactor, err := compact.NewCompactor(compact.Config{
 		Model:           cfg.Model,
 		ModelName:       cfg.ModelName,
 		MaxModelContext: cfg.MaxModelContext,
 		MaxOutputTokens: cfg.MaxOutputTokens,
+		Estimator:       calculator.Estimator(),
 	})
 	if err != nil {
 		return nil, fmt.Errorf("new context compactor: %w", err)
@@ -39,14 +43,10 @@ func NewChatModelAgentMiddlewares(cfg ChatModelAgentMiddlewareConfig) ([]adk.Cha
 	if err != nil {
 		return nil, fmt.Errorf("new content middleware: %w", err)
 	}
-
-	budgetMiddleware, err := budgetmiddleware.NewBudgetMiddleware(
-		usage.NewTokenEstimator(cfg.ModelName),
-		cfg.MaxModelContext,
-	)
+	budgetMiddleware, err := budgetmiddleware.NewBudgetMiddleware(calculator)
 	if err != nil {
 		return nil, fmt.Errorf("new budget middleware: %w", err)
 	}
 
-	return []adk.ChatModelAgentMiddleware{contentMiddleware, budgetMiddleware, usagemiddleware.NewUsageMiddleware()}, nil
+	return []adk.ChatModelAgentMiddleware{contentMiddleware, budgetMiddleware}, nil
 }

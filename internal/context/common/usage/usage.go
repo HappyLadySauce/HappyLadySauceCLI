@@ -1,325 +1,302 @@
+// Package usage provides refined token counting that combines local estimation with
+// provider-reported usage, while classifying tokens by context segment in a single pass.
+//
+// Package usage 提供精细化 token 计算，结合本地估算与 provider 用量，并在单次遍历中按上下文分段分类。
 package usage
 
 import (
-	"encoding/json"
-	"strings"
-	"unicode/utf8"
+	"math"
 
 	"github.com/cloudwego/eino/schema"
-	tiktoken "github.com/pkoukk/tiktoken-go"
-
-	"github.com/HappyLadySauce/HappyLadySauceCLI/internal/models/parse"
 )
+
+// Segment identifies a model-visible context budget bucket.
+// Segment 标识一个模型可见上下文预算分段。
+type Segment string
 
 const (
-	// fallbackCharsPerToken is the char-to-token ratio when tiktoken cannot load any encoding.
-	// fallbackCharsPerToken 为 tiktoken 无法加载任何编码时使用的字符/token 换算比。
-	fallbackCharsPerToken = 4
-
-	// tokensPerMessage is the OpenAI chat framing overhead per message (role/content wrappers).
-	// tokensPerMessage 为 OpenAI chat 格式中每条消息的固定 framing 开销。
-	tokensPerMessage = 3
-
-	// tokensPerName is the extra overhead when a message carries a name field.
-	// tokensPerName 为消息包含 name 字段时的额外开销。
-	tokensPerName = 1
-
-	// ReplyPrimingTokens is the assistant reply priming overhead for a chat request.
-	// ReplyPrimingTokens 为 chat 请求中 assistant 回复预置的固定开销。
-	ReplyPrimingTokens = 3
+	// SegmentSystem is the system prompt and instruction segment.
+	// SegmentSystem 表示 system prompt 与 instruction 分段。
+	SegmentSystem Segment = "system"
+	// SegmentConversation is user/assistant dialogue without tool calls.
+	// SegmentConversation 表示不含 tool call 的 user/assistant 对话。
+	SegmentConversation Segment = "conversation"
+	// SegmentTools is tool schemas (ToolInfos) plus ReAct tool trace messages.
+	// SegmentTools 表示工具 schema 与 ReAct 工具轨迹消息。
+	SegmentTools Segment = "tools"
 )
 
-// TokenEstimator estimates model-visible prompt tokens.
-// TokenEstimator 估算模型可见 prompt token 数。
-type TokenEstimator struct {
-	// encoding is nil only when tiktoken cannot load any encoding at all.
-	// encoding 仅在 tiktoken 完全无法加载任何编码时为 nil。
-	encoding *tiktoken.Tiktoken
+// SegmentCounts holds token counts for the three model-visible context categories.
+// SegmentCounts 保存三个模型可见上下文分类的 token 计数。
+type SegmentCounts struct {
+	System       int // system prompt + instruction / 系统指令
+	Conversation int // user/assistant dialogue / 对话
+	Tools        int // tool schemas + tool trace messages / 工具定义与轨迹
 }
 
-// NewTokenEstimator creates a token estimator from the API model name.
-// NewTokenEstimator 基于 API 模型名创建 token 估算器。
-func NewTokenEstimator(modelName string) *TokenEstimator {
-	return &TokenEstimator{encoding: resolveEncoding(modelName)}
+// IsZero reports whether all segment counts are zero.
+// IsZero 判断所有分段计数是否为零。
+func (s SegmentCounts) IsZero() bool {
+	return s.System <= 0 && s.Conversation <= 0 && s.Tools <= 0
 }
 
-// CountMessages estimates tokens for all messages.
-// CountMessages 估算全部消息的 token 数。
-func (e *TokenEstimator) CountMessages(messages []*schema.Message) int {
+// Total returns the sum of all segment counts.
+// Total 返回所有分段计数的总和。
+func (s SegmentCounts) Total() int {
 	total := 0
-	for _, msg := range messages {
-		total += e.CountMessage(msg)
+	if s.System > 0 {
+		total += s.System
 	}
-	if len(messages) > 0 {
-		total += ReplyPrimingTokens
+	if s.Conversation > 0 {
+		total += s.Conversation
+	}
+	if s.Tools > 0 {
+		total += s.Tools
 	}
 	return total
 }
 
-// CountMessage estimates tokens for one message.
-// CountMessage 估算单条消息的 token 数。
-func (e *TokenEstimator) CountMessage(msg *schema.Message) int {
-	if msg == nil {
+// Clone returns an independent copy.
+// Clone 返回独立副本。
+func (s SegmentCounts) Clone() SegmentCounts {
+	return s
+}
+
+// Breakdown is a categorized token snapshot for one model call.
+// Segments are scaled proportionally when provider usage is applied.
+// Breakdown 表示一次模型调用的分类 token 快照；当 provider 用量应用后分段按比例缩放。
+type Breakdown struct {
+	Segs            SegmentCounts // per-category token counts（有 provider 时已缩放）/ 各分段 token
+	EstimatedTotal  int           // original estimated total before scaling / 缩放前原始估算总量
+	ActualPrompt    int           // provider reported prompt tokens / provider 回报 prompt tokens
+	ActualOutput    int           // provider reported completion tokens / provider 回报 completion tokens
+	CachedTokens    int           // provider reported cached prompt tokens / provider 回报缓存 prompt tokens
+	ReasoningTokens int           // provider reported reasoning tokens / provider 回报推理 tokens
+	Source          string        // "provider" | "estimated" / 数据来源
+	MaxContext      int           // model context window ceiling / 模型上下文窗口上限
+}
+
+// Total returns the best available token count: provider actual if available, otherwise estimated.
+// Total 返回最佳可用 token 数：优先 provider 实际值，否则用估算值。
+func (b *Breakdown) Total() int {
+	if b == nil {
 		return 0
 	}
-	total := tokensPerMessage
-	total += e.CountText(string(msg.Role))
-	if msg.Name != "" {
-		total += tokensPerName
-		total += e.CountText(msg.Name)
+	if b.ActualPrompt > 0 {
+		return b.ActualPrompt
 	}
-	total += e.CountText(msg.Content)
-	total += e.CountText(msg.ReasoningContent)
-	total += e.CountText(msg.ToolCallID)
-	total += e.CountText(msg.ToolName)
-
-	for _, call := range msg.ToolCalls {
-		total += e.CountText(call.ID)
-		total += e.CountText(call.Type)
-		total += e.CountText(call.Function.Name)
-		total += e.CountText(call.Function.Arguments)
-	}
-
-	if len(msg.UserInputMultiContent) > 0 {
-		total += e.countJSON(msg.UserInputMultiContent)
-	}
-	if len(msg.AssistantGenMultiContent) > 0 {
-		total += e.countJSON(msg.AssistantGenMultiContent)
-	}
-	if len(msg.MultiContent) > 0 {
-		total += e.countJSON(msg.MultiContent)
-	}
-
-	return total
+	return b.EstimatedTotal
 }
 
-// CountInstruction estimates tokens for system instruction or other static prompt text.
-// CountInstruction 估算 system instruction 或其它静态 prompt 文本的 token 数。
-func (e *TokenEstimator) CountInstruction(text string) int {
-	return e.CountText(text)
-}
-
-// CountTools estimates tokens for tool schemas.
-// CountTools 估算工具 schema 的 token 数。
-func (e *TokenEstimator) CountTools(tools []*schema.ToolInfo) (int, error) {
-	total := 0
-	for _, tool := range tools {
-		if tool == nil {
-			continue
-		}
-		data, err := json.Marshal(tool)
-		if err != nil {
-			return 0, err
-		}
-		total += e.CountText(string(data))
-	}
-	return total, nil
-}
-
-// CountText estimates tokens for text.
-// CountText 估算文本 token 数。
-func (e *TokenEstimator) CountText(text string) int {
-	if text == "" {
+// PercentUsed returns the percentage of the context window that is consumed.
+// PercentUsed 返回上下文窗口使用百分比。
+func (b *Breakdown) PercentUsed() float64 {
+	if b == nil || b.MaxContext <= 0 {
 		return 0
 	}
-	if e != nil && e.encoding != nil {
-		return len(e.encoding.Encode(text, nil, nil))
+	return float64(b.Total()) / float64(b.MaxContext) * 100
+}
+
+// IsZero reports whether the breakdown carries any token signal.
+// IsZero 判断 breakdown 是否包含任何 token 信号。
+func (b *Breakdown) IsZero() bool {
+	if b == nil {
+		return true
 	}
-	return estimateTextByChars(text)
+	return b.EstimatedTotal <= 0 && b.ActualPrompt <= 0 && b.ActualOutput <= 0
 }
 
-// countJSON estimates tokens for a JSON-serializable message part.
-// countJSON 估算可 JSON 序列化消息片段的 token 数。
-func (e *TokenEstimator) countJSON(value any) int {
-	data, err := json.Marshal(value)
-	if err != nil {
-		return 0
+// ApplyProvider merges provider usage into the breakdown.
+// Segments are scaled proportionally: scale = PromptTokens / EstimatedTotal.
+//
+// ApplyProvider 将 provider 用量合并到 breakdown。
+// 分段按比例缩放：scale = PromptTokens / EstimatedTotal。
+func (b *Breakdown) ApplyProvider(s UsageSnapshot) {
+	if b == nil || s.IsZero() {
+		return
 	}
-	return e.CountText(string(data))
-}
-
-// encodingRule maps normalized provider/model families to a tiktoken encoding.
-// Order matters: newer OpenAI families must precede broader GPT-4 rules.
-// encodingRule 将规范化后的厂商/模型族映射到 tiktoken 编码；顺序敏感，新 OpenAI 模型族必须排在宽泛 GPT-4 规则前。
-type encodingRule struct {
-	encoding       string
-	exactModels    []string
-	modelPrefixes  []string
-	familyTokens   []string
-	familyPrefixes []string
-}
-
-var encodingRules = []encodingRule{
-	{
-		encoding: tiktoken.MODEL_O200K_BASE,
-		exactModels: []string{
-			"o200k", "o200k_base", "o200k-base",
-			"o1", "o3", "o4",
-			"gpt-4o", "chatgpt-4o", "gpt-4.1", "gpt-4.5",
-		},
-		modelPrefixes: []string{
-			"o1-", "o3-", "o4-",
-			"gpt-4o-", "chatgpt-4o-", "gpt-4.1-", "gpt-4.5-",
-		},
-	},
-	{
-		encoding: tiktoken.MODEL_CL100K_BASE,
-		exactModels: []string{
-			"cl100k", "cl100k_base", "cl100k-base",
-			"gpt-4", "gpt-3.5", "gpt-3.5-turbo",
-		},
-		modelPrefixes: []string{
-			"gpt-4-", "gpt-3.5-", "gpt-3.5-turbo-",
-			"text-embedding-", "text-moderation-",
-		},
-		familyTokens: []string{
-			"anthropic", "claude", "sonnet", "haiku", "opus",
-			"google", "gemini", "gemma",
-			"deepseek", "qwen", "qwq", "glm", "zhipu",
-			"moonshot", "kimi",
-			"mistral", "mixtral", "codestral", "pixtral", "ministral",
-			"llama", "meta", "meta-llama",
-			"yi", "phi", "ollama",
-		},
-		familyPrefixes: []string{
-			"claude", "sonnet", "haiku", "opus",
-			"gemini", "gemma",
-			"deepseek", "qwen", "qwq", "glm",
-			"moonshot", "kimi",
-			"mistral", "mixtral", "codestral", "pixtral", "ministral",
-			"llama", "yi", "phi",
-		},
-	},
-}
-
-// resolveEncoding picks the best available tiktoken encoding for token counting.
-// resolveEncoding 选择可用于 token 计数的最佳 tiktoken 编码。
-func resolveEncoding(modelName string) *tiktoken.Tiktoken {
-	candidates := encodingCandidates(modelName)
-	for _, name := range candidates {
-		if encoding, err := tiktoken.EncodingForModel(name); err == nil {
-			return encoding
-		}
-		if encoding, err := tiktoken.GetEncoding(name); err == nil {
-			return encoding
-		}
+	b.ActualPrompt = s.PromptTokens
+	b.ActualOutput = s.CompletionTokens
+	b.CachedTokens = s.CachedTokens
+	b.ReasoningTokens = s.ReasoningTokens
+	if s.Source != "" {
+		b.Source = s.Source
 	}
-	return nil
+	if b.EstimatedTotal <= 0 || s.PromptTokens <= 0 {
+		return
+	}
+	b.Segs = scaleSegmentCounts(b.Segs, b.EstimatedTotal, s.PromptTokens)
 }
 
-// encodingCandidates builds a deduplicated encoding lookup list from the API model name.
-// encodingCandidates 根据 API 模型名构建去重后的编码查找候选列表。
-func encodingCandidates(modelName string) []string {
-	seen := make(map[string]struct{}, 8)
-	out := make([]string, 0, 8)
-	add := func(name string) {
-		name = strings.TrimSpace(name)
-		if name == "" {
+// scaleSegmentCounts proportionally scales segment counts and absorbs rounding
+// remainder into the segment with the largest value.
+//
+// scaleSegmentCounts 按比例缩放各分段计数，舍入余量分配到值最大的分段。
+func scaleSegmentCounts(counts SegmentCounts, estimatedTotal, targetTotal int) SegmentCounts {
+	if counts.IsZero() || estimatedTotal <= 0 || targetTotal <= 0 {
+		return counts
+	}
+
+	scale := float64(targetTotal) / float64(estimatedTotal)
+
+	// Collect non-zero fields with their scaled values.
+	type entry struct {
+		ptr    *int
+		raw    float64
+		value  int
+	}
+	entries := make([]entry, 0, 3)
+	add := func(ptr *int, val int) {
+		if val <= 0 {
 			return
 		}
-		if _, ok := seen[name]; ok {
-			return
+		raw := float64(val) * scale
+		rounded := int(math.Round(raw))
+		if rounded < 1 {
+			rounded = 1
 		}
-		seen[name] = struct{}{}
-		out = append(out, name)
+		entries = append(entries, entry{ptr: ptr, raw: raw, value: rounded})
+	}
+	add(&counts.System, counts.System)
+	add(&counts.Conversation, counts.Conversation)
+	add(&counts.Tools, counts.Tools)
+
+	if len(entries) == 0 {
+		return counts
 	}
 
-	add(modelName)
-	for _, alias := range modelAliases(modelName) {
-		add(alias)
+	sum := 0
+	for _, e := range entries {
+		sum += e.value
 	}
-	if inferred := inferEncodingName(modelName); inferred != "" {
-		add(inferred)
-	}
-	add(tiktoken.MODEL_CL100K_BASE)
-	return out
-}
+	delta := targetTotal - sum
 
-// normalizeModelName strips vendor/path prefixes and normalizes separators for API model identifiers.
-// normalizeModelName 剥离 API 模型标识中的厂商/路径前缀，并规范化分隔符。
-func normalizeModelName(modelName string) string {
-	return parse.Normalize(parse.LastSegment(modelName))
-}
-
-// inferEncodingName matches common API model aliases to a tiktoken encoding name.
-// inferEncodingName 将常见 API 模型别名匹配到 tiktoken 编码名。
-func inferEncodingName(modelName string) string {
-	aliases := modelAliases(modelName)
-	if len(aliases) == 0 {
-		return ""
-	}
-
-	for _, rule := range encodingRules {
-		if rule.matches(aliases) {
-			return rule.encoding
-		}
-	}
-	return ""
-}
-
-// matches checks exact names, ordered prefixes, and token-bound family aliases.
-// matches 检查精确模型名、有序前缀和带边界的模型族别名。
-func (r encodingRule) matches(aliases []string) bool {
-	tokenSet := make(map[string]struct{}, len(aliases)*4)
-	for _, alias := range aliases {
-		for _, token := range parse.Tokens(alias) {
-			tokenSet[token] = struct{}{}
-		}
-	}
-
-	for _, alias := range aliases {
-		for _, exact := range r.exactModels {
-			if alias == exact {
-				return true
+	// Absorb rounding delta into the entry with the largest current value.
+	if delta != 0 {
+		best := 0
+		for i := 1; i < len(entries); i++ {
+			if entries[i].value > entries[best].value {
+				best = i
 			}
 		}
-		for _, prefix := range r.modelPrefixes {
-			if strings.HasPrefix(alias, prefix) {
-				return true
-			}
-		}
+		entries[best].value += delta
 	}
 
-	for _, token := range r.familyTokens {
-		if _, ok := tokenSet[token]; ok {
-			return true
-		}
+	for _, e := range entries {
+		*e.ptr = e.value
 	}
-	for token := range tokenSet {
-		for _, prefix := range r.familyPrefixes {
-			if strings.HasPrefix(token, prefix) {
-				return true
-			}
-		}
-	}
-
-	return false
+	return counts
 }
 
-// modelAliases returns normalized forms that preserve provider context and the final model segment.
-// modelAliases 返回保留厂商上下文与最终模型段的规范化形式。
-func modelAliases(modelName string) []string {
-	full := parse.Normalize(modelName)
-	last := normalizeModelName(modelName)
-	if full == "" {
+// Calculator combines local token estimation with per-message classification.
+// Calculator 组合本地 token 估算与逐消息分类。
+type Calculator struct {
+	estimator  *TokenEstimator
+	maxContext int
+}
+
+// NewCalculator creates a token calculator with the given model and context window.
+// NewCalculator 基于模型名和上下文窗口创建 token 计算器。
+func NewCalculator(modelName string, maxContextTokens int) *Calculator {
+	return &Calculator{
+		estimator:  NewTokenEstimator(modelName),
+		maxContext: maxContextTokens,
+	}
+}
+
+// Estimator returns the underlying local token estimator.
+// Estimator 返回底层本地 token 估算器。
+func (c *Calculator) Estimator() *TokenEstimator {
+	if c == nil {
 		return nil
 	}
-	if last == "" || last == full {
-		return []string{full}
-	}
-	return []string{last, full}
+	return c.estimator
 }
 
-// estimateTextByChars is the last-resort estimator when tiktoken cannot be loaded.
-// estimateTextByChars 为 tiktoken 无法加载时的最后兜底估算。
-func estimateTextByChars(text string) int {
-	runes := utf8.RuneCountInString(text)
-	tokens := runes / fallbackCharsPerToken
-	if runes%fallbackCharsPerToken != 0 {
-		tokens++
+// CountInput groups all model-visible context parts for a single count pass.
+// CountInput 聚合一次计数所需的模型可见上下文。
+type CountInput struct {
+	Messages    []*schema.Message
+	ToolInfos   []*schema.ToolInfo
+	Instruction string
+}
+
+// Count estimates and classifies tokens in a single pass through messages.
+//
+// Classification aligns with ChatModelAgent BeforeModelRewriteState inputs:
+//   - system messages + Instruction → Segs.System
+//   - non-system, non-tool messages → Segs.Conversation
+//   - tool trace messages + ToolInfos → Segs.Tools
+//
+// Count 单次遍历消息，同时完成估算与分类。
+func (c *Calculator) Count(input CountInput) *Breakdown {
+	if c == nil || c.estimator == nil {
+		return &Breakdown{MaxContext: c.maxContext}
 	}
-	if tokens == 0 {
-		return 1
+
+	var segs SegmentCounts
+	estimatedTotal := 0
+
+	for _, msg := range input.Messages {
+		if msg == nil {
+			continue
+		}
+		tokens := c.estimator.CountMessage(msg)
+		if tokens <= 0 {
+			continue
+		}
+		estimatedTotal += tokens
+		switch {
+		case msg.Role == schema.System:
+			segs.System += tokens
+		case msg.Role == schema.Tool || len(msg.ToolCalls) > 0:
+			segs.Tools += tokens
+		default:
+			segs.Conversation += tokens
+		}
 	}
-	return tokens
+
+	// ToolInfos are model-visible on every call.
+	if len(input.ToolInfos) > 0 {
+		if toolTokens, err := c.estimator.CountTools(input.ToolInfos); err == nil && toolTokens > 0 {
+			segs.Tools += toolTokens
+			estimatedTotal += toolTokens
+		}
+	}
+
+	// Instruction injected as system context.
+	if input.Instruction != "" {
+		instTokens := c.estimator.CountText(input.Instruction)
+		if instTokens > 0 {
+			segs.System += instTokens
+			estimatedTotal += instTokens
+		}
+	}
+
+	// Reply priming goes to the largest segment (chat framing priority).
+	if estimatedTotal > 0 {
+		segs = addReplyPriming(segs)
+		estimatedTotal += ReplyPrimingTokens
+	}
+
+	return &Breakdown{
+		Segs:           segs,
+		EstimatedTotal: estimatedTotal,
+		Source:         UsageSourceEstimated,
+		MaxContext:     c.maxContext,
+	}
+}
+
+// addReplyPriming allocates reply priming overhead to the largest segment.
+// addReplyPriming 将 reply priming 加到值最大的分段上。
+func addReplyPriming(segs SegmentCounts) SegmentCounts {
+	switch {
+	case segs.Conversation >= segs.Tools && segs.Conversation >= segs.System:
+		segs.Conversation += ReplyPrimingTokens
+	case segs.Tools >= segs.System:
+		segs.Tools += ReplyPrimingTokens
+	default:
+		segs.System += ReplyPrimingTokens
+	}
+	return segs
 }

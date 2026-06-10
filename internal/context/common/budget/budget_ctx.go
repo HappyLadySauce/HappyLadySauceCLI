@@ -33,8 +33,8 @@ func (w *BudgetWriter) Write(budget *ContextBudget) {
 	w.data = cloneContextBudget(budget)
 }
 
-// ApplyUsage merges provider token usage into the latest budget snapshot.
-// ApplyUsage 将服务商 token 用量合并进最新预算快照。
+// ApplyUsage merges provider token usage into the latest budget snapshot via usage.Breakdown.
+// ApplyUsage 通过 usage.Breakdown 将服务商 token 用量合并进最新预算快照。
 func (w *BudgetWriter) ApplyUsage(snapshot usage.UsageSnapshot) {
 	if w == nil || snapshot.IsZero() {
 		return
@@ -44,19 +44,13 @@ func (w *BudgetWriter) ApplyUsage(snapshot usage.UsageSnapshot) {
 	if w.data == nil {
 		w.data = &ContextBudget{}
 	}
-	if snapshot.PromptTokens > 0 {
-		w.data.ActualPromptTokens = snapshot.PromptTokens
-		w.data.TotalTokens = snapshot.PromptTokens
-		if w.data.MaxTokens > 0 {
-			w.data.PercentFull = float64(snapshot.PromptTokens) / float64(w.data.MaxTokens) * 100
-		}
+
+	breakdown := BreakdownFromContextBudget(w.data)
+	if breakdown == nil {
+		breakdown = &usage.Breakdown{MaxContext: w.data.MaxTokens}
 	}
-	if snapshot.CompletionTokens > 0 {
-		w.data.ActualCompletionTokens = snapshot.CompletionTokens
-	}
-	if snapshot.Source != "" {
-		w.data.UsageSource = snapshot.Source
-	}
+	breakdown.ApplyProvider(snapshot)
+	w.data = breakdownToContextBudget(breakdown)
 }
 
 // Read returns a defensive copy of the latest budget snapshot.
@@ -104,12 +98,6 @@ func cloneContextBudget(budget *ContextBudget) *ContextBudget {
 	if budget == nil {
 		return nil
 	}
-	next := *budget
-	if budget.Segments != nil {
-		next.Segments = make(map[Segment]int, len(budget.Segments))
-		for segment, tokens := range budget.Segments {
-			next.Segments[segment] = tokens
-		}
-	}
-	return &next
+	copy := *budget // Segs is a value type (SegmentCounts), copied by value.
+	return &copy
 }

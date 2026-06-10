@@ -4,252 +4,223 @@ import (
 	"testing"
 
 	"github.com/cloudwego/eino/schema"
-	tiktoken "github.com/pkoukk/tiktoken-go"
 )
 
-func TestResolveEncodingKnownModel(t *testing.T) {
+func TestCalculatorCountClassifiesMessages(t *testing.T) {
 	t.Parallel()
 
-	if encoding := resolveEncoding("gpt-4o"); encoding == nil {
-		t.Fatal("resolveEncoding(gpt-4o) = nil, want tiktoken encoding")
-	}
-}
-
-func TestResolveEncodingInfersO200KFromAlias(t *testing.T) {
-	t.Parallel()
-
-	direct := NewTokenEstimator("gpt-4o")
-	inferred := NewTokenEstimator("my-proxy/gpt-4o-mini")
-
-	sample := "token counting should stay aligned with OpenAI-compatible APIs"
-	if got, want := direct.CountText(sample), inferred.CountText(sample); got != want {
-		t.Fatalf("inferred CountText() = %d, direct gpt-4o = %d", got, want)
-	}
-}
-
-func TestResolveEncodingInfersO200KFromOpenAIFamilies(t *testing.T) {
-	t.Parallel()
-
-	cases := []string{
-		"openrouter/openai/gpt-4.1-mini",
-		"openai/gpt-4.5-preview",
-		"azure/openai/o3-mini",
-		"o4-mini",
-		"chatgpt-4o-latest",
-	}
-	o200k := NewTokenEstimator(tiktoken.MODEL_O200K_BASE)
-	sample := "token counting should keep OpenAI o-series aliases aligned"
-
-	for _, modelName := range cases {
-		modelName := modelName
-		t.Run(modelName, func(t *testing.T) {
-			t.Parallel()
-			estimator := NewTokenEstimator(modelName)
-			if got, want := estimator.CountText(sample), o200k.CountText(sample); got != want {
-				t.Fatalf("CountText() = %d, o200k_base = %d", got, want)
-			}
-			if got, want := inferEncodingName(modelName), tiktoken.MODEL_O200K_BASE; got != want {
-				t.Fatalf("inferEncodingName() = %q, want %q", got, want)
-			}
-		})
-	}
-}
-
-func TestResolveEncodingInfersCL100KFromOpenAILegacyFamilies(t *testing.T) {
-	t.Parallel()
-
-	cases := []string{
-		"openrouter/openai/gpt-4-turbo",
-		"gpt-4-32k",
-		"azure/openai/gpt-3.5-turbo-0125",
-		"text-embedding-3-large",
-	}
-	cl100k := NewTokenEstimator(tiktoken.MODEL_CL100K_BASE)
-	sample := "legacy OpenAI-compatible models should use cl100k"
-
-	for _, modelName := range cases {
-		modelName := modelName
-		t.Run(modelName, func(t *testing.T) {
-			t.Parallel()
-			estimator := NewTokenEstimator(modelName)
-			if got, want := estimator.CountText(sample), cl100k.CountText(sample); got != want {
-				t.Fatalf("CountText() = %d, cl100k_base = %d", got, want)
-			}
-			if got, want := inferEncodingName(modelName), tiktoken.MODEL_CL100K_BASE; got != want {
-				t.Fatalf("inferEncodingName() = %q, want %q", got, want)
-			}
-		})
-	}
-}
-
-func TestResolveEncodingInfersCL100KFromVendorAlias(t *testing.T) {
-	t.Parallel()
-
-	estimator := NewTokenEstimator("deepseek/deepseek-chat")
-	cl100k := NewTokenEstimator("cl100k_base")
-
-	sample := "上下文压缩需要在合适时机触发"
-	if got, want := estimator.CountText(sample), cl100k.CountText(sample); got != want {
-		t.Fatalf("deepseek alias CountText() = %d, cl100k_base = %d", got, want)
-	}
-}
-
-func TestResolveEncodingInfersCL100KFromProviderFamilies(t *testing.T) {
-	t.Parallel()
-
-	cases := []string{
-		"google/gemini-2.5-pro",
-		"ollama/qwen2.5:7b-instruct",
-		"meta-llama/llama-3.1-70b-instruct",
-		"mistral/mixtral-8x7b-instruct",
-		"mistral/codestral-latest",
-		"moonshot/kimi-k2",
-		"zhipu/glm-4-plus",
-		"microsoft/phi-4",
-		"01-ai/yi-large",
-	}
-	cl100k := NewTokenEstimator(tiktoken.MODEL_CL100K_BASE)
-	sample := "provider model families use cl100k for local compaction estimates"
-
-	for _, modelName := range cases {
-		modelName := modelName
-		t.Run(modelName, func(t *testing.T) {
-			t.Parallel()
-			estimator := NewTokenEstimator(modelName)
-			if got, want := estimator.CountText(sample), cl100k.CountText(sample); got != want {
-				t.Fatalf("CountText() = %d, cl100k_base = %d", got, want)
-			}
-			if got, want := inferEncodingName(modelName), tiktoken.MODEL_CL100K_BASE; got != want {
-				t.Fatalf("inferEncodingName() = %q, want %q", got, want)
-			}
-		})
-	}
-}
-
-func TestInferEncodingDoesNotUseUnsafeSubstringMatching(t *testing.T) {
-	t.Parallel()
-
-	cases := []string{
-		"biology-o10-research",
-		"story-insight-model",
-		"custom-model-with-voice",
-	}
-
-	for _, modelName := range cases {
-		modelName := modelName
-		t.Run(modelName, func(t *testing.T) {
-			t.Parallel()
-			if got := inferEncodingName(modelName); got != "" {
-				t.Fatalf("inferEncodingName() = %q, want empty", got)
-			}
-		})
-	}
-}
-
-func TestResolveEncodingDefaultsToCL100K(t *testing.T) {
-	t.Parallel()
-
-	unknown := NewTokenEstimator("totally-unknown-model")
-	cl100k := NewTokenEstimator(tiktoken.MODEL_CL100K_BASE)
-
-	chinese := "上下文压缩需要在合适时机触发"
-	bpeTokens := unknown.CountText(chinese)
-	charFallback := estimateTextByChars(chinese)
-	if bpeTokens <= charFallback {
-		t.Fatalf("CountText(CJK) = %d, char fallback = %d; want BPE > char fallback", bpeTokens, charFallback)
-	}
-	if got, want := unknown.CountText(chinese), cl100k.CountText(chinese); got != want {
-		t.Fatalf("unknown model CountText() = %d, cl100k_base = %d", got, want)
-	}
-}
-
-func TestResolveEncodingInfersCL100KFromClaudeAlias(t *testing.T) {
-	t.Parallel()
-
-	cases := []string{
-		"anthropic/claude-3.5-sonnet",
-		"claude-3-haiku-20240307",
-		"claude-opus-4",
-	}
-	cl100k := NewTokenEstimator(tiktoken.MODEL_CL100K_BASE)
-	sample := "context compaction should trigger at the right time"
-
-	for _, modelName := range cases {
-		modelName := modelName
-		t.Run(modelName, func(t *testing.T) {
-			t.Parallel()
-			estimator := NewTokenEstimator(modelName)
-			if got, want := estimator.CountText(sample), cl100k.CountText(sample); got != want {
-				t.Fatalf("CountText() = %d, cl100k_base = %d", got, want)
-			}
-		})
-	}
-}
-
-func TestResolveEncodingInfersCL100KFromGemmaAlias(t *testing.T) {
-	t.Parallel()
-
-	cases := []string{
-		"google/gemma-2-9b-it",
-		"gemma-3-27b-it",
-		"gemma2:9b",
-	}
-	cl100k := NewTokenEstimator(tiktoken.MODEL_CL100K_BASE)
-	sample := "上下文压缩需要在合适时机触发"
-
-	for _, modelName := range cases {
-		modelName := modelName
-		t.Run(modelName, func(t *testing.T) {
-			t.Parallel()
-			estimator := NewTokenEstimator(modelName)
-			if got, want := estimator.CountText(sample), cl100k.CountText(sample); got != want {
-				t.Fatalf("CountText() = %d, cl100k_base = %d", got, want)
-			}
-			if got, want := inferEncodingName(modelName), tiktoken.MODEL_CL100K_BASE; got != want {
-				t.Fatalf("inferEncodingName() = %q, want %q", got, want)
-			}
-		})
-	}
-}
-
-func TestNormalizeModelNameStripsVendorPrefix(t *testing.T) {
-	t.Parallel()
-
-	if got, want := normalizeModelName("openrouter/anthropic/claude-3.5-sonnet"), "claude-3.5-sonnet"; got != want {
-		t.Fatalf("normalizeModelName() = %q, want %q", got, want)
-	}
-}
-
-func TestNormalizeModelNameCanonicalizesSeparators(t *testing.T) {
-	t.Parallel()
-
-	if got, want := normalizeModelName("ollama/qwen2.5:7b_instruct"), "qwen2.5-7b-instruct"; got != want {
-		t.Fatalf("normalizeModelName() = %q, want %q", got, want)
-	}
-}
-
-func TestCountMessagesIncludesReplyPriming(t *testing.T) {
-	t.Parallel()
-
-	estimator := NewTokenEstimator("gpt-4o")
-	single := estimator.CountMessage(schema.UserMessage("hello"))
-	all := estimator.CountMessages([]*schema.Message{schema.UserMessage("hello")})
-	if got, want := all-single, ReplyPrimingTokens; got != want {
-		t.Fatalf("reply priming tokens = %d, want %d", got, want)
-	}
-}
-
-func TestCountMessageIncludesNameOverhead(t *testing.T) {
-	t.Parallel()
-
-	estimator := NewTokenEstimator("gpt-4o")
-	base := estimator.CountMessage(schema.UserMessage("hello"))
-	withName := estimator.CountMessage(&schema.Message{
-		Role:    schema.User,
-		Content: "hello",
-		Name:    "alice",
+	calc := NewCalculator("gpt-4o", 128000)
+	breakdown := calc.Count(CountInput{
+		Messages: []*schema.Message{
+			schema.SystemMessage("you are helpful"),
+			schema.UserMessage("hello"),
+			schema.AssistantMessage("hi there", nil),
+		},
 	})
-	if got, want := withName-base, tokensPerName+estimator.CountText("alice"); got != want {
-		t.Fatalf("name overhead delta = %d, want %d", got, want)
+
+	if got := breakdown.Segs.System; got <= 0 {
+		t.Fatalf("Segs.System = %d, want > 0", got)
+	}
+	if got := breakdown.Segs.Conversation; got <= 0 {
+		t.Fatalf("Segs.Conversation = %d, want > 0", got)
+	}
+	if breakdown.Source != UsageSourceEstimated {
+		t.Fatalf("Source = %q, want %q", breakdown.Source, UsageSourceEstimated)
+	}
+}
+
+func TestCalculatorCountClassifiesToolMessages(t *testing.T) {
+	t.Parallel()
+
+	calc := NewCalculator("gpt-4o", 128000)
+	breakdown := calc.Count(CountInput{
+		Messages: []*schema.Message{
+			schema.UserMessage("call tool"),
+			{
+				Role:     schema.Assistant,
+				Content:  "",
+				ToolCalls: []schema.ToolCall{{ID: "1", Type: "function", Function: schema.FunctionCall{Name: "weather", Arguments: `{"city":"bj"}`}}},
+			},
+			{ToolCallID: "1", Role: schema.Tool, ToolName: "weather", Content: "sunny"},
+		},
+	})
+
+	if got := breakdown.Segs.Tools; got <= 0 {
+		t.Fatalf("Segs.Tools = %d, want > 0", got)
+	}
+}
+
+func TestCalculatorCountIncludesToolDefinitions(t *testing.T) {
+	t.Parallel()
+
+	calc := NewCalculator("gpt-4o", 128000)
+	breakdown := calc.Count(CountInput{
+		Messages:  []*schema.Message{schema.UserMessage("hi")},
+		ToolInfos: []*schema.ToolInfo{{Name: "weather", Desc: "get weather", ParamsOneOf: schema.NewParamsOneOfByParams(map[string]*schema.ParameterInfo{"city": {Type: schema.String}})}},
+	})
+
+	if got := breakdown.Segs.Tools; got <= 0 {
+		t.Fatalf("Segs.Tools = %d, want > 0", got)
+	}
+}
+
+func TestCalculatorCountIncludesInstruction(t *testing.T) {
+	t.Parallel()
+
+	calc := NewCalculator("gpt-4o", 128000)
+	breakdown := calc.Count(CountInput{
+		Messages:    []*schema.Message{schema.UserMessage("hi")},
+		Instruction: "You are a helpful assistant with specific rules.",
+	})
+
+	if got := breakdown.Segs.System; got <= 0 {
+		t.Fatalf("Segs.System = %d, want > 0 (instruction counted as system)", got)
+	}
+}
+
+func TestCalculatorCountAddsReplyPriming(t *testing.T) {
+	t.Parallel()
+
+	calc := NewCalculator("gpt-4o", 128000)
+
+	conversationOnly := calc.estimator.CountMessage(schema.UserMessage("hi"))
+
+	breakdown := calc.Count(CountInput{
+		Messages: []*schema.Message{schema.UserMessage("hi")},
+	})
+
+	if got, want := breakdown.EstimatedTotal, conversationOnly+ReplyPrimingTokens; got != want {
+		t.Fatalf("EstimatedTotal = %d, want %d (conv %d + reply priming %d)", got, want, conversationOnly, ReplyPrimingTokens)
+	}
+}
+
+func TestBreakdownApplyProviderProportionalScaling(t *testing.T) {
+	t.Parallel()
+
+	b := &Breakdown{
+		Segs: SegmentCounts{
+			System:       500,
+			Conversation: 800,
+			Tools:        200,
+		},
+		EstimatedTotal: 1500,
+		MaxContext:     128000,
+	}
+
+	b.ApplyProvider(UsageSnapshot{
+		PromptTokens: 1800,
+		Source:       UsageSourceProvider,
+	})
+
+	if b.ActualPrompt != 1800 {
+		t.Fatalf("ActualPrompt = %d, want 1800", b.ActualPrompt)
+	}
+	if b.Source != UsageSourceProvider {
+		t.Fatalf("Source = %q, want %q", b.Source, UsageSourceProvider)
+	}
+
+	// System 500 × 1.2 = 600, Conversation 800 × 1.2 = 960, Tools 200 × 1.2 = 240
+	if got := b.Segs.System; got != 600 {
+		t.Fatalf("Segs.System = %d, want 600 after scaling", got)
+	}
+	if got := b.Segs.Conversation; got != 960 {
+		t.Fatalf("Segs.Conversation = %d, want 960 after scaling", got)
+	}
+	if got := b.Segs.Tools; got != 240 {
+		t.Fatalf("Segs.Tools = %d, want 240 after scaling", got)
+	}
+	if b.Total() != 1800 {
+		t.Fatalf("Total() = %d, want 1800", b.Total())
+	}
+}
+
+func TestBreakdownApplyProviderZeroEstimatedSkipsScaling(t *testing.T) {
+	t.Parallel()
+
+	b := &Breakdown{
+		Segs:           SegmentCounts{Conversation: 100},
+		EstimatedTotal: 0,
+		MaxContext:     128000,
+	}
+	b.ApplyProvider(UsageSnapshot{PromptTokens: 500})
+
+	if b.ActualPrompt != 500 {
+		t.Fatalf("ActualPrompt = %d, want 500", b.ActualPrompt)
+	}
+	if got := b.Segs.Conversation; got != 100 {
+		t.Fatalf("Segs.Conversation = %d, want 100 (not scaled)", got)
+	}
+}
+
+func TestBreakdownTotalPrefersActual(t *testing.T) {
+	t.Parallel()
+
+	b := &Breakdown{
+		EstimatedTotal: 1500,
+		ActualPrompt:   1800,
+		MaxContext:     128000,
+	}
+	if b.Total() != 1800 {
+		t.Fatalf("Total() = %d, want 1800 (actual)", b.Total())
+	}
+}
+
+func TestBreakdownTotalFallsBackToEstimated(t *testing.T) {
+	t.Parallel()
+
+	b := &Breakdown{
+		EstimatedTotal: 1500,
+		MaxContext:     128000,
+	}
+	if b.Total() != 1500 {
+		t.Fatalf("Total() = %d, want 1500 (estimated)", b.Total())
+	}
+}
+
+func TestBreakdownIsZero(t *testing.T) {
+	t.Parallel()
+
+	if !((*Breakdown)(nil).IsZero()) {
+		t.Fatal("nil breakdown IsZero() = false, want true")
+	}
+	if !(&Breakdown{}).IsZero() {
+		t.Fatal("empty breakdown IsZero() = false, want true")
+	}
+	if (&Breakdown{EstimatedTotal: 100}).IsZero() {
+		t.Fatal("breakdown with EstimatedTotal IsZero() = true, want false")
+	}
+}
+
+func TestBreakdownPercentUsed(t *testing.T) {
+	t.Parallel()
+
+	b := &Breakdown{
+		EstimatedTotal: 50000,
+		MaxContext:     128000,
+	}
+	if got, want := int(b.PercentUsed()), 39; got != want {
+		t.Fatalf("PercentUsed() = %d%%, want %d%%", got, want)
+	}
+}
+
+func TestSegmentCountsTotal(t *testing.T) {
+	t.Parallel()
+
+	segs := SegmentCounts{System: 100, Conversation: 200, Tools: 50}
+	if got, want := segs.Total(), 350; got != want {
+		t.Fatalf("Total() = %d, want %d", got, want)
+	}
+}
+
+func TestSegmentCountsIsZero(t *testing.T) {
+	t.Parallel()
+
+	var zero SegmentCounts
+	if !zero.IsZero() {
+		t.Fatal("zero counts IsZero() = false, want true")
+	}
+	nonZero := SegmentCounts{Conversation: 10}
+	if nonZero.IsZero() {
+		t.Fatal("non-zero counts IsZero() = true, want false")
 	}
 }

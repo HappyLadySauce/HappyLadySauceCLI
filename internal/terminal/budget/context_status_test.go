@@ -5,6 +5,7 @@ import (
 	"testing"
 
 	contextbudget "github.com/HappyLadySauce/HappyLadySauceCLI/internal/context/common/budget"
+	"github.com/HappyLadySauce/HappyLadySauceCLI/internal/context/common/usage"
 )
 
 func TestFormatContextStatusLineFull(t *testing.T) {
@@ -15,11 +16,10 @@ func TestFormatContextStatusLineFull(t *testing.T) {
 		TotalTokens:          52500,
 		EstimatedTotalTokens: 52500,
 		PercentFull:          41,
-		Segments: map[contextbudget.Segment]int{
-			contextbudget.SegmentConversation: 32600,
-			contextbudget.SegmentTools:        8600,
-			contextbudget.SegmentSystem:       500,
-			contextbudget.SegmentRules:        400,
+		Segs: usage.SegmentCounts{
+			Conversation: 32600,
+			Tools:        8600,
+			System:       500,
 		},
 	})
 
@@ -59,10 +59,10 @@ func TestFormatContextStatusLineTokenFormatting(t *testing.T) {
 	line := FormatContextStatusLine(&contextbudget.ContextBudget{
 		MaxTokens:   32768,
 		PercentFull: 12,
-		Segments: map[contextbudget.Segment]int{
-			contextbudget.SegmentConversation: 32600,
-			contextbudget.SegmentSystem:       1000,
-			contextbudget.SegmentTools:        999,
+		Segs: usage.SegmentCounts{
+			Conversation: 32600,
+			System:       1000,
+			Tools:        999,
 		},
 	})
 
@@ -78,14 +78,10 @@ func TestFormatContextStatusLineStableTopThreeOrdering(t *testing.T) {
 	line := FormatContextStatusLine(&contextbudget.ContextBudget{
 		MaxTokens:   100000,
 		PercentFull: 10,
-		Segments: map[contextbudget.Segment]int{
-			contextbudget.SegmentSubagents:    100,
-			contextbudget.SegmentMCP:          100,
-			contextbudget.SegmentSkills:       100,
-			contextbudget.SegmentRules:        100,
-			contextbudget.SegmentSystem:       100,
-			contextbudget.SegmentTools:        100,
-			contextbudget.SegmentConversation: 100,
+		Segs: usage.SegmentCounts{
+			System:       100,
+			Conversation: 100,
+			Tools:        100,
 		},
 	})
 

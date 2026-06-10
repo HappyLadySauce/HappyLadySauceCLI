@@ -15,23 +15,18 @@ import (
 // budgetMiddleware 在模型调用前记录模型可见上下文预算快照。
 type budgetMiddleware struct {
 	*adk.BaseChatModelAgentMiddleware
-	estimator        *usage.TokenEstimator
-	maxContextTokens int
+	calculator *usage.Calculator
 }
 
 // NewBudgetMiddleware creates a read-only context budget middleware.
 // NewBudgetMiddleware 创建只读的上下文预算中间件。
-func NewBudgetMiddleware(estimator *usage.TokenEstimator, maxContextTokens int) (adk.ChatModelAgentMiddleware, error) {
-	if estimator == nil {
-		return nil, errors.New("budget middleware token estimator is required")
-	}
-	if maxContextTokens <= 0 {
-		return nil, errors.New("budget middleware max context tokens must be greater than 0")
+func NewBudgetMiddleware(calculator *usage.Calculator) (adk.ChatModelAgentMiddleware, error) {
+	if calculator == nil {
+		return nil, errors.New("budget middleware token calculator is required")
 	}
 	return &budgetMiddleware{
 		BaseChatModelAgentMiddleware: &adk.BaseChatModelAgentMiddleware{},
-		estimator:                    estimator,
-		maxContextTokens:             maxContextTokens,
+		calculator:                   calculator,
 	}, nil
 }
 
@@ -46,7 +41,7 @@ func (m *budgetMiddleware) BeforeModelRewriteState(ctx context.Context, state *a
 	budget, err := contextbudget.EstimateBudget(contextbudget.BudgetInput{
 		Messages:  state.Messages,
 		ToolInfos: state.ToolInfos,
-	}, m.estimator, m.maxContextTokens)
+	}, m.calculator)
 	if err != nil {
 		klog.Warningf("context budget estimate skipped: %v", err)
 		return ctx, state, nil

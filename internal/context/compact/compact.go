@@ -47,6 +47,9 @@ type Config struct {
 	ModelName       string
 	MaxModelContext int
 	MaxOutputTokens int
+	// Estimator is the shared local token estimator; when nil, one is created from ModelName.
+	// Estimator 为共享的本地 token 估算器；为 nil 时根据 ModelName 创建。
+	Estimator *usage.TokenEstimator
 }
 
 // Compactor rewrites message history when context pressure is high.
@@ -74,9 +77,14 @@ func NewCompactor(cfg Config) (*Compactor, error) {
 		return nil, errors.New("max model context must be greater than max output tokens")
 	}
 
+	estimator := cfg.Estimator
+	if estimator == nil {
+		estimator = usage.NewTokenEstimator(cfg.ModelName)
+	}
+
 	return &Compactor{
 		model:            cfg.Model,
-		estimator:        usage.NewTokenEstimator(cfg.ModelName),
+		estimator:        estimator,
 		maxContextTokens: cfg.MaxModelContext,
 		maxOutputTokens:  cfg.MaxOutputTokens,
 	}, nil
