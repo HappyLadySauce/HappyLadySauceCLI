@@ -56,12 +56,6 @@ func (s SegmentCounts) Total() int {
 	return total
 }
 
-// Clone returns an independent copy.
-// Clone 返回独立副本。
-func (s SegmentCounts) Clone() SegmentCounts {
-	return s
-}
-
 // Breakdown is a categorized token snapshot for one model call.
 // Segments are scaled proportionally when provider usage is applied.
 // Breakdown 表示一次模型调用的分类 token 快照；当 provider 用量应用后分段按比例缩放。
