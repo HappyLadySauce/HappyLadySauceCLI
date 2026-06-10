@@ -8,22 +8,42 @@ import (
 	"github.com/HappyLadySauce/HappyLadySauceCLI/internal/context/common/usage"
 )
 
-func TestFormatContextStatusLineFull(t *testing.T) {
+func TestFormatStatsLine(t *testing.T) {
+	t.Parallel()
+
+	line := FormatStatsLine(contextbudget.TurnStats{
+		ElapsedMs:        960,
+		PromptTokens:     1340,
+		CompletionTokens: 31,
+	})
+	want := "[ Stats: elapsed=960ms prompt↑=1340 completion↓=31 ]"
+	if line != want {
+		t.Fatalf("FormatStatsLine() = %q, want %q", line, want)
+	}
+}
+
+func TestFormatStatsLineEmpty(t *testing.T) {
+	t.Parallel()
+
+	if got := FormatStatsLine(contextbudget.TurnStats{}); got != "" {
+		t.Fatalf("FormatStatsLine(empty) = %q, want empty", got)
+	}
+}
+
+func TestFormatContextStatusLinePostTurn(t *testing.T) {
 	t.Parallel()
 
 	line := FormatContextStatusLine(&contextbudget.ContextBudget{
-		MaxTokens:            128000,
-		TotalTokens:          52500,
-		EstimatedTotalTokens: 52500,
-		PercentFull:          41,
+		MaxTokens:   128000,
+		PercentFull: 0.35,
 		Segs: usage.SegmentCounts{
-			Conversation: 32600,
-			Tools:        8600,
-			System:       500,
+			Conversation: 318,
+			Tools:        103,
+			System:       37,
 		},
 	})
 
-	want := "[context 41% 128K | estimated 52.5k | conv 32.6k | tools 8.6k | sys 500]"
+	want := "[context <1% 128K | conv 318 | tools 103 | sys 37]"
 	if line != want {
 		t.Fatalf("FormatContextStatusLine() = %q, want %q", line, want)
 	}
@@ -43,11 +63,19 @@ func TestFormatContextStatusLineNilAndInvalid(t *testing.T) {
 func TestFormatContextStatusLinePercentRounding(t *testing.T) {
 	t.Parallel()
 
-	tiny := FormatContextStatusLine(&contextbudget.ContextBudget{MaxTokens: 1000, PercentFull: 0.4})
+	tiny := FormatContextStatusLine(&contextbudget.ContextBudget{
+		MaxTokens:   1000,
+		PercentFull: 0.4,
+		Segs:        usage.SegmentCounts{Conversation: 1},
+	})
 	if !strings.Contains(tiny, "<1%") {
 		t.Fatalf("tiny percent line = %q, want <1%%", tiny)
 	}
-	rounded := FormatContextStatusLine(&contextbudget.ContextBudget{MaxTokens: 1000, PercentFull: 41.5})
+	rounded := FormatContextStatusLine(&contextbudget.ContextBudget{
+		MaxTokens:   1000,
+		PercentFull: 41.5,
+		Segs:        usage.SegmentCounts{Conversation: 415},
+	})
 	if !strings.Contains(rounded, "42%") {
 		t.Fatalf("rounded percent line = %q, want 42%%", rounded)
 	}
@@ -66,43 +94,7 @@ func TestFormatContextStatusLineTokenFormatting(t *testing.T) {
 		},
 	})
 
-	want := "[context 12% 32K | conv 32.6k | sys 1.0k | tools 999]"
-	if line != want {
-		t.Fatalf("FormatContextStatusLine() = %q, want %q", line, want)
-	}
-}
-
-func TestFormatContextStatusLineStableTopThreeOrdering(t *testing.T) {
-	t.Parallel()
-
-	line := FormatContextStatusLine(&contextbudget.ContextBudget{
-		MaxTokens:   100000,
-		PercentFull: 10,
-		Segs: usage.SegmentCounts{
-			System:       100,
-			Conversation: 100,
-			Tools:        100,
-		},
-	})
-
-	want := "[context 10% 100K | conv 100 | tools 100 | sys 100]"
-	if line != want {
-		t.Fatalf("FormatContextStatusLine() = %q, want %q", line, want)
-	}
-}
-
-func TestFormatContextStatusLineActualUsage(t *testing.T) {
-	t.Parallel()
-
-	line := FormatContextStatusLine(&contextbudget.ContextBudget{
-		MaxTokens:              128000,
-		EstimatedTotalTokens:   52600,
-		ActualPromptTokens:     54200,
-		ActualCompletionTokens: 1100,
-		PercentFull:            42.34375,
-	})
-
-	want := "[context 42% 128K | actual prompt 54.2k | out 1.1k | est 52.6k]"
+	want := "[context 12% 32K | conv 32.6k | tools 999 | sys 1.0k]"
 	if line != want {
 		t.Fatalf("FormatContextStatusLine() = %q, want %q", line, want)
 	}

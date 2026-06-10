@@ -19,6 +19,7 @@ type ChatModelAgentMiddlewareConfig struct {
 	ModelName       string
 	MaxModelContext int
 	MaxOutputTokens int
+	Instruction     string
 }
 
 // NewChatModelAgentMiddlewares builds the default ChatModelAgent middleware chain.
@@ -43,7 +44,7 @@ func NewChatModelAgentMiddlewares(cfg ChatModelAgentMiddlewareConfig) ([]adk.Cha
 	if err != nil {
 		return nil, fmt.Errorf("new content middleware: %w", err)
 	}
-	budgetMiddleware, err := budgetmiddleware.NewBudgetMiddleware(calculator)
+	budgetMiddleware, err := budgetmiddleware.NewBudgetMiddleware(calculator, cfg.Instruction)
 	if err != nil {
 		return nil, fmt.Errorf("new budget middleware: %w", err)
 	}

@@ -34,118 +34,143 @@ func (m *fakeChatModel) Stream(ctx context.Context, input []*schema.Message, opt
 func TestNewBudgetMiddlewareValidation(t *testing.T) {
 	t.Parallel()
 
-	if _, err := NewBudgetMiddleware(nil); err == nil {
+	if _, err := NewBudgetMiddleware(nil, ""); err == nil {
 		t.Fatal("NewBudgetMiddleware(nil) error = nil, want error")
 	}
-	// calculator with zero context is fine — validation is in budget layer
 	calc := usage.NewCalculator("gpt-4o", 0)
-	if _, err := NewBudgetMiddleware(calc); err != nil {
+	if _, err := NewBudgetMiddleware(calc, ""); err != nil {
 		t.Fatalf("NewBudgetMiddleware() error = %v", err)
 	}
 }
 
-func TestBudgetMiddlewareNoWriterDoesNotModifyState(t *testing.T) {
-	t.Parallel()
-
-	middleware := newTestBudgetMiddleware(t)
-	state := &adk.ChatModelAgentState{Messages: []*schema.Message{schema.UserMessage("hello")}}
-
-	_, got, err := middleware.BeforeModelRewriteState(context.Background(), state, nil)
-	if err != nil {
-		t.Fatalf("BeforeModelRewriteState() error = %v", err)
-	}
-	if got != state || got.Messages[0] != state.Messages[0] {
-		t.Fatal("budget middleware should not modify state")
-	}
-}
-
-func TestBudgetMiddlewareWritesBudget(t *testing.T) {
+func TestBudgetMiddlewareBeforeAgentStartsTurn(t *testing.T) {
 	t.Parallel()
 
 	writer := contextbudget.NewBudgetWriter()
 	ctx := contextbudget.WithBudgetWriter(context.Background(), writer)
 	middleware := newTestBudgetMiddleware(t)
+
+	ctx, _, err := middleware.BeforeAgent(ctx, &adk.ChatModelAgentContext{})
+	if err != nil {
+		t.Fatalf("BeforeAgent() error = %v", err)
+	}
+	if status := writer.ReadTurnStatus(); status.Stats.ElapsedMs != 0 {
+		t.Fatalf("ElapsedMs = %d before turn ends, want 0", status.Stats.ElapsedMs)
+	}
+}
+
+func TestBudgetMiddlewareAfterModelRewriteStateAccumulatesUsage(t *testing.T) {
+	t.Parallel()
+
+	writer := contextbudget.NewBudgetWriter()
+	ctx := contextbudget.WithBudgetWriter(context.Background(), writer)
+	middleware := newTestBudgetMiddleware(t)
+	writer.BeginTurn()
+
+	state := &adk.ChatModelAgentState{
+		Messages: []*schema.Message{
+			schema.UserMessage("hello"),
+			{
+				Role:    schema.Assistant,
+				Content: "hi",
+				ResponseMeta: &schema.ResponseMeta{
+					Usage: &schema.TokenUsage{PromptTokens: 100, CompletionTokens: 10},
+				},
+			},
+		},
+	}
+
+	_, got, err := middleware.AfterModelRewriteState(ctx, state, nil)
+	if err != nil {
+		t.Fatalf("AfterModelRewriteState() error = %v", err)
+	}
+	if got != state {
+		t.Fatal("budget middleware should not modify state")
+	}
+	if status := writer.ReadTurnStatus(); status.Stats.PromptTokens != 100 || status.Stats.CompletionTokens != 10 {
+		t.Fatalf("turn stats = %#v, want prompt=100 completion=10", status.Stats)
+	}
+}
+
+func TestBudgetMiddlewareAfterAgentWritesPostTurnBudget(t *testing.T) {
+	t.Parallel()
+
+	writer := contextbudget.NewBudgetWriter()
+	ctx := contextbudget.WithBudgetWriter(context.Background(), writer)
+	middleware := newTestBudgetMiddleware(t)
+	writer.BeginTurn()
+
 	state := &adk.ChatModelAgentState{
 		Messages: []*schema.Message{
 			schema.SystemMessage("system"),
 			schema.UserMessage("hello"),
+			schema.AssistantMessage("done", nil),
 		},
 		ToolInfos: []*schema.ToolInfo{{Name: "lookup", Desc: "lookup data"}},
 	}
 
-	_, got, err := middleware.BeforeModelRewriteState(ctx, state, nil)
+	ctx, err := middleware.AfterAgent(ctx, state)
 	if err != nil {
-		t.Fatalf("BeforeModelRewriteState() error = %v", err)
+		t.Fatalf("AfterAgent() error = %v", err)
 	}
-	if got != state {
-		t.Fatal("budget middleware should return original state")
+	if ctx == nil {
+		t.Fatal("AfterAgent() ctx = nil")
 	}
-	budget := writer.Read()
-	if budget == nil {
+
+	status := writer.ReadTurnStatus()
+	if status.Budget == nil {
 		t.Fatal("budget writer has nil snapshot")
 	}
-	if budget.Segs.System <= 0 ||
-		budget.Segs.Conversation <= 0 {
-		t.Fatalf("budget segments missing expected values: %#v", budget.Segs)
+	if status.Budget.Segs.System <= 0 || status.Budget.Segs.Conversation <= 0 {
+		t.Fatalf("budget segments missing expected values: %#v", status.Budget.Segs)
 	}
-	if budget.Segs.Tools <= 0 {
-		t.Fatalf("Segs.Tools = %d, want > 0 for tool definitions", budget.Segs.Tools)
+	if status.Budget.Segs.Tools <= 0 {
+		t.Fatalf("Segs.Tools = %d, want > 0 for tool definitions", status.Budget.Segs.Tools)
+	}
+	if status.Stats.ElapsedMs < 0 {
+		t.Fatalf("ElapsedMs = %d, want >= 0", status.Stats.ElapsedMs)
 	}
 }
 
-func TestBudgetMiddlewareNilAndEmptyState(t *testing.T) {
+func TestBudgetMiddlewareAfterAgentNilStateNoops(t *testing.T) {
 	t.Parallel()
 
 	writer := contextbudget.NewBudgetWriter()
 	ctx := contextbudget.WithBudgetWriter(context.Background(), writer)
 	middleware := newTestBudgetMiddleware(t)
 
-	_, got, err := middleware.BeforeModelRewriteState(ctx, nil, nil)
+	_, err := middleware.AfterAgent(ctx, nil)
 	if err != nil {
-		t.Fatalf("BeforeModelRewriteState(nil) error = %v", err)
+		t.Fatalf("AfterAgent(nil) error = %v", err)
 	}
-	if got != nil || writer.Read() != nil {
-		t.Fatalf("nil state should no-op, state=%#v budget=%#v", got, writer.Read())
-	}
-
-	state := &adk.ChatModelAgentState{}
-	_, got, err = middleware.BeforeModelRewriteState(ctx, state, nil)
-	if err != nil {
-		t.Fatalf("BeforeModelRewriteState(empty) error = %v", err)
-	}
-	if got != state {
-		t.Fatal("empty state should return original state")
-	}
-	if budget := writer.Read(); budget == nil || budget.TotalTokens != 0 {
-		t.Fatalf("empty state budget = %#v, want zero snapshot", budget)
+	if writer.Read() != nil {
+		t.Fatalf("nil state should not write budget, got %#v", writer.Read())
 	}
 }
 
-func TestBudgetMiddlewareBadToolDoesNotBlockBudget(t *testing.T) {
+func TestBudgetMiddlewareAfterAgentBadToolStillWritesBudget(t *testing.T) {
 	t.Parallel()
 
 	writer := contextbudget.NewBudgetWriter()
 	ctx := contextbudget.WithBudgetWriter(context.Background(), writer)
 	middleware := newTestBudgetMiddleware(t)
+	writer.BeginTurn()
+
 	state := &adk.ChatModelAgentState{
+		Messages:  []*schema.Message{schema.UserMessage("hello"), schema.AssistantMessage("ok", nil)},
 		ToolInfos: []*schema.ToolInfo{{Name: "bad", Extra: map[string]any{"bad": func() {}}}},
 	}
 
-	_, got, err := middleware.BeforeModelRewriteState(ctx, state, nil)
+	_, err := middleware.AfterAgent(ctx, state)
 	if err != nil {
-		t.Fatalf("BeforeModelRewriteState() error = %v", err)
+		t.Fatalf("AfterAgent() error = %v", err)
 	}
-	if got != state {
-		t.Fatal("budget middleware should return original state")
-	}
-	// Calculator swallows tool count errors — budget is written with estimated total 0.
-	budget := writer.Read()
-	if budget == nil {
+	if writer.Read() == nil {
 		t.Fatal("budget should still be written when tool counting fails")
 	}
 }
 
-func TestBudgetMiddlewareAfterContentSeesCompactedMessages(t *testing.T) {
+func TestBudgetMiddlewareAfterAgentUsesCompactedMessages(t *testing.T) {
 	model := &fakeChatModel{response: schema.AssistantMessage("## Goal\nsummary", nil)}
 	compactor, err := compact.NewCompactor(compact.Config{
 		Model:           model,
@@ -169,12 +194,12 @@ func TestBudgetMiddlewareAfterContentSeesCompactedMessages(t *testing.T) {
 	if err != nil {
 		t.Fatalf("content BeforeModelRewriteState() error = %v", err)
 	}
-	_, got, err := budgetMiddleware.BeforeModelRewriteState(ctx, compacted, nil)
+	compacted.Messages = append(compacted.Messages, schema.AssistantMessage("final answer", nil))
+	writer.BeginTurn()
+
+	_, err = budgetMiddleware.AfterAgent(ctx, compacted)
 	if err != nil {
-		t.Fatalf("budget BeforeModelRewriteState() error = %v", err)
-	}
-	if got != compacted {
-		t.Fatal("budget middleware should not modify compacted state")
+		t.Fatalf("AfterAgent() error = %v", err)
 	}
 
 	budget := writer.Read()
@@ -191,7 +216,7 @@ func TestBudgetMiddlewareAfterContentSeesCompactedMessages(t *testing.T) {
 func newTestBudgetMiddleware(t *testing.T) adk.ChatModelAgentMiddleware {
 	t.Helper()
 	calc := usage.NewCalculator("unknown-local-model", 180)
-	middleware, err := NewBudgetMiddleware(calc)
+	middleware, err := NewBudgetMiddleware(calc, "test instruction")
 	if err != nil {
 		t.Fatalf("NewBudgetMiddleware() error = %v", err)
 	}

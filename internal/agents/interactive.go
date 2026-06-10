@@ -13,7 +13,6 @@ import (
 	"k8s.io/klog/v2"
 
 	contextbudget "github.com/HappyLadySauce/HappyLadySauceCLI/internal/context/common/budget"
-	contextusage "github.com/HappyLadySauce/HappyLadySauceCLI/internal/context/common/usage"
 	"github.com/HappyLadySauce/HappyLadySauceCLI/internal/input"
 	"github.com/HappyLadySauce/HappyLadySauceCLI/internal/middlewares"
 	"github.com/HappyLadySauce/HappyLadySauceCLI/internal/prompts"
@@ -29,11 +28,13 @@ func RunLoop(ctx context.Context, cfg *config.Config) error {
 		return fmt.Errorf("new chat model: %w", err)
 	}
 
+	agentInstruction := prompts.SystemPrompt
 	handlers, err := middlewares.NewChatModelAgentMiddlewares(middlewares.ChatModelAgentMiddlewareConfig{
 		Model:           chatModel,
 		ModelName:       cfg.Model.Model,
 		MaxModelContext: cfg.Model.MaxModelContext,
 		MaxOutputTokens: cfg.Model.MaxOutputTokens,
+		Instruction:     agentInstruction,
 	})
 	if err != nil {
 		return err
@@ -43,7 +44,6 @@ func RunLoop(ctx context.Context, cfg *config.Config) error {
 	history := []*schema.Message{}
 	promptReader := input.NewPromptReader(ctx, os.Stdin)
 	renderer := terminal.NewRenderer(os.Stdout, os.Stderr)
-	agentInstruction := prompts.SystemPrompt
 
 	agent, err := adk.NewChatModelAgent(ctx, &adk.ChatModelAgentConfig{
 		Model:       chatModel,
@@ -93,14 +93,11 @@ func RunLoop(ctx context.Context, cfg *config.Config) error {
 		}
 		if assistantMessage != nil {
 			history = append(history, assistantMessage)
-			if snapshot, ok := contextusage.SnapshotFromMessage(assistantMessage); ok {
-				budgetWriter.ApplyUsage(snapshot)
-			}
 		}
 		if exited {
 			return nil
 		}
-		renderer.WriteContextStatus(budgetWriter.Read())
+		renderer.WriteTurnStatus(budgetWriter.ReadTurnStatus())
 		renderer.FinishTurn()
 	}
 }
