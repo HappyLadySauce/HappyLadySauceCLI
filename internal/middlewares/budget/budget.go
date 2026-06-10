@@ -11,24 +11,27 @@ import (
 	"github.com/HappyLadySauce/HappyLadySauceCLI/internal/context/common/usage"
 )
 
-// budgetMiddleware records post-turn context and provider usage after the model finishes.
-// budgetMiddleware 在模型完成最终回复后记录上下文分段与 provider 用量。
+// budgetMiddleware records post-turn API usage and context occupancy.
+// budgetMiddleware 在模型完成最终回复后记录 API 用量与上下文占用。
 type budgetMiddleware struct {
 	*adk.BaseChatModelAgentMiddleware
-	calculator  *usage.Calculator
-	instruction string
+	maxContext int
+	estimator  *usage.TokenEstimator
 }
 
-// NewBudgetMiddleware creates a read-only context budget middleware.
-// NewBudgetMiddleware 创建只读的上下文预算中间件。
-func NewBudgetMiddleware(calculator *usage.Calculator, instruction string) (adk.ChatModelAgentMiddleware, error) {
-	if calculator == nil {
-		return nil, errors.New("budget middleware token calculator is required")
+// NewBudgetMiddleware creates a read-only turn stats middleware.
+// NewBudgetMiddleware 创建只读的回合统计中间件。
+func NewBudgetMiddleware(maxContext int, estimator *usage.TokenEstimator) (adk.ChatModelAgentMiddleware, error) {
+	if maxContext <= 0 {
+		return nil, errors.New("budget middleware max context must be greater than 0")
+	}
+	if estimator == nil {
+		return nil, errors.New("budget middleware token estimator is required")
 	}
 	return &budgetMiddleware{
 		BaseChatModelAgentMiddleware: &adk.BaseChatModelAgentMiddleware{},
-		calculator:                   calculator,
-		instruction:                  instruction,
+		maxContext:                   maxContext,
+		estimator:                    estimator,
 	}, nil
 }
 
@@ -56,23 +59,20 @@ func (m *budgetMiddleware) AfterModelRewriteState(ctx context.Context, state *ad
 	return ctx, state, nil
 }
 
-// AfterAgent classifies the final model-visible context, then FinalizeTurn
-// scales segments to provider usage when available.
-// AfterAgent 在回合结束后分类最终上下文，FinalizeTurn 在可用时用 provider prompt 缩放分段。
+// AfterAgent estimates context occupancy and finalizes the post-turn snapshot.
+// AfterAgent 估算上下文占用并完成回合结束快照。
 func (m *budgetMiddleware) AfterAgent(ctx context.Context, state *adk.ChatModelAgentState) (context.Context, error) {
 	writer := budget.BudgetWriterFromContext(ctx)
 	if writer == nil || state == nil {
 		return ctx, nil
 	}
 
-	breakdown := m.calculator.Count(usage.CountInput{
-		Messages:          state.Messages,
-		ToolInfos:         state.ToolInfos,
-		DeferredToolInfos: state.DeferredToolInfos,
-		Instruction:       m.instruction,
-	})
-
-	writer.FinalizeTurn(breakdown)
+	estimated, _ := m.estimator.EstimateVisiblePromptTokens(
+		state.Messages,
+		state.ToolInfos,
+		state.DeferredToolInfos,
+	)
+	writer.FinalizeTurn(m.maxContext, estimated)
 	return ctx, nil
 }
 

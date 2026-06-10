@@ -1,8 +1,6 @@
-// Package budget provides per-turn token budget tracking with provider-usage-aware scaling.
-// Token classification and estimation live in internal/context/common/usage.
+// Package budget provides per-turn token usage and context occupancy tracking.
 //
-// Package budget 提供基于 provider 用量感知的单轮 token 预算追踪。
-// Token 分类与估算位于 internal/context/common/usage。
+// Package budget 提供单轮 token 用量与上下文占用追踪。
 package budget
 
 import (
@@ -15,33 +13,42 @@ import (
 
 type budgetWriterContextKey struct{}
 
-// TurnStats captures per-turn latency and aggregated provider token usage.
-// TurnStats 记录单轮耗时与聚合后的 provider token 用量。
+// TurnStats captures post-turn latency, API usage, and context window occupancy.
+// TurnStats 记录回合结束后的耗时、API 用量与上下文窗口占用。
 type TurnStats struct {
 	ElapsedMs        int64
-	PromptTokens     int
-	CompletionTokens int
+	PromptTokens     int     // accumulated provider prompt across hops / 各跳累加 prompt
+	CompletionTokens int     // accumulated provider completion across hops / 各跳累加 completion
+	ContextTokens    int     // last-hop provider prompt, or local estimate / 最后一跳 prompt 或本地估算
+	MaxContext       int     // model context window / 模型上下文窗口
 }
 
-// TurnStatus is the post-turn snapshot shown after the model finishes responding.
-// TurnStatus 表示模型完成最终回复后用于展示的快照。
-type TurnStatus struct {
-	Stats  TurnStats
-	Budget *usage.Breakdown
+// IsZero reports whether the stats carry no displayable values.
+// IsZero 表示统计中没有任何可展示的数据。
+func (s TurnStats) IsZero() bool {
+	return s.ElapsedMs <= 0 && s.PromptTokens <= 0 && s.CompletionTokens <= 0 && s.ContextTokens <= 0
 }
 
-// BudgetWriter stores the latest context budget snapshot for one runner turn.
-// BudgetWriter 存储单轮 runner 的最新上下文预算快照。
+// PercentUsed returns the percentage of MaxContext consumed by ContextTokens.
+// PercentUsed 返回 ContextTokens 占 MaxContext 的百分比。
+func (s TurnStats) PercentUsed() float64 {
+	if s.MaxContext <= 0 || s.ContextTokens <= 0 {
+		return 0
+	}
+	return float64(s.ContextTokens) / float64(s.MaxContext) * 100
+}
+
+// BudgetWriter stores the latest turn snapshot for one runner turn.
+// BudgetWriter 存储单轮 runner 的最新回合快照。
 type BudgetWriter struct {
 	mu            sync.RWMutex
-	data          *usage.Breakdown
-	turnStart     time.Time
 	stats         TurnStats
-	lastHopPrompt int // last model hop prompt for context occupancy / 最后一跳 prompt，用于上下文占用
+	turnStart     time.Time
+	lastHopPrompt int
 }
 
-// NewBudgetWriter creates an empty budget snapshot writer.
-// NewBudgetWriter 创建空的预算快照写入器。
+// NewBudgetWriter creates an empty budget writer.
+// NewBudgetWriter 创建空的预算写入器。
 func NewBudgetWriter() *BudgetWriter {
 	return &BudgetWriter{}
 }
@@ -70,28 +77,18 @@ func (w *BudgetWriter) AddUsage(snapshot usage.UsageSnapshot) {
 	w.stats.PromptTokens += snapshot.PromptTokens
 	w.stats.CompletionTokens += snapshot.CompletionTokens
 	if snapshot.PromptTokens > 0 {
-		// Context line uses the final hop prompt as current session occupancy.
-		// Context 行以最后一跳 prompt 表示当前会话占用。
 		w.lastHopPrompt = snapshot.PromptTokens
 	}
 }
 
-// FinalizeTurn stores the post-turn context breakdown and closes elapsed-time tracking.
+// FinalizeTurn closes elapsed-time tracking and stores context occupancy.
 //
-// Context line policy:
-//   - Prefer the last model hop's provider prompt_tokens for window occupancy.
-//   - Scale locally classified segments proportionally to that prompt total.
-//   - Fall back to local estimates when provider usage is unavailable.
+// Context occupancy prefers the last model hop's provider prompt_tokens.
+// When provider usage is unavailable, estimatedContextTokens is used instead.
 //
-// Stats line continues to use accumulated provider usage from AddUsage.
-//
-// FinalizeTurn 写入回合结束后的上下文 breakdown 并结束耗时统计。
-//
-// Context 行策略：
-//   - 优先用最后一跳 provider prompt_tokens 表示当前会话占用；
-//   - 本地分类分段按比例缩放到该 prompt 总量；
-//   - 无 provider 用量时回退到本地估算。
-func (w *BudgetWriter) FinalizeTurn(breakdown *usage.Breakdown) {
+// FinalizeTurn 结束耗时统计并写入上下文占用。
+// 优先使用最后一跳 provider prompt_tokens；无 provider 时回退到 estimatedContextTokens。
+func (w *BudgetWriter) FinalizeTurn(maxContext, estimatedContextTokens int) {
 	if w == nil {
 		return
 	}
@@ -100,83 +97,22 @@ func (w *BudgetWriter) FinalizeTurn(breakdown *usage.Breakdown) {
 	if !w.turnStart.IsZero() {
 		w.stats.ElapsedMs = time.Since(w.turnStart).Milliseconds()
 	}
-
-	if breakdown != nil {
-		// Scale segments to last provider prompt when available.
-		if w.lastHopPrompt > 0 && breakdown.EstimatedTotal > 0 {
-			breakdown.ApplyProvider(usage.UsageSnapshot{
-				PromptTokens: w.lastHopPrompt,
-				Source:       usage.UsageSourceProvider,
-			})
-		} else if breakdown.Source == "" {
-			breakdown.Source = usage.UsageSourceEstimated
-		}
-		// Carry completion tokens from accumulated stats.
-		breakdown.ActualOutput = w.stats.CompletionTokens
+	w.stats.MaxContext = maxContext
+	w.stats.ContextTokens = w.lastHopPrompt
+	if w.stats.ContextTokens == 0 {
+		w.stats.ContextTokens = estimatedContextTokens
 	}
-
-	w.data = cloneBreakdown(breakdown)
 }
 
-// Write stores a defensive copy of the breakdown.
-// Write 写入 breakdown 的防御性副本。
-func (w *BudgetWriter) Write(breakdown *usage.Breakdown) {
+// ReadTurnStatus returns the post-turn snapshot.
+// ReadTurnStatus 返回回合结束后的快照。
+func (w *BudgetWriter) ReadTurnStatus() TurnStats {
 	if w == nil {
-		return
-	}
-	w.mu.Lock()
-	defer w.mu.Unlock()
-	w.data = cloneBreakdown(breakdown)
-}
-
-// ApplyUsage merges provider token usage into the latest breakdown snapshot.
-// ApplyUsage 通过 usage.Breakdown 将服务商 token 用量合并进最新快照。
-func (w *BudgetWriter) ApplyUsage(snapshot usage.UsageSnapshot) {
-	if w == nil || snapshot.IsZero() {
-		return
-	}
-	w.mu.Lock()
-	defer w.mu.Unlock()
-	if w.data == nil {
-		w.data = &usage.Breakdown{}
-	}
-	w.data.ApplyProvider(snapshot)
-}
-
-// ReadTurnStatus returns the post-turn stats and context breakdown snapshot.
-// ReadTurnStatus 返回回合结束后的统计与上下文 breakdown 快照。
-func (w *BudgetWriter) ReadTurnStatus() TurnStatus {
-	if w == nil {
-		return TurnStatus{}
+		return TurnStats{}
 	}
 	w.mu.RLock()
 	defer w.mu.RUnlock()
-	return TurnStatus{
-		Stats:  w.stats,
-		Budget: cloneBreakdown(w.data),
-	}
-}
-
-// Read returns a defensive copy of the latest breakdown snapshot.
-// Read 返回最新 breakdown 快照的防御性副本。
-func (w *BudgetWriter) Read() *usage.Breakdown {
-	if w == nil {
-		return nil
-	}
-	w.mu.RLock()
-	defer w.mu.RUnlock()
-	return cloneBreakdown(w.data)
-}
-
-// Clear removes the latest breakdown snapshot.
-// Clear 清除最新 breakdown 快照。
-func (w *BudgetWriter) Clear() {
-	if w == nil {
-		return
-	}
-	w.mu.Lock()
-	defer w.mu.Unlock()
-	w.data = nil
+	return w.stats
 }
 
 // WithBudgetWriter attaches a budget writer to ctx.
@@ -197,14 +133,3 @@ func BudgetWriterFromContext(ctx context.Context) *BudgetWriter {
 	writer, _ := ctx.Value(budgetWriterContextKey{}).(*BudgetWriter)
 	return writer
 }
-
-// cloneBreakdown returns a defensive copy of a breakdown.
-// cloneBreakdown 返回 breakdown 的防御性副本。
-func cloneBreakdown(b *usage.Breakdown) *usage.Breakdown {
-	if b == nil {
-		return nil
-	}
-	copy := *b // Segs is a value type (SegmentCounts), copied by value.
-	return &copy
-}
-

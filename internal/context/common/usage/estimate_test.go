@@ -283,6 +283,30 @@ func TestCountModelToolContextMergesImmediateAndDeferred(t *testing.T) {
 	}
 }
 
+func TestEstimateVisiblePromptTokensSumsMessagesAndTools(t *testing.T) {
+	t.Parallel()
+
+	estimator := NewTokenEstimator("gpt-4o")
+	messages := []*schema.Message{
+		schema.SystemMessage("system"),
+		schema.UserMessage("hello"),
+	}
+	toolInfos := []*schema.ToolInfo{{Name: "lookup", Desc: "lookup data"}}
+
+	got, err := estimator.EstimateVisiblePromptTokens(messages, toolInfos, nil)
+	if err != nil {
+		t.Fatalf("EstimateVisiblePromptTokens() error = %v", err)
+	}
+	wantMessages := estimator.CountMessages(messages)
+	wantTools, err := estimator.CountModelToolContext(toolInfos, nil)
+	if err != nil {
+		t.Fatalf("CountModelToolContext() error = %v", err)
+	}
+	if got != wantMessages+wantTools {
+		t.Fatalf("EstimateVisiblePromptTokens() = %d, want %d", got, wantMessages+wantTools)
+	}
+}
+
 func TestCountMessageIncludesNameOverhead(t *testing.T) {
 	t.Parallel()
 

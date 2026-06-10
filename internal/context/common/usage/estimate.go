@@ -154,6 +154,20 @@ func (e *TokenEstimator) CountModelToolContext(toolInfos, deferredToolInfos []*s
 	return total + immediate, nil
 }
 
+// EstimateVisiblePromptTokens estimates total model-visible prompt tokens without segment breakdown.
+// EstimateVisiblePromptTokens 估算模型可见 prompt 总量，不做分段。
+func (e *TokenEstimator) EstimateVisiblePromptTokens(messages []*schema.Message, toolInfos, deferredToolInfos []*schema.ToolInfo) (int, error) {
+	if e == nil {
+		return 0, nil
+	}
+	total := e.CountMessages(messages)
+	toolTokens, err := e.CountModelToolContext(toolInfos, deferredToolInfos)
+	if err != nil {
+		return total, err
+	}
+	return total + toolTokens, nil
+}
+
 // CountText estimates tokens for text.
 // CountText 估算文本 token 数。
 func (e *TokenEstimator) CountText(text string) int {

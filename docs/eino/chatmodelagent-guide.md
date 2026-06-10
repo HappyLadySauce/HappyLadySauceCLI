@@ -476,11 +476,11 @@ if msg.ResponseMeta != nil && msg.ResponseMeta.Usage != nil {
    → 本轮回复追加到对话历史
 
 9. budgetMiddleware.AfterAgent
-   └─ calculator.Count(messages, toolInfos, instruction)
-        → 分类统计 → writer.FinalizeTurn()
+   └─ EstimateVisiblePromptTokens(messages, toolInfos, deferredToolInfos)
+        → writer.FinalizeTurn(maxContext, estimated)
 
 10. renderer.WriteTurnStatus(writer.ReadTurnStatus())
-    → 输出上下文预算状态行（如 "[context 42% 128k | ...]"）
+    → 输出单行统计（如 "[ Stats: elapsed=960ms prompt↑=1340 completion↓=31 context <1% 128K ]"）
 ```
 
 ### 8.2 中间件执行顺序
@@ -510,7 +510,7 @@ BeforeAgent:
 
 AfterAgent（成功结束时）:
   contentMiddleware.AfterAgent (no-op)
-  budgetMiddleware.AfterAgent (分类统计 + FinalizeTurn)
+  budgetMiddleware.AfterAgent (本地总量估算 + FinalizeTurn)
 ```
 
 ---

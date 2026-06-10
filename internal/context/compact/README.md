@@ -248,6 +248,6 @@ Middleware 在 `err != nil` 时记录 warning 并透传原 state，不中断 age
 
 - 设计总览：[`docs/context/compression.md`](../../../docs/context/compression.md)
 - Middleware 集成：[`internal/middlewares/content/content.go`](../../middlewares/content/content.go)
-- Token 分类与工具计数：[`internal/context/common/usage/README.md`](../common/usage/README.md)
-- 终端 Context 行展示：[`internal/context/budget/README.md`](../budget/README.md)
+- Token 估算：[`internal/context/common/usage/README.md`](../common/usage/README.md)
+- 终端统计行：[`internal/context/budget/README.md`](../budget/README.md)
 - 创建 Compactor：[`internal/agents/interactive.go`](../../agents/interactive.go)

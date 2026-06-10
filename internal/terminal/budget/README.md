@@ -1,14 +1,17 @@
-# budget 包
+# terminal/budget 包
 
-`terminal/budget` 包只负责把 `context/common/budget.ContextBudget` 格式化成终端状态行。
+`terminal/budget` 负责把 `context/budget.TurnStatus` 格式化为终端统计行。
 
-## 职责
+## 输出格式
 
-- 按固定优先级选择 token 最高的前三个非零分段。
-- 生成紧凑状态行，例如 `[context <1% 128K | sys 94 | conv 9]`。
-- 保持纯格式化逻辑，不直接写 stdout/stderr。
+```text
+[ Stats: elapsed=960ms prompt↑=1340 completion↓=31 context <1% 128K ]
+```
 
-## 边界
+## API
 
-- `Renderer.WriteContextStatus` 留在 `internal/terminal` 根包，负责把格式化结果写入 `errOut`。
-- 本包不依赖 renderer，避免跨目录扩展同一个 Go package。
+| API | 说明 |
+|-----|------|
+| `FormatTurnStatusLine(status)` | 生成单行统计字符串 |
+
+本包只做格式化，不写 stdout/stderr。`Renderer.WriteTurnStatus` 在 `internal/terminal` 中负责写入 `errOut`。

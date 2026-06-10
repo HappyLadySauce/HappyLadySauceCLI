@@ -34,11 +34,14 @@ func (m *fakeChatModel) Stream(ctx context.Context, input []*schema.Message, opt
 func TestNewBudgetMiddlewareValidation(t *testing.T) {
 	t.Parallel()
 
-	if _, err := NewBudgetMiddleware(nil, ""); err == nil {
-		t.Fatal("NewBudgetMiddleware(nil) error = nil, want error")
+	estimator := usage.NewTokenEstimator("gpt-4o")
+	if _, err := NewBudgetMiddleware(0, estimator); err == nil {
+		t.Fatal("NewBudgetMiddleware(0) error = nil, want error")
 	}
-	calc := usage.NewCalculator("gpt-4o", 0)
-	if _, err := NewBudgetMiddleware(calc, ""); err != nil {
+	if _, err := NewBudgetMiddleware(128000, nil); err == nil {
+		t.Fatal("NewBudgetMiddleware(nil estimator) error = nil, want error")
+	}
+	if _, err := NewBudgetMiddleware(128000, estimator); err != nil {
 		t.Fatalf("NewBudgetMiddleware() error = %v", err)
 	}
 }
@@ -54,8 +57,8 @@ func TestBudgetMiddlewareBeforeAgentStartsTurn(t *testing.T) {
 	if err != nil {
 		t.Fatalf("BeforeAgent() error = %v", err)
 	}
-	if status := writer.ReadTurnStatus(); status.Stats.ElapsedMs != 0 {
-		t.Fatalf("ElapsedMs = %d before turn ends, want 0", status.Stats.ElapsedMs)
+	if status := writer.ReadTurnStatus(); status.ElapsedMs != 0 {
+		t.Fatalf("ElapsedMs = %d before turn ends, want 0", status.ElapsedMs)
 	}
 }
 
@@ -87,12 +90,12 @@ func TestBudgetMiddlewareAfterModelRewriteStateAccumulatesUsage(t *testing.T) {
 	if got != state {
 		t.Fatal("budget middleware should not modify state")
 	}
-	if status := writer.ReadTurnStatus(); status.Stats.PromptTokens != 100 || status.Stats.CompletionTokens != 10 {
-		t.Fatalf("turn stats = %#v, want prompt=100 completion=10", status.Stats)
+	if status := writer.ReadTurnStatus(); status.PromptTokens != 100 || status.CompletionTokens != 10 {
+		t.Fatalf("turn stats = %#v, want prompt=100 completion=10", status)
 	}
 }
 
-func TestBudgetMiddlewareAfterAgentWritesPostTurnBudget(t *testing.T) {
+func TestBudgetMiddlewareAfterAgentWritesPostTurnStats(t *testing.T) {
 	t.Parallel()
 
 	writer := budget.NewBudgetWriter()
@@ -118,17 +121,14 @@ func TestBudgetMiddlewareAfterAgentWritesPostTurnBudget(t *testing.T) {
 	}
 
 	status := writer.ReadTurnStatus()
-	if status.Budget == nil {
-		t.Fatal("budget writer has nil snapshot")
+	if status.MaxContext != 180 {
+		t.Fatalf("MaxContext = %d, want 180", status.MaxContext)
 	}
-	if status.Budget.Segs.System <= 0 || status.Budget.Segs.Conversation <= 0 {
-		t.Fatalf("budget segments missing expected values: %#v", status.Budget.Segs)
+	if status.ContextTokens <= 0 {
+		t.Fatalf("ContextTokens = %d, want > 0 from local estimate", status.ContextTokens)
 	}
-	if status.Budget.Segs.Tools <= 0 {
-		t.Fatalf("Segs.Tools = %d, want > 0 for tool definitions", status.Budget.Segs.Tools)
-	}
-	if status.Stats.ElapsedMs < 0 {
-		t.Fatalf("ElapsedMs = %d, want >= 0", status.Stats.ElapsedMs)
+	if status.ElapsedMs < 0 {
+		t.Fatalf("ElapsedMs = %d, want >= 0", status.ElapsedMs)
 	}
 }
 
@@ -143,12 +143,12 @@ func TestBudgetMiddlewareAfterAgentNilStateNoops(t *testing.T) {
 	if err != nil {
 		t.Fatalf("AfterAgent(nil) error = %v", err)
 	}
-	if writer.Read() != nil {
-		t.Fatalf("nil state should not write budget, got %#v", writer.Read())
+	if got := writer.ReadTurnStatus(); got.ContextTokens != 0 {
+		t.Fatalf("nil state should not write stats, got %#v", got)
 	}
 }
 
-func TestBudgetMiddlewareAfterAgentBadToolStillWritesBudget(t *testing.T) {
+func TestBudgetMiddlewareAfterAgentBadToolStillWritesStats(t *testing.T) {
 	t.Parallel()
 
 	writer := budget.NewBudgetWriter()
@@ -165,8 +165,8 @@ func TestBudgetMiddlewareAfterAgentBadToolStillWritesBudget(t *testing.T) {
 	if err != nil {
 		t.Fatalf("AfterAgent() error = %v", err)
 	}
-	if writer.Read() == nil {
-		t.Fatal("budget should still be written when tool counting fails")
+	if got := writer.ReadTurnStatus(); got.ContextTokens <= 0 {
+		t.Fatal("stats should still be written when tool counting fails")
 	}
 }
 
@@ -202,21 +202,22 @@ func TestBudgetMiddlewareAfterAgentUsesCompactedMessages(t *testing.T) {
 		t.Fatalf("AfterAgent() error = %v", err)
 	}
 
-	budget := writer.Read()
-	if budget == nil {
-		t.Fatal("budget writer has nil snapshot")
+	status := writer.ReadTurnStatus()
+	if status.ContextTokens <= 0 {
+		t.Fatal("stats writer has zero context tokens")
 	}
 	estimator := usage.NewTokenEstimator("unknown-local-model")
 	_, originalConversation := splitMessagesForTest(state.Messages)
-	if budget.Segs.Conversation >= estimator.CountMessages(originalConversation) {
-		t.Fatalf("budget conversation segment = %d, want less than original conversation tokens", budget.Segs.Conversation)
+	originalTokens := estimator.CountMessages(originalConversation)
+	if status.ContextTokens >= originalTokens {
+		t.Fatalf("context tokens = %d, want less than original conversation tokens %d", status.ContextTokens, originalTokens)
 	}
 }
 
 func newTestBudgetMiddleware(t *testing.T) adk.ChatModelAgentMiddleware {
 	t.Helper()
-	calc := usage.NewCalculator("unknown-local-model", 180)
-	middleware, err := NewBudgetMiddleware(calc, "test instruction")
+	estimator := usage.NewTokenEstimator("unknown-local-model")
+	middleware, err := NewBudgetMiddleware(180, estimator)
 	if err != nil {
 		t.Fatalf("NewBudgetMiddleware() error = %v", err)
 	}
