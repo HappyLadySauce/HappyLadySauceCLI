@@ -90,8 +90,12 @@ func TestBudgetMiddlewareAfterModelRewriteStateAccumulatesUsage(t *testing.T) {
 	if got != state {
 		t.Fatal("budget middleware should not modify state")
 	}
-	if status := writer.ReadTurnStatus(); status.PromptTokens != 100 || status.CompletionTokens != 10 {
-		t.Fatalf("turn stats = %#v, want prompt=100 completion=10", status)
+	if status := writer.ReadTurnStatus(); status.CompletionTokens != 10 {
+		t.Fatalf("turn stats = %#v, want completion=10", status)
+	}
+	writer.FinalizeTurn(128000, 0)
+	if status := writer.ReadTurnStatus(); status.PromptTokens != 100 {
+		t.Fatalf("PromptTokens = %d after FinalizeTurn, want last-hop prompt 100", status.PromptTokens)
 	}
 }
 

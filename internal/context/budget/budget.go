@@ -17,9 +17,9 @@ type budgetWriterContextKey struct{}
 // TurnStats 记录回合结束后的耗时、API 用量与上下文窗口占用。
 type TurnStats struct {
 	ElapsedMs        int64
-	PromptTokens     int     // accumulated provider prompt across hops / 各跳累加 prompt
-	CompletionTokens int     // accumulated provider completion across hops / 各跳累加 completion
-	ContextTokens    int     // last-hop provider prompt, or local estimate / 最后一跳 prompt 或本地估算
+	PromptTokens     int     // last-hop provider prompt = final model-call input / 最后一跳 prompt（最终模型调用输入）
+	CompletionTokens int     // accumulated provider completion across hops / 各跳累加 completion（本回合生成量）
+	ContextTokens    int     // session context occupancy in window / 会话上下文窗口占用总量
 	MaxContext       int     // model context window / 模型上下文窗口
 }
 
@@ -29,10 +29,10 @@ func (s TurnStats) IsZero() bool {
 	return s.ElapsedMs <= 0 && s.PromptTokens <= 0 && s.CompletionTokens <= 0 && s.ContextTokens <= 0
 }
 
-// TotalTokens returns accumulated prompt plus completion tokens for the turn.
-// TotalTokens 返回本回合累加的 prompt 与 completion token 总和。
+// TotalTokens returns session context occupancy shown as total↑↓.
+// TotalTokens 返回作为 total↑↓ 展示的会话上下文占用总量。
 func (s TurnStats) TotalTokens() int {
-	return s.PromptTokens + s.CompletionTokens
+	return s.ContextTokens
 }
 
 // PercentUsed returns the percentage of MaxContext consumed by ContextTokens.
@@ -47,10 +47,11 @@ func (s TurnStats) PercentUsed() float64 {
 // BudgetWriter stores the latest turn snapshot for one runner turn.
 // BudgetWriter 存储单轮 runner 的最新回合快照。
 type BudgetWriter struct {
-	mu            sync.RWMutex
-	stats         TurnStats
-	turnStart     time.Time
-	lastHopPrompt int
+	mu                sync.RWMutex
+	stats             TurnStats
+	turnStart         time.Time
+	lastHopPrompt     int
+	lastHopCompletion int
 }
 
 // NewBudgetWriter creates an empty budget writer.
@@ -70,30 +71,38 @@ func (w *BudgetWriter) BeginTurn() {
 	w.turnStart = time.Now()
 	w.stats = TurnStats{}
 	w.lastHopPrompt = 0
+	w.lastHopCompletion = 0
 }
 
-// AddUsage accumulates provider usage from one model hop within the current turn.
-// AddUsage 聚合同一轮内单次模型调用的 provider 用量。
+// AddUsage records provider usage from one model hop within the current turn.
+//
+// prompt↑ uses only the last hop prompt (session input at the final call).
+// completion↓ accumulates all hops (tokens generated this turn).
+//
+// AddUsage 记录同轮内单次模型调用的 provider 用量。
+// prompt↑ 仅取最后一跳 prompt；completion↓ 累加各跳 completion。
 func (w *BudgetWriter) AddUsage(snapshot usage.UsageSnapshot) {
 	if w == nil || snapshot.IsZero() {
 		return
 	}
 	w.mu.Lock()
 	defer w.mu.Unlock()
-	w.stats.PromptTokens += snapshot.PromptTokens
 	w.stats.CompletionTokens += snapshot.CompletionTokens
 	if snapshot.PromptTokens > 0 {
 		w.lastHopPrompt = snapshot.PromptTokens
+	}
+	if snapshot.CompletionTokens > 0 {
+		w.lastHopCompletion = snapshot.CompletionTokens
 	}
 }
 
 // FinalizeTurn closes elapsed-time tracking and stores context occupancy.
 //
-// Context occupancy prefers the last model hop's provider prompt_tokens.
-// When provider usage is unavailable, estimatedContextTokens is used instead.
+// total↑↓ prefers estimatedContextTokens from the post-turn model-visible state
+// (reflects compaction). When unavailable, falls back to last-hop prompt + completion.
 //
 // FinalizeTurn 结束耗时统计并写入上下文占用。
-// 优先使用最后一跳 provider prompt_tokens；无 provider 时回退到 estimatedContextTokens。
+// total↑↓ 优先使用回合结束后模型可见状态的本地估算（反映压缩）；否则回退到最后一跳 prompt+completion。
 func (w *BudgetWriter) FinalizeTurn(maxContext, estimatedContextTokens int) {
 	if w == nil {
 		return
@@ -104,9 +113,18 @@ func (w *BudgetWriter) FinalizeTurn(maxContext, estimatedContextTokens int) {
 		w.stats.ElapsedMs = time.Since(w.turnStart).Milliseconds()
 	}
 	w.stats.MaxContext = maxContext
-	w.stats.ContextTokens = w.lastHopPrompt
-	if w.stats.ContextTokens == 0 {
+	w.stats.PromptTokens = w.lastHopPrompt
+	if w.stats.PromptTokens == 0 {
+		w.stats.PromptTokens = estimatedContextTokens
+	}
+
+	switch {
+	case estimatedContextTokens > 0:
 		w.stats.ContextTokens = estimatedContextTokens
+	case w.lastHopPrompt > 0:
+		w.stats.ContextTokens = w.lastHopPrompt + w.lastHopCompletion
+	default:
+		w.stats.ContextTokens = 0
 	}
 }
 

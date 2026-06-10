@@ -21,7 +21,7 @@ func TestBudgetWriterContextRoundTrip(t *testing.T) {
 	}
 }
 
-func TestBudgetWriterFinalizeTurnUsesLastHopForContext(t *testing.T) {
+func TestBudgetWriterUsesLastHopPromptNotAccumulated(t *testing.T) {
 	t.Parallel()
 
 	writer := NewBudgetWriter()
@@ -29,20 +29,41 @@ func TestBudgetWriterFinalizeTurnUsesLastHopForContext(t *testing.T) {
 	writer.AddUsage(usage.UsageSnapshot{PromptTokens: 400, CompletionTokens: 50})
 	writer.AddUsage(usage.UsageSnapshot{PromptTokens: 561, CompletionTokens: 52})
 
-	writer.FinalizeTurn(128000, 765)
+	writer.FinalizeTurn(128000, 611)
 
 	status := writer.ReadTurnStatus()
-	if status.PromptTokens != 961 || status.CompletionTokens != 102 {
-		t.Fatalf("stats = %#v, want accumulated prompt=961 completion=102", status)
+	if status.PromptTokens != 561 {
+		t.Fatalf("PromptTokens = %d, want last-hop prompt 561", status.PromptTokens)
 	}
-	if status.ContextTokens != 561 {
-		t.Fatalf("ContextTokens = %d, want last-hop prompt 561", status.ContextTokens)
+	if status.CompletionTokens != 102 {
+		t.Fatalf("CompletionTokens = %d, want accumulated completion 102", status.CompletionTokens)
 	}
-	if status.MaxContext != 128000 {
-		t.Fatalf("MaxContext = %d, want 128000", status.MaxContext)
+	if status.ContextTokens != 611 {
+		t.Fatalf("ContextTokens = %d, want session estimate 611", status.ContextTokens)
 	}
-	if got, want := status.PercentUsed(), float64(561)/128000*100; got != want {
+	if status.TotalTokens() != 611 {
+		t.Fatalf("TotalTokens() = %d, want session estimate 611", status.TotalTokens())
+	}
+	if got, want := status.PercentUsed(), float64(611)/128000*100; got != want {
 		t.Fatalf("PercentUsed() = %f, want %f", got, want)
+	}
+}
+
+func TestBudgetWriterFinalizeTurnFallsBackToProviderSessionTotal(t *testing.T) {
+	t.Parallel()
+
+	writer := NewBudgetWriter()
+	writer.BeginTurn()
+	writer.AddUsage(usage.UsageSnapshot{PromptTokens: 547, CompletionTokens: 58})
+
+	writer.FinalizeTurn(128000, 0)
+
+	status := writer.ReadTurnStatus()
+	if status.PromptTokens != 547 {
+		t.Fatalf("PromptTokens = %d, want 547", status.PromptTokens)
+	}
+	if status.ContextTokens != 605 {
+		t.Fatalf("ContextTokens = %d, want last-hop prompt+completion 605", status.ContextTokens)
 	}
 }
 
@@ -57,8 +78,8 @@ func TestBudgetWriterFinalizeTurnFallsBackToEstimateWithoutProvider(t *testing.T
 	if status.ContextTokens != 458 {
 		t.Fatalf("ContextTokens = %d, want local estimate 458", status.ContextTokens)
 	}
-	if status.PromptTokens != 0 {
-		t.Fatalf("PromptTokens = %d, want 0 without provider", status.PromptTokens)
+	if status.PromptTokens != 458 {
+		t.Fatalf("PromptTokens = %d, want local estimate fallback 458", status.PromptTokens)
 	}
 }
 
@@ -112,12 +133,12 @@ func TestTurnStatsIsZero(t *testing.T) {
 	}
 }
 
-func TestTurnStatsTotalTokens(t *testing.T) {
+func TestTurnStatsTotalTokensReturnsContextOccupancy(t *testing.T) {
 	t.Parallel()
 
-	stats := TurnStats{PromptTokens: 318, CompletionTokens: 37}
-	if got, want := stats.TotalTokens(), 355; got != want {
-		t.Fatalf("TotalTokens() = %d, want %d", got, want)
+	stats := TurnStats{PromptTokens: 547, CompletionTokens: 58, ContextTokens: 611}
+	if got, want := stats.TotalTokens(), 611; got != want {
+		t.Fatalf("TotalTokens() = %d, want session context %d", got, want)
 	}
 }
 

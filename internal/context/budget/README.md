@@ -7,16 +7,16 @@
 用户发消息后、模型最终回答结束时，`Renderer.WriteTurnStatus` 输出一行：
 
 ```text
-[Stats: elapsed=0.77s prompt↑=318 completion↓=37 total↑↓=355 <1% 128K]
+[Stats: elapsed=0.77s prompt↑=318 completion↓=37 total↑↓=611 0.48% 128K]
 ```
 
 | 字段 | 含义 | 数据来源 |
 |------|------|----------|
 | `elapsed` | 本轮耗时 | `BeginTurn` → `FinalizeTurn` 计时 |
-| `prompt↑` | 本轮 API prompt 消耗（多跳累加） | `AddUsage` 聚合各跳 provider `prompt_tokens` |
-| `completion↓` | 本轮 API completion 消耗（多跳累加） | `AddUsage` 聚合各跳 provider `completion_tokens` |
-| `total↑↓` | 本轮 API token 总消耗 | `prompt↑ + completion↓` |
-| `<1%` | 当前会话占窗口比例 | **最后一跳** provider `prompt_tokens` ÷ `MaxContext`；无 provider 时回退本地 tiktoken 总量估算 |
+| `prompt↑` | 最后一跳模型调用的输入上下文 | 各跳 provider `prompt_tokens` 的**最后一跳**（随历史增长，不多跳累加） |
+| `completion↓` | 本回合模型生成量 | 各跳 `completion_tokens` **累加** |
+| `total↑↓` | 会话上下文窗口占用总量 | 优先 `AfterAgent` 时 `state.Messages` 的本地 tiktoken 估算（反映压缩）；无估算时回退最后一跳 `prompt+completion` |
+| `0.48%` | `total↑↓` 占窗口比例（两位小数） | `total↑↓ ÷ MaxContext` |
 | `128K` | 模型上下文窗口上限 | 配置中的 `MaxModelContext` |
 
 终端会对各字段分段着色（括号灰、耗时青、prompt 绿、completion 紫、total 亮白、窗口占用黄）。

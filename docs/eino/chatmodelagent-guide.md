@@ -480,7 +480,7 @@ if msg.ResponseMeta != nil && msg.ResponseMeta.Usage != nil {
         → writer.FinalizeTurn(maxContext, estimated)
 
 10. renderer.WriteTurnStatus(writer.ReadTurnStatus())
-    → 输出单行统计（如 "[Stats: elapsed=0.77s prompt↑=318 completion↓=37 total↑↓=355 <1% 128K]"，TTY 下分段着色）
+    → 输出单行统计（如 "[Stats: elapsed=0.77s prompt↑=318 completion↓=37 total↑↓=611 0.48% 128K]"；prompt↑=最后一跳输入，completion↓=本回合生成累加，total↑↓=会话上下文占用，百分比保留两位小数，TTY 下分段着色）
 ```
 
 ### 8.2 中间件执行顺序

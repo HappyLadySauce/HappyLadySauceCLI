@@ -2,7 +2,6 @@ package budget
 
 import (
 	"fmt"
-	"math"
 
 	"github.com/HappyLadySauce/HappyLadySauceCLI/internal/context/budget"
 )
@@ -43,13 +42,10 @@ func FormatElapsed(elapsedMs int64) string {
 	return fmt.Sprintf("%dm%ds", minutes, seconds)
 }
 
-// FormatPercent formats context window usage percentage for display.
-// FormatPercent 格式化上下文窗口占用百分比。
+// FormatPercent formats context window usage percentage with two decimal places.
+// FormatPercent 将上下文窗口占用百分比格式化为保留两位小数（如 1.01%）。
 func FormatPercent(percent float64) string {
-	if percent > 0 && percent < 0.5 {
-		return "<1%"
-	}
-	return fmt.Sprintf("%.0f%%", math.Round(percent))
+	return fmt.Sprintf("%.2f%%", percent)
 }
 
 // FormatWindowTokens formats the model context window size for display.
