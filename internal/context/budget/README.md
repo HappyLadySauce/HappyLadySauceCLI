@@ -7,7 +7,7 @@
 用户发消息后、模型最终回答结束时，`Renderer.WriteTurnStatus` 输出一行：
 
 ```text
-[Stats: elapsed=766ms prompt↑=318 completion↓=37 total↑↓=355 <1% 128K]
+[Stats: elapsed=0.77s prompt↑=318 completion↓=37 total↑↓=355 <1% 128K]
 ```
 
 | 字段 | 含义 | 数据来源 |

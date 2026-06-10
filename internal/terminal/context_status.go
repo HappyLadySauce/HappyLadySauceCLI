@@ -26,7 +26,7 @@ func (r *Renderer) formatTurnStatusLine(stats budget.TurnStats) string {
 	}
 
 	prefix := r.colorize(colorStats, "[Stats: ")
-	elapsed := r.colorize(colorStatsElapsed, fmt.Sprintf("elapsed=%dms ", stats.ElapsedMs))
+	elapsed := r.colorize(colorStatsElapsed, fmt.Sprintf("elapsed=%s ", terminalbudget.FormatElapsed(stats.ElapsedMs)))
 	prompt := r.colorize(colorStatsPrompt, fmt.Sprintf("prompt↑=%d ", stats.PromptTokens))
 	completion := r.colorize(colorStatsCompletion, fmt.Sprintf("completion↓=%d ", stats.CompletionTokens))
 	total := r.colorize(colorStatsTotal, fmt.Sprintf("total↑↓=%d", stats.TotalTokens()))

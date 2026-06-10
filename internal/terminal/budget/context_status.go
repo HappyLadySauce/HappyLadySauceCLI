@@ -15,8 +15,8 @@ func FormatTurnStatusLine(stats budget.TurnStats) string {
 	}
 
 	line := fmt.Sprintf(
-		"[Stats: elapsed=%dms prompt↑=%d completion↓=%d total↑↓=%d",
-		stats.ElapsedMs,
+		"[Stats: elapsed=%s prompt↑=%d completion↓=%d total↑↓=%d",
+		FormatElapsed(stats.ElapsedMs),
 		stats.PromptTokens,
 		stats.CompletionTokens,
 		stats.TotalTokens(),
@@ -25,6 +25,22 @@ func FormatTurnStatusLine(stats budget.TurnStats) string {
 		line += fmt.Sprintf(" %s %s", FormatPercent(stats.PercentUsed()), FormatWindowTokens(stats.MaxContext))
 	}
 	return line + "]"
+}
+
+const elapsedMinuteMs = 60_000
+
+// FormatElapsed formats turn elapsed time for display.
+// Under one minute: seconds with two decimals (e.g. 2.91s).
+// At or above one minute: minutes and whole seconds (e.g. 1m5s).
+//
+// FormatElapsed 格式化回合耗时；未满 1 分钟显示两位小数的秒，满 1 分钟显示整分整秒。
+func FormatElapsed(elapsedMs int64) string {
+	if elapsedMs < elapsedMinuteMs {
+		return fmt.Sprintf("%.2fs", float64(elapsedMs)/1000)
+	}
+	minutes := elapsedMs / elapsedMinuteMs
+	seconds := (elapsedMs % elapsedMinuteMs) / 1000
+	return fmt.Sprintf("%dm%ds", minutes, seconds)
 }
 
 // FormatPercent formats context window usage percentage for display.

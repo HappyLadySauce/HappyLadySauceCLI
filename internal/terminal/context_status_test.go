@@ -26,7 +26,7 @@ func TestRendererWriteTurnStatusUsesErrOut(t *testing.T) {
 	if out.Len() != 0 {
 		t.Fatalf("stdout buffer = %q, want empty", out.String())
 	}
-	want := "[Stats: elapsed=766ms prompt↑=318 completion↓=37 total↑↓=355 <1% 128K]\n"
+	want := "[Stats: elapsed=0.77s prompt↑=318 completion↓=37 total↑↓=355 <1% 128K]\n"
 	if got := errOut.String(); got != want {
 		t.Fatalf("stderr buffer = %q, want %q", got, want)
 	}
