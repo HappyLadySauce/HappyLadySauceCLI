@@ -485,11 +485,11 @@ Token 用量在 Eino 各层（`schema` / `callbacks` / ChatModel 装饰器 / ADK
 8. history = append(history, turnMessages...)
    → 本轮回复追加到对话历史
 
-9. budgetMiddleware.AfterAgent
-   └─ writer.FinalizeTurn(maxContext, session.TotalTokens())
+9. usageMiddleware.WrapModel
+   └─ 每次 Generate/Stream 完成后追加 Turn 到 ConversationRecorder
 
-10. renderer.WriteTurnStatus(writer.ReadTurnStatus())
-    → 输出单行统计（如 "[Stats: elapsed=0.77s prompt↑=318 completion↓=37 total↑↓=611 0.48% 128K]"；prompt↑=最后一跳输入，completion↓=本回合生成累加，total↑↓=会话上下文占用，百分比保留两位小数，TTY 下分段着色）
+10. sessionContext.FinishConversation + renderer.WriteConversationStatus
+    → 落 SQLite，并输出单行统计（如 "[Stats: elapsed=0.77s prompt↑=318 completion↓=37 content↑↓=318 0.25%(128K)]"；prompt↑/completion↓/content↑↓ 来自本次 Conversation 聚合，TTY 下分段着色）
 ```
 
 ### 8.2 中间件执行顺序
@@ -497,10 +497,10 @@ Token 用量在 Eino 各层（`schema` / `callbacks` / ChatModel 装饰器 / ADK
 本项目注册了两个中间件，按洋葱模型执行：
 
 ```go
-// 注册顺序：[contentMiddleware, budgetMiddleware]
+// 注册顺序：[contentMiddleware, usageMiddleware]
 //                          ↑ 外层        ↑ 内层（更靠近模型）
 
-Handlers: []adk.ChatModelAgentMiddleware{contentMiddleware, budgetMiddleware}
+Handlers: []adk.ChatModelAgentMiddleware{contentMiddleware, usageMiddleware}
 ```
 
 对应的执行顺序：
@@ -508,18 +508,18 @@ Handlers: []adk.ChatModelAgentMiddleware{contentMiddleware, budgetMiddleware}
 ```
 BeforeAgent:
   contentMiddleware.BeforeAgent (no-op，继承 Base)
-  budgetMiddleware.BeforeAgent (BeginTurn)
+  usageMiddleware.BeforeAgent (no-op，继承 Base)
 
 模型调用:
   contentMiddleware.BeforeModelRewriteState (上下文压缩)
-  budgetMiddleware.BeforeModelRewriteState (no-op)
-  → 模型调用
-  budgetMiddleware.AfterModelRewriteState (no-op)
+  usageMiddleware.BeforeModelRewriteState (no-op)
+  → usageMiddleware.WrapModel → 模型调用 → 记录 Turn
+  usageMiddleware.AfterModelRewriteState (no-op)
   contentMiddleware.AfterModelRewriteState (no-op)
 
 AfterAgent（成功结束时）:
   contentMiddleware.AfterAgent (no-op)
-  budgetMiddleware.AfterAgent (读取 session total + FinalizeTurn)
+  usageMiddleware.AfterAgent (no-op)
 ```
 
 ---

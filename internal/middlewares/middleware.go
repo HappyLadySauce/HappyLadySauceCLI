@@ -7,8 +7,8 @@ import (
 	"github.com/cloudwego/eino/components/model"
 
 	"github.com/HappyLadySauce/HappyLadySauceCLI/internal/context/compact"
-	budgetmiddleware "github.com/HappyLadySauce/HappyLadySauceCLI/internal/middlewares/budget"
 	contentmiddleware "github.com/HappyLadySauce/HappyLadySauceCLI/internal/middlewares/content"
+	usagemiddleware "github.com/HappyLadySauce/HappyLadySauceCLI/internal/middlewares/usage"
 )
 
 // ChatModelAgentMiddlewareConfig groups dependencies for the default agent middleware chain.
@@ -37,10 +37,7 @@ func NewChatModelAgentMiddlewares(cfg ChatModelAgentMiddlewareConfig) ([]adk.Cha
 	if err != nil {
 		return nil, fmt.Errorf("new content middleware: %w", err)
 	}
-	budgetMiddleware, err := budgetmiddleware.NewBudgetMiddleware(cfg.MaxModelContext)
-	if err != nil {
-		return nil, fmt.Errorf("new budget middleware: %w", err)
-	}
+	usageMiddleware := usagemiddleware.NewUsageMiddleware()
 
-	return []adk.ChatModelAgentMiddleware{contentMiddleware, budgetMiddleware}, nil
+	return []adk.ChatModelAgentMiddleware{contentMiddleware, usageMiddleware}, nil
 }

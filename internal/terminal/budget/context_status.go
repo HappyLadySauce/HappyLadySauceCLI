@@ -3,27 +3,41 @@ package budget
 import (
 	"fmt"
 
-	"github.com/HappyLadySauce/HappyLadySauceCLI/internal/context/budget"
+	contextmodel "github.com/HappyLadySauce/HappyLadySauceCLI/internal/context/model"
 )
 
-// FormatTurnStatusLine formats the single post-turn stats line.
-// FormatTurnStatusLine 格式化回合结束后的单行统计输出。
-func FormatTurnStatusLine(stats budget.TurnStats) string {
-	if stats.IsZero() {
+// FormatConversationStatusLine formats the single post-conversation stats line.
+// FormatConversationStatusLine 格式化 conversation 结束后的单行统计输出。
+func FormatConversationStatusLine(conversation *contextmodel.Conversation, maxContext int) string {
+	if conversationStatusIsZero(conversation) {
 		return ""
 	}
 
 	line := fmt.Sprintf(
 		"[Stats: elapsed=%s prompt↑=%d completion↓=%d content↑↓=%d",
-		FormatElapsed(stats.ElapsedMs),
-		stats.PromptTokens,
-		stats.CompletionTokens,
-		stats.TotalTokens(),
+		FormatElapsed(conversation.Elapsed.Milliseconds()),
+		conversation.Prompt,
+		conversation.Completion,
+		conversation.Total,
 	)
-	if stats.MaxContext > 0 && stats.ContextTokens > 0 {
-		line += " " + FormatContextUsage(stats.PercentUsed(), stats.MaxContext)
+	if maxContext > 0 && conversation.Total > 0 {
+		line += " " + FormatContextUsage(percentUsed(conversation.Total, maxContext), maxContext)
 	}
 	return line + "]"
+}
+
+func conversationStatusIsZero(conversation *contextmodel.Conversation) bool {
+	if conversation == nil {
+		return true
+	}
+	return conversation.Elapsed == 0 && conversation.Prompt == 0 && conversation.Completion == 0 && conversation.Total == 0
+}
+
+func percentUsed(totalTokens, maxContext int) float64 {
+	if totalTokens <= 0 || maxContext <= 0 {
+		return 0
+	}
+	return float64(totalTokens) / float64(maxContext) * 100
 }
 
 const elapsedMinuteMs = 60_000

@@ -221,7 +221,8 @@ Middleware 在 `err != nil` 时记录 warning 并透传原 state，不中断 age
 
 | 包 | 用途 |
 |----|------|
-| `internal/context/common/usage` | `SessionContext`、`TokenEstimator` |
+| `internal/context/usage` | `SessionContext` 与压缩旁路标记 |
+| `internal/context/estimate` | `TokenEstimator` 的实际实现 |
 | `internal/prompts` | 压缩 system/user prompt 与摘要前缀 |
 | `github.com/cloudwego/eino/components/model` | `Generate` 生成摘要 |
 | `github.com/cloudwego/eino/schema` | 消息与工具类型 |
@@ -232,6 +233,6 @@ Middleware 在 `err != nil` 时记录 warning 并透传原 state，不中断 age
 
 - 设计总览：[`docs/context/compression.md`](../../../docs/context/compression.md)
 - Middleware 集成：[`internal/middlewares/content/content.go`](../../middlewares/content/content.go)
-- Token 估算：[`internal/context/common/usage/README.md`](../common/usage/README.md)
-- 终端统计行：[`internal/context/budget/README.md`](../budget/README.md)
+- Token 估算：[`internal/context/estimate/estimate.go`](../estimate/estimate.go)
+- 终端统计行：[`internal/terminal/budget/README.md`](../../terminal/budget/README.md)
 - 创建 Compactor：[`internal/agents/interactive.go`](../../agents/interactive.go)

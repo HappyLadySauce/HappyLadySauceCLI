@@ -9,7 +9,7 @@ import (
 	"github.com/cloudwego/eino/components/model"
 	"github.com/cloudwego/eino/schema"
 
-	"github.com/HappyLadySauce/HappyLadySauceCLI/internal/context/common/usage"
+	"github.com/HappyLadySauce/HappyLadySauceCLI/internal/context/usage"
 	"github.com/HappyLadySauce/HappyLadySauceCLI/internal/prompts"
 )
 

@@ -5,23 +5,18 @@ import (
 	"os"
 	"strings"
 	"testing"
+	"time"
 
-	"github.com/HappyLadySauce/HappyLadySauceCLI/internal/context/budget"
+	contextmodel "github.com/HappyLadySauce/HappyLadySauceCLI/internal/context/model"
 )
 
-func TestRendererWriteTurnStatusUsesErrOut(t *testing.T) {
+func TestRendererWriteConversationStatusUsesErrOut(t *testing.T) {
 	t.Parallel()
 
 	var out bytes.Buffer
 	var errOut bytes.Buffer
 	renderer := NewRenderer(&out, &errOut)
-	renderer.WriteTurnStatus(budget.TurnStats{
-		ElapsedMs:        766,
-		PromptTokens:     318,
-		CompletionTokens: 37,
-		ContextTokens:    318,
-		MaxContext:       128000,
-	})
+	renderer.WriteConversationStatus(testConversation(766*time.Millisecond, 318, 37, 318), 128000)
 
 	if out.Len() != 0 {
 		t.Fatalf("stdout buffer = %q, want empty", out.String())
@@ -31,29 +26,32 @@ func TestRendererWriteTurnStatusUsesErrOut(t *testing.T) {
 		t.Fatalf("stderr buffer = %q, want %q", got, want)
 	}
 
-	renderer.WriteTurnStatus(budget.TurnStats{})
+	renderer.WriteConversationStatus(&contextmodel.Conversation{}, 128000)
 	if got := errOut.String(); got != want {
 		t.Fatalf("empty status should not write, got %q", got)
 	}
 }
 
-func TestRendererWriteTurnStatusAppliesColorOnTerminal(t *testing.T) {
+func TestRendererWriteConversationStatusAppliesColorOnTerminal(t *testing.T) {
 	t.Parallel()
 
 	renderer := NewRenderer(os.Stdout, os.Stderr)
 	renderer.colorEnabled = true
 
-	line := renderer.formatTurnStatusLine(budget.TurnStats{
-		ElapsedMs:        766,
-		PromptTokens:     318,
-		CompletionTokens: 37,
-		ContextTokens:    318,
-		MaxContext:       128000,
-	})
+	line := renderer.formatConversationStatusLine(testConversation(766*time.Millisecond, 318, 37, 318), 128000)
 	if !strings.Contains(line, "\x1b[") {
 		t.Fatalf("colored line = %q, want ANSI escape sequences", line)
 	}
 	if !strings.Contains(line, "content↑↓=318") {
 		t.Fatalf("colored line = %q, want content token count", line)
+	}
+}
+
+func testConversation(elapsed time.Duration, prompt, completion, total int) *contextmodel.Conversation {
+	return &contextmodel.Conversation{
+		Elapsed:    elapsed,
+		Prompt:     prompt,
+		Completion: completion,
+		Total:      total,
 	}
 }

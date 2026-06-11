@@ -599,20 +599,19 @@ type MessageVariant struct {
 
 ```
 openai.NewChatModel
-  → usage.NewTrackingChatModel（ChatModel 层计量）
-  → adk.NewChatModelAgent（Handlers: content + budget middleware）
+  → adk.NewChatModelAgent（Handlers: content + usage middleware）
   → adk.NewRunner（EnableStreaming: true）
-  → RunLoop：SessionContext（跨轮）+ BudgetWriter + TurnRecorder（context 传递）
+  → RunLoop：SessionContext（跨轮）+ ConversationRecorder（context 传递）+ SQLite store
 ```
 
 | 能力 | 实现 |
 |------|------|
-| **provider 计量** | `UsageTrackingChatModel` 在每次 `Generate`/`Stream` 后读 `ResponseMeta.Usage`，更新 `SessionContext` 与 `BudgetWriter` |
-| **prompt↑ / completion↓** | 单轮 `BudgetWriter.AddUsage`（最后一跳 prompt、累加 completion） |
-| **total↑↓** | 跨 hop/跨用户轮的 `SessionContext.TotalTokens`（provider 真值，非 tiktoken 估算） |
+| **provider 计量** | `usageMiddleware.WrapModel` 包装每次 `Generate`/`Stream`，读取 `ResponseMeta.Usage` 并追加 `Turn` |
+| **prompt↑ / completion↓** | `ConversationRecorder` 聚合本次 ChatModelAgent Run 内所有 `Turn` |
+| **content↑↓** | `SessionContext.TotalTokens` 保留最近一次 provider total，`Conversation.Total` 保存本次 Run 的聚合 total |
 | **压缩触发** | `Compactor.CompactIfNeeded` 比较 `session.TotalTokens >= (maxContext-maxOutput)×80%`，不再 `estimateTotalTokens` |
 | **摘要旁路** | `generateSummary` 使用 `usage.WithSkipTracking(ctx)`，避免辅助调用污染 session total |
-| **回合展示** | `budgetMiddleware.AfterAgent` → `FinalizeTurn(maxContext, session.Total)` |
+| **回合展示** | `RunLoop` 在 `FinishConversation` 后调用 `Renderer.WriteConversationStatus` |
 
 `TokenEstimator` 仅保留于摘要 middle 段规模提示，不参与压缩触发与 Stats total。
 

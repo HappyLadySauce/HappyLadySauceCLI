@@ -1,14 +1,13 @@
-package usage
+package estimate
 
 import (
 	"encoding/json"
 	"strings"
+	"unicode"
 	"unicode/utf8"
 
 	"github.com/cloudwego/eino/schema"
 	tiktoken "github.com/pkoukk/tiktoken-go"
-
-	"github.com/HappyLadySauce/HappyLadySauceCLI/internal/models/parse"
 )
 
 const (
@@ -215,7 +214,7 @@ func encodingCandidates(modelName string) []string {
 // normalizeModelName strips vendor/path prefixes and normalizes separators for API model identifiers.
 // normalizeModelName 剥离 API 模型标识中的厂商/路径前缀，并规范化分隔符。
 func normalizeModelName(modelName string) string {
-	return parse.Normalize(parse.LastSegment(modelName))
+	return normalize(lastSegment(modelName))
 }
 
 // inferEncodingName matches common API model aliases to a tiktoken encoding name.
@@ -239,7 +238,7 @@ func inferEncodingName(modelName string) string {
 func (r encodingRule) matches(aliases []string) bool {
 	tokenSet := make(map[string]struct{}, len(aliases)*4)
 	for _, alias := range aliases {
-		for _, token := range parse.Tokens(alias) {
+		for _, token := range tokens(alias) {
 			tokenSet[token] = struct{}{}
 		}
 	}
@@ -276,7 +275,7 @@ func (r encodingRule) matches(aliases []string) bool {
 // modelAliases returns normalized forms that preserve provider context and the final model segment.
 // modelAliases 返回保留厂商上下文与最终模型段的规范化形式。
 func modelAliases(modelName string) []string {
-	full := parse.Normalize(modelName)
+	full := normalize(modelName)
 	last := normalizeModelName(modelName)
 	if full == "" {
 		return nil
@@ -299,4 +298,64 @@ func estimateTextByChars(text string) int {
 		return 1
 	}
 	return tokens
+}
+
+// lastSegment returns the final provider/model path segment.
+// lastSegment 返回 provider/model 路径中的最后一段。
+func lastSegment(value string) string {
+	value = strings.TrimSpace(value)
+	if value == "" {
+		return ""
+	}
+	parts := strings.FieldsFunc(value, func(r rune) bool {
+		return r == '/' || r == '\\'
+	})
+	if len(parts) == 0 {
+		return ""
+	}
+	return parts[len(parts)-1]
+}
+
+// normalize lowercases a model name and canonicalizes local separator variants.
+// normalize 将模型名转为小写，并规范化本地需要处理的分隔符。
+func normalize(value string) string {
+	value = strings.TrimSpace(strings.ToLower(value))
+	if value == "" {
+		return ""
+	}
+
+	var b strings.Builder
+	lastDash := false
+	for _, r := range value {
+		if r == '_' || r == ':' || unicode.IsSpace(r) {
+			if !lastDash {
+				b.WriteRune('-')
+				lastDash = true
+			}
+			continue
+		}
+		b.WriteRune(r)
+		lastDash = r == '-'
+	}
+	return strings.Trim(b.String(), "-")
+}
+
+// tokens splits a normalized model name into bounded family tokens.
+// tokens 将规范化模型名拆成带边界的模型族 token。
+func tokens(value string) []string {
+	value = normalize(value)
+	if value == "" {
+		return nil
+	}
+	parts := strings.FieldsFunc(value, func(r rune) bool {
+		return r == '-' || r == '/' || r == '.' || r == ':'
+	})
+	out := make([]string, 0, len(parts))
+	for _, part := range parts {
+		if part == "" {
+			continue
+		}
+		out = append(out, part)
+	}
+	return out
 }

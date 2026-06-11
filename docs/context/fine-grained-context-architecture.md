@@ -144,16 +144,16 @@ flowchart TB
 | Handler | 钩子 | 职责 |
 |---------|------|------|
 | **injectHandler** | `BeforeAgent` | 组合 Instruction = base + memory + rules；注册 MCP/额外 tools |
-| **budgetHandler** | `BeforeModelRewriteState` | 调用 `ContextBudget.Estimate`，`WithBudgetSnapshot` 写入 ctx |
+| **budgetHandler** | `BeforeModelRewriteState` | 演进目标：调用 `ContextBudget.Estimate`，`WithBudgetSnapshot` 写入 ctx |
 | **contentHandler** | `BeforeModelRewriteState` | **已有**：对话语义压缩 |
 | **toolPolicyHandler** | `BeforeModelRewriteState` | 按意图缩减 `ToolInfos` / `DeferredToolInfos` |
-| **usageHandler** | `WrapModel` + `AfterModelRewriteState` | 读取 provider usage，校准估算 |
+| **usageHandler** | `WrapModel` | **已有**：读取 provider usage，追加 Turn 并聚合 Conversation |
 
 注册顺序（外→内）：`inject → budget → content → toolPolicy`；`usage` 靠内层。
 
-### 4.2 ContextBudget API（已实现）
+### 4.2 ContextBudget API（演进目标）
 
-类型定义见 [`internal/context/budget.go`](../../internal/context/budget.go)：
+当前第一版先落地 `internal/context/model` + `internal/context/usage` 的 Turn/Conversation/Session 计量；分段预算仍是后续演进目标。
 
 ```go
 type Segment string
@@ -178,40 +178,43 @@ type ContextBudget struct {
 
 `BudgetInput` 聚合每次估算所需的明文与各段来源；`EstimateBudget` 复用 `TokenEstimator`。
 
-### 4.3 Budget → 状态行传递契约（已实现）
+### 4.3 Conversation → 状态行传递契约（已实现）
 
-见 [`internal/context/budget_ctx.go`](../../internal/context/budget_ctx.go) 与 [`internal/terminal/context_status.go`](../../internal/terminal/context_status.go)。
+见 [`internal/context/usage/usage.go`](../../internal/context/usage/usage.go) 与 [`internal/terminal/context_status.go`](../../internal/terminal/context_status.go)。
 
 ```mermaid
 sequenceDiagram
     participant RL as RunLoop
-    participant BA as BeforeAgent
     participant BMR as BeforeModelRewriteState
+    participant WM as usageMiddleware WrapModel
+    participant CR as ConversationRecorder
+    participant DB as SQLite Store
     participant R as Renderer
 
-    RL->>BA: Run 开始
-    BA->>BA: 冻结 instruction 各段到 RunLocalValue 或 ctx
-    RL->>BMR: 每轮模型前
-    BMR->>BMR: EstimateBudget
-    BMR->>RL: WithBudgetSnapshot ctx
-    RL->>R: FinishTurn 读 BudgetFromContext 渲染状态行
+    RL->>CR: BeginConversation
+    RL->>BMR: 每次模型调用前
+    BMR->>BMR: CompactIfNeeded
+    WM->>CR: AddTurn(elapsed, provider usage)
+    RL->>CR: SetMessages + FinishConversation
+    CR->>DB: SaveSession + SaveConversation
+    RL->>R: WriteConversationStatus
 ```
 
 **契约规则：**
 
-1. **写入方**：`budgetHandler`（未来）在 `BeforeModelRewriteState` 调用 `contextx.WithBudgetSnapshot(ctx, budget)`。
-2. **读取方**：`RunLoop` 在 `ConsumeAgentEvents` 返回后，用 `contextx.BudgetFromContext(ctx)` 取**最后一次**快照。
-3. **渲染方**：`terminal.FormatContextStatusLine(budget)` 生成状态行；`Renderer.WriteContextStatus(budget)` 写入 stderr（不污染 stdout 对话流）。
-4. **空值**：无快照时不输出状态行；估算失败不中断 agent。
-5. **不可变**：`ContextBudget` 为值类型快照；middleware 每次覆盖写入新快照。
+1. **写入方**：`usageMiddleware.WrapModel` 在每次 `Generate`/`Stream` 完成后追加 `Turn`。
+2. **聚合方**：`ConversationRecorder` 聚合一次 ChatModelAgent Run 内的全部 turns，并保存本轮 user/assistant/tool 消息快照。
+3. **持久化方**：`SessionContext.FinishConversation` 先 upsert session，再 upsert conversation、turns、messages。
+4. **渲染方**：`terminal/budget.FormatConversationStatusLine` 生成状态行；`Renderer.WriteConversationStatus` 写入 stderr（不污染 stdout 对话流）。
+5. **旁路规则**：辅助摘要调用必须使用 `usage.WithSkipTracking(ctx)`，避免污染主 conversation 计量。
 
 状态行示例：
 
 ```text
-[context 41% | conv 32.6k | tools 8.6k | sys 0.5k]
+[Stats: elapsed=0.77s prompt↑=318 completion↓=37 content↑↓=318 0.25%(128K)]
 ```
 
-完整七段明细留给未来的 `/context` 命令；状态行只展示总量 + 前三大分段。
+完整七段明细留给未来的 `/context` 命令；当前状态行只展示 Conversation 聚合总量。
 
 ---
 
