@@ -11,7 +11,8 @@ import (
 	"github.com/cloudwego/eino/schema"
 
 	"github.com/HappyLadySauce/HappyLadySauceCLI/internal/context/compact"
-	"github.com/HappyLadySauce/HappyLadySauceCLI/internal/context/usage"
+	contextmodel "github.com/HappyLadySauce/HappyLadySauceCLI/internal/context/model"
+	contexttracker "github.com/HappyLadySauce/HappyLadySauceCLI/internal/context/tracker"
 )
 
 type fakeChatModel struct {
@@ -127,10 +128,11 @@ func TestBeforeModelRewriteStateSwallowsCompactionError(t *testing.T) {
 }
 
 func testCtxAtCompactionTrigger(maxContext, maxOutput int) context.Context {
-	session := usage.NewSessionContext()
+	tracker := contexttracker.New()
+	tracker.BeginConversation()
 	trigger := (maxContext - maxOutput) * 80 / 100
-	session.UpdateFromSnapshot(usage.UsageSnapshot{TotalTokens: trigger})
-	return usage.WithSessionContext(context.Background(), session)
+	tracker.AddTurn(&contextmodel.Turn{Total: trigger})
+	return contexttracker.WithTracker(context.Background(), tracker)
 }
 
 func newTestMiddleware(t *testing.T, chatModel model.BaseChatModel, maxContext, maxOutput int) adk.ChatModelAgentMiddleware {

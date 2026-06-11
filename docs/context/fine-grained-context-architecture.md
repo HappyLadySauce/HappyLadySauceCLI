@@ -97,7 +97,7 @@ RunLoop history
   → 仅最后 assistant 回写 history
 ```
 
-现有压缩触发不再本地估算 `messages + toolInfos`，而是读取 ChatModel 层写入的 `SessionContext.TotalTokens()`。后续分段预算只用于观测与策略分析，不作为当前压缩触发真相源。
+现有压缩触发不再本地估算 `messages + toolInfos`，而是读取 `tracker.TotalTokens()` 中最近一次 provider total。后续分段预算只用于观测与策略分析，不作为当前压缩触发真相源。
 
 ### 3.3 与 Cursor 的差异
 
@@ -153,7 +153,7 @@ flowchart TB
 
 ### 4.2 ContextBudget API（演进目标）
 
-当前第一版先落地 `internal/context/model` + `internal/context/usage` 的 Turn/Conversation/Session 计量；分段预算仍是后续演进目标。
+当前第一版先落地 `internal/context/model` + `internal/context/usage` + `internal/context/tracker` 的 Turn/Conversation/Session 计量；分段预算仍是后续演进目标。
 
 ```go
 type Segment string
@@ -180,33 +180,33 @@ type ContextBudget struct {
 
 ### 4.3 Conversation → 状态行传递契约（已实现）
 
-见 [`internal/context/usage/usage.go`](../../internal/context/usage/usage.go) 与 [`internal/terminal/context_status.go`](../../internal/terminal/context_status.go)。
+见 [`internal/context/usage/usage.go`](../../internal/context/usage/usage.go)、[`internal/context/tracker/tracker.go`](../../internal/context/tracker/tracker.go) 与 [`internal/terminal/context_status.go`](../../internal/terminal/context_status.go)。
 
 ```mermaid
 sequenceDiagram
     participant RL as RunLoop
     participant BMR as BeforeModelRewriteState
     participant WM as usageMiddleware WrapModel
-    participant CR as ConversationRecorder
-    participant DB as SQLite Store
+    participant TR as tracker
+    participant DB as contextstore
     participant R as Renderer
 
-    RL->>CR: BeginConversation
+    RL->>TR: BeginConversation
     RL->>BMR: 每次模型调用前
     BMR->>BMR: CompactIfNeeded
-    WM->>CR: AddTurn(elapsed, provider usage)
-    RL->>CR: SetMessages + FinishConversation
-    CR->>DB: SaveSession + SaveConversation
+    WM->>TR: AddTurn(elapsed, provider usage)
+    RL->>TR: SetMessages + FinishConversation
+    RL->>DB: SaveSession + SaveConversation
     RL->>R: WriteConversationStatus
 ```
 
 **契约规则：**
 
 1. **写入方**：`usageMiddleware.WrapModel` 在每次 `Generate`/`Stream` 完成后追加 `Turn`。
-2. **聚合方**：`ConversationRecorder` 聚合一次 ChatModelAgent Run 内的全部 turns，并保存本轮 user/assistant/tool 消息快照。
-3. **持久化方**：`SessionContext.FinishConversation` 先 upsert session，再 upsert conversation、turns、messages。
+2. **聚合方**：`tracker` 聚合一次 ChatModelAgent Run 内的全部 turns，并保存本轮 user/assistant/tool 消息快照。
+3. **持久化方**：`RunLoop` 使用 `contextstore` 先 upsert session，再 upsert conversation、turns、messages；SQLite 默认路径和连接由 `storage/sqlite` 提供。
 4. **渲染方**：`terminal/budget.FormatConversationStatusLine` 生成状态行；`Renderer.WriteConversationStatus` 写入 stderr（不污染 stdout 对话流）。
-5. **旁路规则**：辅助摘要调用必须使用 `usage.WithSkipTracking(ctx)`，避免污染主 conversation 计量。
+5. **旁路规则**：辅助摘要调用直调 compactor 持有的裸 `BaseChatModel`，不进入 `usageMiddleware.WrapModel` 计量链。
 
 状态行示例：
 

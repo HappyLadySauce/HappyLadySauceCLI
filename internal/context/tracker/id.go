@@ -1,4 +1,4 @@
-package usage
+package tracker
 
 import (
 	"crypto/rand"
@@ -10,8 +10,6 @@ import (
 
 var fallbackIDCounter uint64
 
-// newID creates a stable opaque id with a readable domain prefix.
-// newID 创建带领域前缀的稳定不透明标识。
 func newID(prefix string) string {
 	var b [16]byte
 	if _, err := rand.Read(b[:]); err == nil {

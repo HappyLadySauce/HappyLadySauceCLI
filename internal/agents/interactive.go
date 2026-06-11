@@ -12,11 +12,13 @@ import (
 	"github.com/cloudwego/eino/schema"
 	"k8s.io/klog/v2"
 
-	contextsqlite "github.com/HappyLadySauce/HappyLadySauceCLI/internal/context/store/sqlite"
-	"github.com/HappyLadySauce/HappyLadySauceCLI/internal/context/usage"
+	"github.com/HappyLadySauce/HappyLadySauceCLI/internal/context/contextstore"
+	contextmodel "github.com/HappyLadySauce/HappyLadySauceCLI/internal/context/model"
+	contexttracker "github.com/HappyLadySauce/HappyLadySauceCLI/internal/context/tracker"
 	"github.com/HappyLadySauce/HappyLadySauceCLI/internal/input"
 	"github.com/HappyLadySauce/HappyLadySauceCLI/internal/middlewares"
 	"github.com/HappyLadySauce/HappyLadySauceCLI/internal/prompts"
+	storagesqlite "github.com/HappyLadySauce/HappyLadySauceCLI/internal/storage/sqlite"
 	"github.com/HappyLadySauce/HappyLadySauceCLI/internal/terminal"
 	"github.com/HappyLadySauce/HappyLadySauceCLI/internal/tools"
 	"github.com/HappyLadySauce/HappyLadySauceCLI/pkg/config"
@@ -27,22 +29,26 @@ func RunLoop(ctx context.Context, cfg *config.Config) error {
 		return errors.New("agent runtime config is incomplete")
 	}
 
-	rawChatModel, err := openai.NewChatModel(ctx, newChatModelConfig(cfg))
+	chatModel, err := openai.NewChatModel(ctx, newChatModelConfig(cfg))
 	if err != nil {
 		return fmt.Errorf("new chat model: %w", err)
 	}
-	chatModel := rawChatModel
 
-	contextStore, err := contextsqlite.OpenDefault(ctx)
+	contextDB, err := storagesqlite.OpenDefault(ctx, "context.sqlite")
 	if err != nil {
-		return fmt.Errorf("open context store: %w", err)
+		return fmt.Errorf("open context database: %w", err)
 	}
-	sessionContext := usage.NewSessionContext(usage.WithStore(contextStore))
 	defer func() {
-		if closeErr := sessionContext.Close(); closeErr != nil {
-			klog.Errorf("close context store: %v", closeErr)
+		if closeErr := contextDB.Close(); closeErr != nil {
+			klog.Errorf("close context database: %v", closeErr)
 		}
 	}()
+
+	contextStore := contextstore.New(contextDB)
+	if err := contextStore.Migrate(ctx); err != nil {
+		return fmt.Errorf("migrate context store: %w", err)
+	}
+	sessionTracker := contexttracker.New()
 
 	agentInstruction := prompts.SystemPrompt
 	handlers, err := middlewares.NewChatModelAgentMiddlewares(middlewares.ChatModelAgentMiddlewareConfig{
@@ -100,21 +106,21 @@ func RunLoop(ctx context.Context, cfg *config.Config) error {
 		userMessage := schema.UserMessage(prompt)
 		history = append(history, userMessage)
 
-		conversationRecorder := sessionContext.BeginConversation()
-		runCtx := usage.WithSessionContext(ctx, sessionContext)
-		runCtx = usage.WithConversationRecorder(runCtx, conversationRecorder)
+		sessionTracker.BeginConversation()
+		runCtx := contexttracker.WithTracker(ctx, sessionTracker)
 		iter := runner.Run(runCtx, history)
 		turnMessages, exited, err := ConsumeAgentEvents(iter, renderer)
 		if err != nil {
-			conversationRecorder.SetMessages([]*schema.Message{userMessage})
-			_, persistErr := sessionContext.FinishConversation(ctx, conversationRecorder, err)
+			sessionTracker.SetMessages([]*schema.Message{userMessage})
+			conversation := sessionTracker.FinishConversation(err)
+			persistErr := persistContextSnapshots(ctx, contextStore, sessionTracker, conversation)
 			return errors.Join(err, persistErr)
 		}
 		conversationMessages := append([]*schema.Message{userMessage}, turnMessages...)
-		conversationRecorder.SetMessages(conversationMessages)
-		conversation, persistErr := sessionContext.FinishConversation(ctx, conversationRecorder, nil)
-		if persistErr != nil {
-			return fmt.Errorf("save context conversation: %w", persistErr)
+		sessionTracker.SetMessages(conversationMessages)
+		conversation := sessionTracker.FinishConversation(nil)
+		if err := persistContextSnapshots(ctx, contextStore, sessionTracker, conversation); err != nil {
+			return fmt.Errorf("save context conversation: %w", err)
 		}
 		if len(turnMessages) > 0 {
 			history = append(history, turnMessages...)
@@ -125,6 +131,24 @@ func RunLoop(ctx context.Context, cfg *config.Config) error {
 			return nil
 		}
 	}
+}
+
+// persistContextSnapshots stores the session aggregate before its child conversation.
+// This preserves the foreign-key order while keeping persistence outside the tracker.
+//
+// persistContextSnapshots 先保存 session 聚合，再保存其子 conversation。
+// 这样既保证外键顺序，也让持久化逻辑留在 tracker 外部。
+func persistContextSnapshots(ctx context.Context, store *contextstore.Repository, tracker *contexttracker.Tracker, conversation *contextmodel.Conversation) error {
+	if store == nil || tracker == nil {
+		return nil
+	}
+	if err := store.SaveSession(ctx, tracker.Session()); err != nil {
+		return err
+	}
+	if err := store.SaveConversation(ctx, conversation); err != nil {
+		return err
+	}
+	return nil
 }
 
 // newChatModelConfig builds the OpenAI-compatible chat model configuration.

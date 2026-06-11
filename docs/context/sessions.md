@@ -22,11 +22,11 @@
 
 | 资源 | 默认路径 | 说明 |
 |------|----------|------|
-| SQLite 主库 | `~/.HAPPLADYSAUCECLI/state.db` | 会话元数据 + 全量消息 |
-| WAL 文件 | `state.db-wal` | Write-Ahead Log |
-| SHM 文件 | `state.db-shm` | 共享内存 |
+| SQLite 主库 | `~/.HAPPLADYSAUCECLI/context.sqlite` | context session/conversation/turn/message |
+| WAL 文件 | `context.sqlite-wal` | Write-Ahead Log |
+| SHM 文件 | `context.sqlite-shm` | 共享内存 |
 
-v1 不单独暴露 `sessions.db_path`；如需迁移存储位置，通过 [configuration.md](./configuration.md) 中的 `data_dir` 统一设置。
+v1 不暴露 `sessions.db_path`、`DBPath` 或 `data_dir`；默认路径由 `internal/storage/sqlite` 统一派生。
 
 ---
 
@@ -148,7 +148,7 @@ CREATE TABLE IF NOT EXISTS state_meta (
 ```mermaid
 flowchart LR
     cli[CLI process]
-    db[(state.db WAL mode)]
+    db[(context.sqlite WAL mode)]
     retry[App-level retry]
 
     cli -->|write| retry
@@ -298,7 +298,7 @@ RunLoop 启动
 
 ## 8. 隐私与安全
 
-- `state.db` 可能含用户对话、文件路径、工具输出；默认存储在用户主目录
+- `context.sqlite` 可能含用户对话、文件路径、工具输出；默认存储在用户主目录
 - 不在日志中打印完整 message content
 - 规划支持 `sessions.encrypt_at_rest`（未来版本，默认关闭）
 - `memory` 工具与 session 存储均经 redact 检查敏感模式
@@ -310,4 +310,4 @@ RunLoop 启动
 - [Hermes — Session Storage](https://hermes-agent.nousresearch.com/docs/developer-guide/session-storage)
 - [Hermes — Sessions](https://hermes-agent.nousresearch.com/docs/user-guide/sessions)
 - [记忆 — Layer 3](./memory.md#layer-3情景记忆session-search)
-- [配置 — data_dir](./configuration.md#data_dir)
+- [配置 — 本地数据目录](./configuration.md#5-本地数据目录)

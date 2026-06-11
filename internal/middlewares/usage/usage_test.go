@@ -8,7 +8,7 @@ import (
 	einomodel "github.com/cloudwego/eino/components/model"
 	"github.com/cloudwego/eino/schema"
 
-	contextusage "github.com/HappyLadySauce/HappyLadySauceCLI/internal/context/usage"
+	contexttracker "github.com/HappyLadySauce/HappyLadySauceCLI/internal/context/tracker"
 )
 
 type fakeUsageModel struct {
@@ -34,14 +34,14 @@ func TestWrapModelGenerateRecordsUsage(t *testing.T) {
 		t.Fatalf("WrapModel() error = %v", err)
 	}
 
-	session := contextusage.NewSessionContext()
-	recorder := session.BeginConversation()
-	ctx := contextusage.WithConversationRecorder(contextusage.WithSessionContext(context.Background(), session), recorder)
+	tracker := contexttracker.New()
+	tracker.BeginConversation()
+	ctx := contexttracker.WithTracker(context.Background(), tracker)
 
 	if _, err := wrapped.Generate(ctx, []*schema.Message{schema.UserMessage("hello")}); err != nil {
 		t.Fatalf("Generate() error = %v", err)
 	}
-	conversation := recorder.Snapshot()
+	conversation := tracker.CurrentConversation()
 	if len(conversation.Turns) != 1 || conversation.Total != 18 {
 		t.Fatalf("conversation = %#v, want one recorded turn", conversation)
 	}
@@ -60,9 +60,9 @@ func TestWrapModelStreamRecordsUsageOnEOF(t *testing.T) {
 		t.Fatalf("WrapModel() error = %v", err)
 	}
 
-	session := contextusage.NewSessionContext()
-	recorder := session.BeginConversation()
-	ctx := contextusage.WithConversationRecorder(contextusage.WithSessionContext(context.Background(), session), recorder)
+	tracker := contexttracker.New()
+	tracker.BeginConversation()
+	ctx := contexttracker.WithTracker(context.Background(), tracker)
 
 	stream, err := wrapped.Stream(ctx, []*schema.Message{schema.UserMessage("hello")})
 	if err != nil {
@@ -79,7 +79,7 @@ func TestWrapModelStreamRecordsUsageOnEOF(t *testing.T) {
 	}
 	stream.Close()
 
-	conversation := recorder.Snapshot()
+	conversation := tracker.CurrentConversation()
 	if len(conversation.Turns) != 1 || conversation.Total != 18 {
 		t.Fatalf("conversation = %#v, want one recorded turn", conversation)
 	}

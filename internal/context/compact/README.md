@@ -1,6 +1,6 @@
 # compact 包
 
-Hermes 风格的语义上下文压缩：当 provider 返回的会话上下文占用 `SessionContext.TotalTokens()` 接近模型窗口上限时，将对话历史切分为 **head / middle / tail**，对 middle 段调用辅助模型生成结构化摘要，再组装为 `[system, head, summary, tail]` 供后续模型调用使用。
+Hermes 风格的语义上下文压缩：当 provider 返回的会话上下文占用 `tracker.TotalTokens()` 接近模型窗口上限时，将对话历史切分为 **head / middle / tail**，对 middle 段调用辅助模型生成结构化摘要，再组装为 `[system, head, summary, tail]` 供后续模型调用使用。
 
 上层集成：`internal/middlewares/content/content.go` 在每次 `BeforeModelRewriteState` 钩子中调用 `Compactor.CompactIfNeeded()`。
 
@@ -12,7 +12,7 @@ Hermes 风格的语义上下文压缩：当 provider 返回的会话上下文占
 flowchart TD
     A[CompactIfNeeded] --> B{messages 为空?}
     B -->|是| Z1[原样返回, changed=false]
-    B -->|否| C[读取 SessionContext.TotalTokens]
+    B -->|否| C[读取 tracker.TotalTokens]
     C --> D{total >= triggerTokens?}
     D -->|否| Z2[原样返回, changed=false]
     D -->|是| E[selectBoundary]
@@ -29,7 +29,7 @@ flowchart TD
 
 | 阶段 | 职责 | 关键函数 |
 |------|------|----------|
-| 1. 压力检测 | 读取 ChatModel 层写入的 provider session total，与安全窗口水位比较 | `SessionContext.TotalTokens`, `triggerTokens`, `safePromptBudget` |
+| 1. 压力检测 | 读取 ChatModel 层写入的 provider session total，与安全窗口水位比较 | `tracker.TotalTokens`, `triggerTokens`, `safePromptBudget` |
 | 2. 边界切分 | 拆分并保留 system 消息，仅对非 system 上下文划分 head/middle/tail，保证 tool 配对完整 | `splitSystemAndContextMessages`, `selectBoundary` |
 | 3. 中间段摘要 | 调用主模型生成六段式结构化摘要 | `generateSummary`, `summaryTokenLimit` |
 | 4. 结果组装 | 不修改原消息，拼接 `[system, head, summary, tail]` | `assembleCompactedMessages` |
@@ -41,7 +41,7 @@ safePromptBudget = maxContextTokens - maxOutputTokens
 triggerTokens    = safePromptBudget × 80%
 ```
 
-当 `SessionContext.TotalTokens() >= triggerTokens` 时进入压缩。`total↑↓` 表示当前对话循环占用的上下文窗口大小，不再由本地 `tiktoken` 对 messages/tools 估算；本地估算只用于生成摘要 prompt 时提示 middle 段规模。
+当 `tracker.TotalTokens() >= triggerTokens` 时进入压缩。`total↑↓` 表示当前对话循环占用的上下文窗口大小，不再由本地 `tiktoken` 对 messages/tools 估算；本地估算只用于生成摘要 prompt 时提示 middle 段规模。
 
 ### 默认边界参数
 
@@ -74,10 +74,10 @@ triggerTokens    = safePromptBudget × 80%
 
 ```text
 NewCompactor(cfg)
-  └── usage.NewTokenEstimator(modelName)   # 仅用于 middle 段摘要规模提示
+  └── estimate.NewTokenEstimator(modelName)   # 仅用于 middle 段摘要规模提示
 
 CompactIfNeeded(ctx, messages)
-  ├── SessionContext.TotalTokens()
+  ├── tracker.TotalTokens()
   ├── triggerTokens()
   │     └── safePromptBudget()
   ├── splitSystemAndContextMessages(messages)     [boundary.go]
@@ -101,7 +101,7 @@ flowchart LR
     subgraph compact.go
         NC[NewCompactor]
         CIN[CompactIfNeeded]
-        ST[SessionContext.TotalTokens]
+        ST[tracker.TotalTokens]
         TT[triggerTokens]
         SPB[safePromptBudget]
         STL[summaryTokenLimit]
@@ -122,7 +122,7 @@ flowchart LR
     end
 
     subgraph external
-        TE[usage.TokenEstimator]
+        TE[estimate.TokenEstimator]
         PR[prompts.*]
         MD[model.Generate]
     end
@@ -221,7 +221,7 @@ Middleware 在 `err != nil` 时记录 warning 并透传原 state，不中断 age
 
 | 包 | 用途 |
 |----|------|
-| `internal/context/usage` | `SessionContext` 与压缩旁路标记 |
+| `internal/context/tracker` | provider total 压力信号 |
 | `internal/context/estimate` | `TokenEstimator` 的实际实现 |
 | `internal/prompts` | 压缩 system/user prompt 与摘要前缀 |
 | `github.com/cloudwego/eino/components/model` | `Generate` 生成摘要 |

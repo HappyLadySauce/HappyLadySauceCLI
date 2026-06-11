@@ -465,7 +465,7 @@ Token 用量在 Eino 各层（`schema` / `callbacks` / ChatModel 装饰器 / ADK
 5. 每次模型调用前：
    ├─ contentMiddleware.BeforeModelRewriteState
    │    └─ compactor.CompactIfNeeded(ctx, state.Messages)
-   │         ├─ 读取 SessionContext.TotalTokens → 超 80% 水位线?
+   │         ├─ 读取 tracker.TotalTokens → 超 80% 水位线?
    │         ├─ selectBoundary() → [head, middle, tail]
    │         ├─ 辅助模型 generateSummary(middle)
    │         └─ assembleCompactedMessages → 新 Messages
@@ -486,10 +486,10 @@ Token 用量在 Eino 各层（`schema` / `callbacks` / ChatModel 装饰器 / ADK
    → 本轮回复追加到对话历史
 
 9. usageMiddleware.WrapModel
-   └─ 每次 Generate/Stream 完成后追加 Turn 到 ConversationRecorder
+   └─ 每次 Generate/Stream 完成后追加 Turn 到 tracker
 
-10. sessionContext.FinishConversation + renderer.WriteConversationStatus
-    → 落 SQLite，并输出单行统计（如 "[Stats: elapsed=0.77s prompt↑=318 completion↓=37 content↑↓=318 0.25%(128K)]"；prompt↑/completion↓/content↑↓ 来自本次 Conversation 聚合，TTY 下分段着色）
+10. tracker.FinishConversation + contextstore.Save* + renderer.WriteConversationStatus
+    → 先保存 session 再保存 conversation/turn/message，并输出单行统计（如 "[Stats: elapsed=0.77s prompt↑=318 completion↓=37 content↑↓=318 0.25%(128K)]"；prompt↑/completion↓/content↑↓ 来自本次 Conversation 聚合，TTY 下分段着色）
 ```
 
 ### 8.2 中间件执行顺序
@@ -593,7 +593,7 @@ agent, err := adk.NewChatModelAgent(ctx, &adk.ChatModelAgentConfig{
 
 ## 10. 上下文压缩机制
 
-当 `SessionContext.TotalTokens()` 超过安全预算的 80%（`(maxModelContext - maxOutputTokens) * 80%`）时，触发压缩：
+当 `tracker.TotalTokens()` 超过安全预算的 80%（`(maxModelContext - maxOutputTokens) * 80%`）时，触发压缩：
 
 ### 10.1 压缩策略
 
@@ -680,7 +680,7 @@ type ChatModelAgentMiddleware interface {
 
 ### 12.2 查看 state.Messages 变化
 
-在 `contentMiddleware.BeforeModelRewriteState` 中加入日志，对比压缩前后的消息数量与 `SessionContext.TotalTokens()`。
+在 `contentMiddleware.BeforeModelRewriteState` 中加入日志，对比压缩前后的消息数量与 `tracker.TotalTokens()`。
 
 ### 12.3 模拟 Agent 事件
 

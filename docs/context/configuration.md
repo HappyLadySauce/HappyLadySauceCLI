@@ -40,15 +40,11 @@
     "HAPPLADYSAUCECLI_MODEL": "",
     "HAPPLADYSAUCECLI_MAX_OUTPUT_TOKENS": 32000,
     "HAPPLADYSAUCECLI_MAX_MODEL_CONTEXT": 128000
-  },
-  "data_dir": null,
-  "memory": {
-    "enabled": true
   }
 }
 ```
 
-`null` 表示使用内置默认。
+本地 context 数据库不进入用户配置，由 `storage/sqlite` 固定派生默认路径。
 
 ---
 
@@ -73,21 +69,17 @@
 
 ---
 
-## 5. data_dir
+## 5. 本地数据目录
 
-| 键 | 类型 | 默认 | 说明 |
-|----|------|------|------|
-| `data_dir` | string/null | `~/.HAPPLADYSAUCECLI` | memory、session DB、skills 等本地数据根目录 |
-
-派生路径：
+当前实现不暴露 `DBPath`、`db_path` 或 `data_dir`。需要 SQLite 的模块统一通过 `internal/storage/sqlite` 派生默认目录：
 
 | 资源 | 默认路径 |
 |------|----------|
-| memory 文件 | `{data_dir}/memories/` |
-| skills | `{data_dir}/skills/` |
-| session DB | `{data_dir}/state.db` |
+| context DB | `~/.HAPPLADYSAUCECLI/context.sqlite` |
+| WAL 文件 | `~/.HAPPLADYSAUCECLI/context.sqlite-wal` |
+| SHM 文件 | `~/.HAPPLADYSAUCECLI/context.sqlite-shm` |
 
-v1 不单独暴露 `memory.dir` 或 `sessions.db_path`。需要迁移数据目录时，修改 `data_dir` 即可。
+后续若确实需要迁移数据目录，应先抽象统一 data-root 能力；不要在业务模块内新增单独的 DBPath 字段。
 
 ---
 
@@ -132,7 +124,7 @@ v1 只绑定现有模型环境变量：
 | `model.HAPPLADYSAUCECLI_MAX_OUTPUT_TOKENS` | `HAPPLADYSAUCECLI_MAX_OUTPUT_TOKENS` |
 | `model.HAPPLADYSAUCECLI_MAX_MODEL_CONTEXT` | `HAPPLADYSAUCECLI_MAX_MODEL_CONTEXT` |
 
-`data_dir` 和 `memory.enabled` 可先只支持配置文件；是否增加环境变量以后再根据实际使用需求决定。
+本地数据目录不提供环境变量覆盖；当前统一使用 `~/.HAPPLADYSAUCECLI`。
 
 ---
 
@@ -142,17 +134,11 @@ v1 建议扩展为：
 
 ```go
 type Config struct {
-    Model   *options.ModelOptions `mapstructure:"model"`
-    DataDir string                `mapstructure:"data_dir"`
-    Memory  *options.MemoryOptions `mapstructure:"memory"`
-}
-
-type MemoryOptions struct {
-    Enabled bool `mapstructure:"enabled"`
+    Model *options.ModelOptions `mapstructure:"model"`
 }
 ```
 
-压缩配置不进入 `pkg/options`。压缩器通过 `ModelOptions` 和内部默认策略初始化。
+压缩配置和本地 context DB 路径不进入 `pkg/options`。压缩器通过 `ModelOptions` 和内部默认策略初始化，SQLite 路径通过 `internal/storage/sqlite` 派生。
 
 ---
 

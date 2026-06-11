@@ -10,6 +10,7 @@ import (
 	einomodel "github.com/cloudwego/eino/components/model"
 	"github.com/cloudwego/eino/schema"
 
+	contexttracker "github.com/HappyLadySauce/HappyLadySauceCLI/internal/context/tracker"
 	contextusage "github.com/HappyLadySauce/HappyLadySauceCLI/internal/context/usage"
 )
 
@@ -41,7 +42,7 @@ type trackingModel struct {
 func (m *trackingModel) Generate(ctx context.Context, input []*schema.Message, opts ...einomodel.Option) (*schema.Message, error) {
 	startedAt := time.Now()
 	msg, err := m.inner.Generate(ctx, input, opts...)
-	contextusage.RecordModelUsage(ctx, time.Since(startedAt), msg, err)
+	recordModelUsage(ctx, time.Since(startedAt), msg, err)
 	return msg, err
 }
 
@@ -49,11 +50,11 @@ func (m *trackingModel) Stream(ctx context.Context, input []*schema.Message, opt
 	startedAt := time.Now()
 	stream, err := m.inner.Stream(ctx, input, opts...)
 	if err != nil {
-		contextusage.RecordModelUsage(ctx, time.Since(startedAt), nil, err)
+		recordModelUsage(ctx, time.Since(startedAt), nil, err)
 		return nil, err
 	}
 	if stream == nil {
-		contextusage.RecordModelUsage(ctx, time.Since(startedAt), nil, nil)
+		recordModelUsage(ctx, time.Since(startedAt), nil, nil)
 		return nil, nil
 	}
 
@@ -64,7 +65,7 @@ func (m *trackingModel) Stream(ctx context.Context, input []*schema.Message, opt
 	)
 	record := func(msg *schema.Message, recordErr error) {
 		once.Do(func() {
-			contextusage.RecordModelUsage(ctx, time.Since(startedAt), msg, recordErr)
+			recordModelUsage(ctx, time.Since(startedAt), msg, recordErr)
 		})
 	}
 
@@ -89,4 +90,12 @@ func (m *trackingModel) Stream(ctx context.Context, input []*schema.Message, opt
 		record(msg, concatErr)
 		return nil, io.EOF
 	})), nil
+}
+
+func recordModelUsage(ctx context.Context, elapsed time.Duration, msg *schema.Message, callErr error) {
+	tracker := contexttracker.FromContext(ctx)
+	if tracker == nil {
+		return
+	}
+	tracker.AddTurn(contextusage.TurnFromMessage(elapsed, msg, callErr))
 }

@@ -506,7 +506,7 @@ chatModel（裸实例或装饰实例）
 - 本地 `TokenEstimator`（tiktoken / 字符估算）对需要展示的消息片段做估算
 - 在 UI 标注 `source: estimated` 与 `source: provider` 区分
 
-本项目当前不使用本地估算触发压缩；没有 provider usage 时 `SessionContext.TotalTokens()` 不更新，压缩不会被估算值触发。
+本项目当前不使用本地估算触发压缩；没有 provider usage 时 `tracker.TotalTokens()` 不更新，压缩不会被估算值触发。
 
 ---
 
@@ -601,17 +601,17 @@ type MessageVariant struct {
 openai.NewChatModel
   → adk.NewChatModelAgent（Handlers: content + usage middleware）
   → adk.NewRunner（EnableStreaming: true）
-  → RunLoop：SessionContext（跨轮）+ ConversationRecorder（context 传递）+ SQLite store
+  → RunLoop：tracker（跨轮内存聚合）+ storage/sqlite（连接）+ contextstore（落库）
 ```
 
 | 能力 | 实现 |
 |------|------|
 | **provider 计量** | `usageMiddleware.WrapModel` 包装每次 `Generate`/`Stream`，读取 `ResponseMeta.Usage` 并追加 `Turn` |
-| **prompt↑ / completion↓** | `ConversationRecorder` 聚合本次 ChatModelAgent Run 内所有 `Turn` |
-| **content↑↓** | `SessionContext.TotalTokens` 保留最近一次 provider total，`Conversation.Total` 保存本次 Run 的聚合 total |
-| **压缩触发** | `Compactor.CompactIfNeeded` 比较 `session.TotalTokens >= (maxContext-maxOutput)×80%`，不再 `estimateTotalTokens` |
-| **摘要旁路** | `generateSummary` 使用 `usage.WithSkipTracking(ctx)`，避免辅助调用污染 session total |
-| **回合展示** | `RunLoop` 在 `FinishConversation` 后调用 `Renderer.WriteConversationStatus` |
+| **prompt↑ / completion↓** | `tracker` 聚合本次 ChatModelAgent Run 内所有 `Turn` |
+| **content↑↓** | `tracker.TotalTokens` 保留最近一次 provider total，`Conversation.Total` 保存本次 Run 的聚合 total |
+| **压缩触发** | `Compactor.CompactIfNeeded` 比较 `tracker.TotalTokens() >= (maxContext-maxOutput)×80%`，不再 `estimateTotalTokens` |
+| **摘要旁路** | `generateSummary` 直调 compactor 持有的裸 `BaseChatModel`，不经过 `usageMiddleware.WrapModel` |
+| **回合展示** | `RunLoop` 在 `tracker.FinishConversation` 后调用 `Renderer.WriteConversationStatus` |
 
 `TokenEstimator` 仅保留于摘要 middle 段规模提示，不参与压缩触发与 Stats total。
 

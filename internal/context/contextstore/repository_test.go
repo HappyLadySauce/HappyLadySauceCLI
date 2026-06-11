@@ -1,14 +1,14 @@
-package sqlite
+package contextstore
 
 import (
 	"context"
 	"database/sql"
 	"path/filepath"
-	"strings"
 	"testing"
 	"time"
 
 	contextmodel "github.com/HappyLadySauce/HappyLadySauceCLI/internal/context/model"
+	storagesqlite "github.com/HappyLadySauce/HappyLadySauceCLI/internal/storage/sqlite"
 )
 
 func TestRepositorySavesSessionConversationTurnsAndMessages(t *testing.T) {
@@ -16,11 +16,16 @@ func TestRepositorySavesSessionConversationTurnsAndMessages(t *testing.T) {
 
 	ctx := context.Background()
 	dbPath := filepath.Join(t.TempDir(), "context.sqlite")
-	repo, err := Open(ctx, dbPath)
+	db, err := storagesqlite.Open(ctx, dbPath)
 	if err != nil {
-		t.Fatalf("Open() error = %v", err)
+		t.Fatalf("sqlite Open() error = %v", err)
 	}
-	defer repo.Close()
+	defer db.Close()
+
+	repo := New(db)
+	if err := repo.Migrate(ctx); err != nil {
+		t.Fatalf("Migrate() error = %v", err)
+	}
 
 	session := contextmodel.NewSession("session_test", time.Now())
 	conversation := contextmodel.NewConversation("conversation_test", session.ID, 1, time.Now())
@@ -47,31 +52,16 @@ func TestRepositorySavesSessionConversationTurnsAndMessages(t *testing.T) {
 		t.Fatalf("SaveConversation() error = %v", err)
 	}
 
-	db, err := sql.Open("sqlite", dbPath)
+	verifyDB, err := sql.Open("sqlite", dbPath)
 	if err != nil {
 		t.Fatalf("open verification db: %v", err)
 	}
-	defer db.Close()
+	defer verifyDB.Close()
 
-	assertCount(t, db, "context_sessions", 1)
-	assertCount(t, db, "context_conversations", 1)
-	assertCount(t, db, "context_turns", 1)
-	assertCount(t, db, "context_messages", 1)
-}
-
-func TestDefaultPathUsesHiddenHappyLadySauceDirectory(t *testing.T) {
-	t.Parallel()
-
-	path, err := DefaultPath()
-	if err != nil {
-		t.Fatalf("DefaultPath() error = %v", err)
-	}
-	if !strings.Contains(filepath.ToSlash(path), "/.HAPPLADYSAUCECLI/") {
-		t.Fatalf("DefaultPath() = %q, want hidden .HAPPLADYSAUCECLI directory", path)
-	}
-	if filepath.Base(path) != "context.sqlite" {
-		t.Fatalf("DefaultPath() base = %q, want context.sqlite", filepath.Base(path))
-	}
+	assertCount(t, verifyDB, "context_sessions", 1)
+	assertCount(t, verifyDB, "context_conversations", 1)
+	assertCount(t, verifyDB, "context_turns", 1)
+	assertCount(t, verifyDB, "context_messages", 1)
 }
 
 func assertCount(t *testing.T, db *sql.DB, table string, want int) {

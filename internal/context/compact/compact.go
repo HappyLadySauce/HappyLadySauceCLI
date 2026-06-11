@@ -11,7 +11,8 @@ import (
 	"github.com/cloudwego/eino/components/model"
 	"github.com/cloudwego/eino/schema"
 
-	"github.com/HappyLadySauce/HappyLadySauceCLI/internal/context/usage"
+	"github.com/HappyLadySauce/HappyLadySauceCLI/internal/context/estimate"
+	contexttracker "github.com/HappyLadySauce/HappyLadySauceCLI/internal/context/tracker"
 	"github.com/HappyLadySauce/HappyLadySauceCLI/internal/prompts"
 )
 
@@ -55,7 +56,7 @@ type Compactor struct {
 	model            model.BaseChatModel
 	maxContextTokens int
 	maxOutputTokens  int
-	estimator        *usage.TokenEstimator
+	estimator        *estimate.TokenEstimator
 }
 
 // NewCompactor creates a context compactor from model options.
@@ -78,7 +79,7 @@ func NewCompactor(cfg Config) (*Compactor, error) {
 		model:            cfg.Model,
 		maxContextTokens: cfg.MaxModelContext,
 		maxOutputTokens:  cfg.MaxOutputTokens,
-		estimator:        usage.NewTokenEstimator(cfg.ModelName),
+		estimator:        estimate.NewTokenEstimator(cfg.ModelName),
 	}, nil
 }
 
@@ -94,8 +95,8 @@ func (c *Compactor) CompactIfNeeded(ctx stdcontext.Context, messages []*schema.M
 	}
 
 	sessionTotal := 0
-	if session := usage.SessionFromContext(ctx); session != nil {
-		sessionTotal = session.TotalTokens()
+	if tracker := contexttracker.FromContext(ctx); tracker != nil {
+		sessionTotal = tracker.TotalTokens()
 	}
 	if sessionTotal < c.triggerTokens() {
 		return messages, false, nil
@@ -158,7 +159,7 @@ func (c *Compactor) generateSummary(ctx stdcontext.Context, middle []*schema.Mes
 		})),
 	}
 
-	resp, err := c.model.Generate(usage.WithSkipTracking(ctx), input, model.WithMaxTokens(targetTokens))
+	resp, err := c.model.Generate(ctx, input, model.WithMaxTokens(targetTokens))
 	if err != nil {
 		return nil, fmt.Errorf("generate context summary: %w", err)
 	}

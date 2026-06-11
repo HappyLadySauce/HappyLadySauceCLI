@@ -9,7 +9,9 @@ import (
 	"github.com/cloudwego/eino/components/model"
 	"github.com/cloudwego/eino/schema"
 
-	"github.com/HappyLadySauce/HappyLadySauceCLI/internal/context/usage"
+	"github.com/HappyLadySauce/HappyLadySauceCLI/internal/context/estimate"
+	contextmodel "github.com/HappyLadySauce/HappyLadySauceCLI/internal/context/model"
+	contexttracker "github.com/HappyLadySauce/HappyLadySauceCLI/internal/context/tracker"
 	"github.com/HappyLadySauce/HappyLadySauceCLI/internal/prompts"
 )
 
@@ -250,7 +252,7 @@ func TestCompactIfNeededReturnsErrorWithoutDroppingMessages(t *testing.T) {
 }
 
 func TestTokenEstimatorCountsMiddleMessages(t *testing.T) {
-	estimator := usage.NewTokenEstimator("unknown-local-model")
+	estimator := estimate.NewTokenEstimator("unknown-local-model")
 	tokens := estimator.CountMessages([]*schema.Message{
 		{
 			Role:             schema.Assistant,
@@ -284,10 +286,11 @@ func TestSummaryTokenLimitHitsDefaultCap(t *testing.T) {
 }
 
 func testCtxAtCompactionTrigger(maxContext, maxOutput int) stdcontext.Context {
-	session := usage.NewSessionContext()
+	tracker := contexttracker.New()
+	tracker.BeginConversation()
 	trigger := (maxContext - maxOutput) * compactionTriggerPercent / 100
-	session.UpdateFromSnapshot(usage.UsageSnapshot{TotalTokens: trigger})
-	return usage.WithSessionContext(stdcontext.Background(), session)
+	tracker.AddTurn(&contextmodel.Turn{Total: trigger})
+	return contexttracker.WithTracker(stdcontext.Background(), tracker)
 }
 
 func newTestCompactor(t *testing.T, chatModel model.BaseChatModel, maxContext, maxOutput int) *Compactor {
