@@ -10,7 +10,7 @@ import (
 	"github.com/cloudwego/eino/components/model"
 	"github.com/cloudwego/eino/schema"
 
-	"github.com/HappyLadySauce/HappyLadySauceCLI/internal/context/compact"
+	"github.com/HappyLadySauce/HappyLadySauceCLI/pkg/context/compact"
 	contextmodel "github.com/HappyLadySauce/HappyLadySauceCLI/internal/context/model"
 	contexttracker "github.com/HappyLadySauce/HappyLadySauceCLI/internal/context/tracker"
 )

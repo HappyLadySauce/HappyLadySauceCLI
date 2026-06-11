@@ -6,7 +6,7 @@ import (
 	"github.com/cloudwego/eino/adk"
 	"github.com/cloudwego/eino/components/model"
 
-	"github.com/HappyLadySauce/HappyLadySauceCLI/internal/context/compact"
+	"github.com/HappyLadySauce/HappyLadySauceCLI/pkg/context/compact"
 	contentmiddleware "github.com/HappyLadySauce/HappyLadySauceCLI/internal/middlewares/content"
 	usagemiddleware "github.com/HappyLadySauce/HappyLadySauceCLI/internal/middlewares/usage"
 )

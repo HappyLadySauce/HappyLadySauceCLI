@@ -11,9 +11,7 @@ import (
 	"github.com/cloudwego/eino/components/model"
 	"github.com/cloudwego/eino/schema"
 
-	"github.com/HappyLadySauce/HappyLadySauceCLI/internal/context/estimate"
-	contexttracker "github.com/HappyLadySauce/HappyLadySauceCLI/internal/context/tracker"
-	"github.com/HappyLadySauce/HappyLadySauceCLI/internal/prompts"
+	"github.com/HappyLadySauce/HappyLadySauceCLI/pkg/context/estimate"
 )
 
 const (
@@ -83,10 +81,11 @@ func NewCompactor(cfg Config) (*Compactor, error) {
 	}, nil
 }
 
-// CompactIfNeeded checks prompt pressure, summarizes the middle segment when needed,
-// and returns [head, summary, tail]. On summary failure it returns the original messages unchanged.
-// CompactIfNeeded 检查 prompt 压力，必要时摘要中间段并返回 [头部, 摘要, 尾部]；摘要失败时原样返回输入。
-func (c *Compactor) CompactIfNeeded(ctx stdcontext.Context, messages []*schema.Message) ([]*schema.Message, bool, error) {
+// CompactIfNeeded checks prompt pressure using the provider-reported sessionTotal,
+// summarizes the middle segment when needed, and returns [head, summary, tail].
+// On summary failure it returns the original messages unchanged.
+// CompactIfNeeded 使用 provider 上报的 sessionTotal 检查 prompt 压力，必要时摘要中间段并返回 [头部, 摘要, 尾部]；摘要失败时原样返回输入。
+func (c *Compactor) CompactIfNeeded(ctx stdcontext.Context, messages []*schema.Message, sessionTotal int) ([]*schema.Message, bool, error) {
 	if c == nil {
 		return messages, false, errors.New("compactor is nil")
 	}
@@ -94,10 +93,6 @@ func (c *Compactor) CompactIfNeeded(ctx stdcontext.Context, messages []*schema.M
 		return messages, false, nil
 	}
 
-	sessionTotal := 0
-	if tracker := contexttracker.FromContext(ctx); tracker != nil {
-		sessionTotal = tracker.TotalTokens()
-	}
 	if sessionTotal < c.triggerTokens() {
 		return messages, false, nil
 	}
@@ -151,8 +146,8 @@ func (c *Compactor) safePromptBudget() int {
 func (c *Compactor) generateSummary(ctx stdcontext.Context, middle []*schema.Message, estimatedTokens int) (*schema.Message, error) {
 	targetTokens := c.summaryTokenLimit()
 	input := []*schema.Message{
-		schema.SystemMessage(prompts.ContextCompactionSystemPrompt),
-		schema.UserMessage(prompts.ContextCompactionUserPrompt(prompts.ContextCompactionPromptInput{
+		schema.SystemMessage(summarySystemPrompt),
+		schema.UserMessage(summaryUserPrompt(summaryPromptInput{
 			EstimatedTokens: estimatedTokens,
 			TargetTokens:    targetTokens,
 			Messages:        middle,
@@ -177,5 +172,5 @@ func (c *Compactor) generateSummary(ctx stdcontext.Context, middle []*schema.Mes
 
 	// Use a user message so later compaction passes preserve the accumulated summary.
 	// 使用 user message，确保后续压缩轮次不会像 system message 一样过滤掉累计摘要。
-	return schema.UserMessage(prompts.ContextCompactionSummaryPrefix + content), nil
+	return schema.UserMessage(summaryPrefix + content), nil
 }

@@ -7,7 +7,8 @@ import (
 	"github.com/cloudwego/eino/adk"
 	"k8s.io/klog/v2"
 
-	"github.com/HappyLadySauce/HappyLadySauceCLI/internal/context/compact"
+	contexttracker "github.com/HappyLadySauce/HappyLadySauceCLI/internal/context/tracker"
+	"github.com/HappyLadySauce/HappyLadySauceCLI/pkg/context/compact"
 )
 
 // contentMiddleware is a ChatModelAgent middleware for context-window compaction.
@@ -36,7 +37,12 @@ func (m *contentMiddleware) BeforeModelRewriteState(ctx context.Context, state *
 		return ctx, state, nil
 	}
 
-	messages, changed, err := m.compactor.CompactIfNeeded(ctx, state.Messages)
+	sessionTotal := 0
+	if tracker := contexttracker.FromContext(ctx); tracker != nil {
+		sessionTotal = tracker.TotalTokens()
+	}
+
+	messages, changed, err := m.compactor.CompactIfNeeded(ctx, state.Messages, sessionTotal)
 	if err != nil {
 		klog.Warningf("context compaction skipped: %v", err)
 		return ctx, state, nil

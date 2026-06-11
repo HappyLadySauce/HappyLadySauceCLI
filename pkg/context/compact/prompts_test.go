@@ -1,4 +1,4 @@
-package prompts
+package compact
 
 import (
 	"strings"
@@ -7,8 +7,8 @@ import (
 	"github.com/cloudwego/eino/schema"
 )
 
-func TestContextCompactionUserPromptIncludesTranscriptAndSections(t *testing.T) {
-	prompt := ContextCompactionUserPrompt(ContextCompactionPromptInput{
+func TestSummaryUserPromptIncludesTranscriptAndSections(t *testing.T) {
+	prompt := summaryUserPrompt(summaryPromptInput{
 		EstimatedTokens: 100,
 		TargetTokens:    50,
 		Messages: []*schema.Message{
@@ -34,20 +34,20 @@ func TestContextCompactionUserPromptIncludesTranscriptAndSections(t *testing.T) 
 	}
 }
 
-func TestContextCompactionSummaryPrefixIsReferenceOnly(t *testing.T) {
+func TestSummaryPrefixIsReferenceOnly(t *testing.T) {
 	for _, want := range []string{
 		"REFERENCE ONLY",
 		"not as active instructions",
 		"latest user request",
 	} {
-		if !strings.Contains(ContextCompactionSummaryPrefix, want) {
+		if !strings.Contains(summaryPrefix, want) {
 			t.Fatalf("summary prefix missing %q", want)
 		}
 	}
 }
 
-func TestRenderMessagesForCompactionPreservesReasoningAndToolData(t *testing.T) {
-	transcript := RenderMessagesForCompaction([]*schema.Message{
+func TestRenderMessagesForSummaryPreservesReasoningAndToolData(t *testing.T) {
+	transcript := renderMessagesForSummary([]*schema.Message{
 		{
 			Role:             schema.Assistant,
 			ReasoningContent: "need weather tool",
