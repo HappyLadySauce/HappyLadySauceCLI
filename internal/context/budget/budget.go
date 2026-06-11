@@ -29,8 +29,8 @@ func (s TurnStats) IsZero() bool {
 	return s.ElapsedMs <= 0 && s.PromptTokens <= 0 && s.CompletionTokens <= 0 && s.ContextTokens <= 0
 }
 
-// TotalTokens returns session context occupancy shown as total↑↓.
-// TotalTokens 返回作为 total↑↓ 展示的会话上下文占用总量。
+// TotalTokens returns session context occupancy shown as content↑↓.
+// TotalTokens 返回作为 content↑↓ 展示的会话上下文占用总量。
 func (s TurnStats) TotalTokens() int {
 	return s.ContextTokens
 }
@@ -93,10 +93,10 @@ func (w *BudgetWriter) AddUsage(snapshot usage.UsageSnapshot) {
 
 // FinalizeTurn closes elapsed-time tracking and stores context occupancy.
 //
-// total↑↓ uses provider sessionTotal from SessionContext (updated by UsageTrackingChatModel).
+// content↑↓ uses provider sessionTotal from SessionContext (updated by UsageTrackingChatModel).
 //
 // FinalizeTurn 结束耗时统计并写入上下文占用。
-// total↑↓ 使用 SessionContext 中的 provider sessionTotal（由 UsageTrackingChatModel 更新）。
+// content↑↓ 使用 SessionContext 中的 provider sessionTotal（由 UsageTrackingChatModel 更新）。
 func (w *BudgetWriter) FinalizeTurn(maxContext, sessionTotal int) {
 	if w == nil {
 		return

@@ -22,7 +22,7 @@ const (
 	colorStatsElapsed    = "\x1b[36m"
 	colorStatsPrompt     = "\x1b[32m"
 	colorStatsCompletion = "\x1b[35m"
-	colorStatsTotal      = "\x1b[37;1m"
+	colorStatsContent    = "\x1b[37;1m"
 	colorStatsWindow     = "\x1b[33m"
 )
 

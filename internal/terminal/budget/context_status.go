@@ -14,14 +14,14 @@ func FormatTurnStatusLine(stats budget.TurnStats) string {
 	}
 
 	line := fmt.Sprintf(
-		"[Stats: elapsed=%s prompt↑=%d completion↓=%d total↑↓=%d",
+		"[Stats: elapsed=%s prompt↑=%d completion↓=%d content↑↓=%d",
 		FormatElapsed(stats.ElapsedMs),
 		stats.PromptTokens,
 		stats.CompletionTokens,
 		stats.TotalTokens(),
 	)
 	if stats.MaxContext > 0 && stats.ContextTokens > 0 {
-		line += fmt.Sprintf(" %s %s", FormatPercent(stats.PercentUsed()), FormatWindowTokens(stats.MaxContext))
+		line += " " + FormatContextUsage(stats.PercentUsed(), stats.MaxContext)
 	}
 	return line + "]"
 }
@@ -40,6 +40,12 @@ func FormatElapsed(elapsedMs int64) string {
 	minutes := elapsedMs / elapsedMinuteMs
 	seconds := (elapsedMs % elapsedMinuteMs) / 1000
 	return fmt.Sprintf("%dm%ds", minutes, seconds)
+}
+
+// FormatContextUsage formats window occupancy as "0.37%(128K)".
+// FormatContextUsage 将窗口占用格式化为 "0.37%(128K)"。
+func FormatContextUsage(percent float64, maxContext int) string {
+	return fmt.Sprintf("%s(%s)", FormatPercent(percent), FormatWindowTokens(maxContext))
 }
 
 // FormatPercent formats context window usage percentage with two decimal places.

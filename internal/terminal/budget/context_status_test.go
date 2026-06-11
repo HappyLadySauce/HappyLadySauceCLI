@@ -39,7 +39,7 @@ func TestFormatTurnStatusLine(t *testing.T) {
 		ContextTokens:    318, // session occupancy; equals prompt when only estimate from short history
 		MaxContext:       128000,
 	})
-	want := "[Stats: elapsed=0.77s prompt↑=318 completion↓=37 total↑↓=318 0.25% 128K]"
+	want := "[Stats: elapsed=0.77s prompt↑=318 completion↓=37 content↑↓=318 0.25%(128K)]"
 	if line != want {
 		t.Fatalf("FormatTurnStatusLine() = %q, want %q", line, want)
 	}
@@ -61,7 +61,7 @@ func TestFormatTurnStatusLineWithoutContext(t *testing.T) {
 		PromptTokens:     50,
 		CompletionTokens: 5,
 	})
-	want := "[Stats: elapsed=0.10s prompt↑=50 completion↓=5 total↑↓=0]"
+	want := "[Stats: elapsed=0.10s prompt↑=50 completion↓=5 content↑↓=0]"
 	if line != want {
 		t.Fatalf("FormatTurnStatusLine() = %q, want %q", line, want)
 	}
@@ -77,7 +77,7 @@ func TestFormatTurnStatusLineOverOneMinute(t *testing.T) {
 		ContextTokens:    5000,
 		MaxContext:       128000,
 	})
-	want := "[Stats: elapsed=1m5s prompt↑=1000 completion↓=200 total↑↓=5000 3.91% 128K]"
+	want := "[Stats: elapsed=1m5s prompt↑=1000 completion↓=200 content↑↓=5000 3.91%(128K)]"
 	if line != want {
 		t.Fatalf("FormatTurnStatusLine() = %q, want %q", line, want)
 	}
@@ -98,12 +98,12 @@ func TestFormatTurnStatusLinePercentRounding(t *testing.T) {
 	t.Parallel()
 
 	tiny := FormatTurnStatusLine(budget.TurnStats{ContextTokens: 4, MaxContext: 1000})
-	if tiny != "[Stats: elapsed=0.00s prompt↑=0 completion↓=0 total↑↓=4 0.40% 1K]" {
+	if tiny != "[Stats: elapsed=0.00s prompt↑=0 completion↓=0 content↑↓=4 0.40%(1K)]" {
 		t.Fatalf("tiny percent line = %q", tiny)
 	}
 
 	rounded := FormatTurnStatusLine(budget.TurnStats{ContextTokens: 415, MaxContext: 1000})
-	if rounded != "[Stats: elapsed=0.00s prompt↑=0 completion↓=0 total↑↓=415 41.50% 1K]" {
+	if rounded != "[Stats: elapsed=0.00s prompt↑=0 completion↓=0 content↑↓=415 41.50%(1K)]" {
 		t.Fatalf("rounded percent line = %q", rounded)
 	}
 }

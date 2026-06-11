@@ -6,6 +6,7 @@
 .codex/
 .claude/
 .plans/
+.review/
 
 # Local secrets loaded by Makefile (-include .env)
 .env

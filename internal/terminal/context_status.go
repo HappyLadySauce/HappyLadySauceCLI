@@ -29,15 +29,11 @@ func (r *Renderer) formatTurnStatusLine(stats budget.TurnStats) string {
 	elapsed := r.colorize(colorStatsElapsed, fmt.Sprintf("elapsed=%s ", terminalbudget.FormatElapsed(stats.ElapsedMs)))
 	prompt := r.colorize(colorStatsPrompt, fmt.Sprintf("prompt↑=%d ", stats.PromptTokens))
 	completion := r.colorize(colorStatsCompletion, fmt.Sprintf("completion↓=%d ", stats.CompletionTokens))
-	total := r.colorize(colorStatsTotal, fmt.Sprintf("total↑↓=%d", stats.TotalTokens()))
+	content := r.colorize(colorStatsContent, fmt.Sprintf("content↑↓=%d", stats.TotalTokens()))
 
-	line := prefix + elapsed + prompt + completion + total
+	line := prefix + elapsed + prompt + completion + content
 	if stats.MaxContext > 0 && stats.ContextTokens > 0 {
-		contextPart := fmt.Sprintf(
-			" %s %s",
-			terminalbudget.FormatPercent(stats.PercentUsed()),
-			terminalbudget.FormatWindowTokens(stats.MaxContext),
-		)
+		contextPart := " " + terminalbudget.FormatContextUsage(stats.PercentUsed(), stats.MaxContext)
 		line += r.colorize(colorStatsWindow, contextPart)
 	}
 	return line + r.colorize(colorStats, "]")
