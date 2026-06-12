@@ -11,6 +11,7 @@ import (
 	"github.com/cloudwego/eino/schema"
 
 	"github.com/HappyLadySauce/HappyLadySauceCLI/internal/terminal"
+	"github.com/HappyLadySauce/HappyLadySauceCLI/internal/tools/toolresult"
 )
 
 func TestConsumeAgentEvents_StreamingAssistant(t *testing.T) {
@@ -216,6 +217,66 @@ func TestConsumeAgentEvents_ReActTurnPreservesToolTrace(t *testing.T) {
 	}
 	if turnMessages[2].Role != schema.Assistant || turnMessages[2].Content != "重庆今天阴天。" {
 		t.Fatalf("third message = %#v, want final assistant answer", turnMessages[2])
+	}
+}
+
+func TestConsumeAgentEvents_ReActTurnWithToolErrorPayload(t *testing.T) {
+	iter, gen := adk.NewAsyncIteratorPair[*adk.AgentEvent]()
+	gen.Send(&adk.AgentEvent{
+		AgentName: "assistant",
+		Output: &adk.AgentOutput{
+			MessageOutput: &adk.MessageVariant{
+				Message: &schema.Message{
+					Role: schema.Assistant,
+					ToolCalls: []schema.ToolCall{{
+						ID:   "call-1",
+						Type: "function",
+						Function: schema.FunctionCall{
+							Name:      "get_weather",
+							Arguments: `{"city":"重庆","lang":"ja"}`,
+						},
+					}},
+				},
+			},
+		},
+	})
+	errorPayload := toolresult.FormatError(errors.New("lang must be zh or en"))
+	gen.Send(&adk.AgentEvent{
+		AgentName: "assistant",
+		Output: &adk.AgentOutput{
+			MessageOutput: &adk.MessageVariant{
+				ToolName: "get_weather",
+				Message:  schema.ToolMessage(errorPayload, "call-1", schema.WithToolName("get_weather")),
+			},
+		},
+	})
+	gen.Send(&adk.AgentEvent{
+		AgentName: "assistant",
+		Output: &adk.AgentOutput{
+			MessageOutput: &adk.MessageVariant{
+				Message: schema.AssistantMessage("lang 仅支持 zh 或 en。", nil),
+			},
+		},
+	})
+	gen.Close()
+
+	var out bytes.Buffer
+	stream := terminal.NewRenderer(&out, &bytes.Buffer{})
+	turnMessages, exited, err := ConsumeAgentEvents(context.Background(), iter, stream)
+	if err != nil {
+		t.Fatalf("ConsumeAgentEvents returned error: %v", err)
+	}
+	if exited {
+		t.Fatal("expected exited=false")
+	}
+	if len(turnMessages) != 3 {
+		t.Fatalf("turnMessages len = %d, want 3", len(turnMessages))
+	}
+	if turnMessages[1].Role != schema.Tool || !toolresult.IsErrorPayload(turnMessages[1].Content) {
+		t.Fatalf("second message = %#v, want tool error payload", turnMessages[1])
+	}
+	if !strings.Contains(out.String(), "[tool error]") {
+		t.Fatalf("expected tool error styling in output: %q", out.String())
 	}
 }
 

@@ -21,6 +21,7 @@ import (
 	"github.com/HappyLadySauce/HappyLadySauceCLI/internal/logger"
 	securitycore "github.com/HappyLadySauce/HappyLadySauceCLI/internal/security"
 	"github.com/HappyLadySauce/HappyLadySauceCLI/internal/security/policy"
+	"github.com/HappyLadySauce/HappyLadySauceCLI/internal/tools/toolresult"
 )
 
 // ApprovalRequest contains the information shown to a human approver.
@@ -124,8 +125,10 @@ func NewExecutionSecurityMiddleware(cfg Config) (*ExecutionSecurityMiddleware, e
 func (m *ExecutionSecurityMiddleware) WrapInvokableToolCall(ctx context.Context, endpoint adk.InvokableToolCallEndpoint, tCtx *adk.ToolContext) (adk.InvokableToolCallEndpoint, error) {
 	return func(ctx context.Context, argumentsInJSON string, opts ...tool.Option) (string, error) {
 		auth, err := m.authorize(ctx, tCtx, securitycore.SummarizeArguments(argumentsInJSON))
-		if err != nil {
-			return "", err
+		if payload, recovered, authErr := m.finishAuthorize(ctx, auth, err); recovered {
+			return payload, nil
+		} else if authErr != nil {
+			return "", authErr
 		}
 		operation := auth.operation
 
@@ -141,8 +144,13 @@ func (m *ExecutionSecurityMiddleware) WrapInvokableToolCall(ctx context.Context,
 				outputBytes = 0
 			}
 		}
-		m.auditExecution(ctx, auth, start, err, outputBytes)
-		return result, err
+		if err != nil {
+			payload := toolresult.FormatError(err)
+			m.auditExecution(ctx, auth, start, err, len(payload), true)
+			return payload, nil
+		}
+		m.auditExecution(ctx, auth, start, nil, outputBytes, false)
+		return result, nil
 	}, nil
 }
 
@@ -151,8 +159,10 @@ func (m *ExecutionSecurityMiddleware) WrapInvokableToolCall(ctx context.Context,
 func (m *ExecutionSecurityMiddleware) WrapStreamableToolCall(ctx context.Context, endpoint adk.StreamableToolCallEndpoint, tCtx *adk.ToolContext) (adk.StreamableToolCallEndpoint, error) {
 	return func(ctx context.Context, argumentsInJSON string, opts ...tool.Option) (*schema.StreamReader[string], error) {
 		auth, err := m.authorize(ctx, tCtx, securitycore.SummarizeArguments(argumentsInJSON))
-		if err != nil {
-			return nil, err
+		if payload, recovered, authErr := m.finishAuthorize(ctx, auth, err); recovered {
+			return schema.StreamReaderFromArray([]string{payload}), nil
+		} else if authErr != nil {
+			return nil, authErr
 		}
 		operation := auth.operation
 
@@ -161,8 +171,9 @@ func (m *ExecutionSecurityMiddleware) WrapStreamableToolCall(ctx context.Context
 		result, err := endpoint(ctx, argumentsInJSON, opts...)
 		if err != nil {
 			cancel()
-			m.auditExecution(ctx, auth, start, err, 0)
-			return nil, err
+			payload := toolresult.FormatError(err)
+			m.auditExecution(ctx, auth, start, err, len(payload), true)
+			return schema.StreamReaderFromArray([]string{payload}), nil
 		}
 		m.auditStreamOpened(ctx, auth, start)
 
@@ -170,27 +181,32 @@ func (m *ExecutionSecurityMiddleware) WrapStreamableToolCall(ctx context.Context
 		// than at stream setup time. This gives accurate elapsed time.
 		// 包装 stream 使审计在流实际消费完（EOF）时触发，而非在 stream 建立时，以获取准确的耗时。
 		var audited atomic.Bool
+		var streamStopped atomic.Bool
 		outputBudget := newToolOutputBudget(m.maxToolOutputBytes)
-		doAudit := func(streamErr error) {
+		doAudit := func(streamErr error, recovered bool) {
 			if audited.CompareAndSwap(false, true) {
 				cancel()
-				m.auditExecution(ctx, auth, start, streamErr, int(outputBudget.Used()))
+				m.auditExecution(ctx, auth, start, streamErr, int(outputBudget.Used()), recovered)
 			}
 		}
 		return schema.StreamReaderWithConvert(result,
 			func(s string) (string, error) {
+				if streamStopped.Load() {
+					return "", io.EOF
+				}
 				if limitErr := outputBudget.Add(s); limitErr != nil {
-					doAudit(limitErr)
-					return "", limitErr
+					streamStopped.Store(true)
+					doAudit(limitErr, true)
+					return toolresult.FormatError(limitErr), nil
 				}
 				return s, nil
 			},
 			schema.WithOnEOF(func() (any, error) {
-				doAudit(nil)
+				doAudit(nil, false)
 				return nil, io.EOF
 			}),
 			schema.WithErrWrapper(func(err error) error {
-				doAudit(err)
+				doAudit(err, false)
 				return err
 			}),
 		), nil
@@ -219,8 +235,13 @@ func (m *ExecutionSecurityMiddleware) WrapEnhancedInvokableToolCall(ctx context.
 				outputBytes = 0
 			}
 		}
-		m.auditExecution(ctx, auth, start, err, outputBytes)
-		return result, err
+		if err != nil {
+			payload := errorToolResult(err)
+			m.auditExecution(ctx, auth, start, err, toolOutputSize(payload), true)
+			return payload, nil
+		}
+		m.auditExecution(ctx, auth, start, nil, outputBytes, false)
+		return result, nil
 	}, nil
 }
 
@@ -239,8 +260,9 @@ func (m *ExecutionSecurityMiddleware) WrapEnhancedStreamableToolCall(ctx context
 		result, err := endpoint(ctx, toolArgument, opts...)
 		if err != nil {
 			cancel()
-			m.auditExecution(ctx, auth, start, err, 0)
-			return nil, err
+			payload := errorToolResult(err)
+			m.auditExecution(ctx, auth, start, err, toolOutputSize(payload), true)
+			return schema.StreamReaderFromArray([]*schema.ToolResult{payload}), nil
 		}
 		m.auditStreamOpened(ctx, auth, start)
 
@@ -248,27 +270,32 @@ func (m *ExecutionSecurityMiddleware) WrapEnhancedStreamableToolCall(ctx context
 		// than at stream setup time. This gives accurate elapsed time.
 		// 包装 stream 使审计在流实际消费完（EOF）时触发，而非在 stream 建立时，以获取准确的耗时。
 		var audited atomic.Bool
+		var streamStopped atomic.Bool
 		outputBudget := newToolOutputBudget(m.maxToolOutputBytes)
-		doAudit := func(streamErr error) {
+		doAudit := func(streamErr error, recovered bool) {
 			if audited.CompareAndSwap(false, true) {
 				cancel()
-				m.auditExecution(ctx, auth, start, streamErr, int(outputBudget.Used()))
+				m.auditExecution(ctx, auth, start, streamErr, int(outputBudget.Used()), recovered)
 			}
 		}
 		return schema.StreamReaderWithConvert(result,
 			func(tr *schema.ToolResult) (*schema.ToolResult, error) {
+				if streamStopped.Load() {
+					return nil, io.EOF
+				}
 				if limitErr := outputBudget.Add(tr); limitErr != nil {
-					doAudit(limitErr)
-					return nil, limitErr
+					streamStopped.Store(true)
+					doAudit(limitErr, true)
+					return errorToolResult(limitErr), nil
 				}
 				return tr, nil
 			},
 			schema.WithOnEOF(func() (any, error) {
-				doAudit(nil)
+				doAudit(nil, false)
 				return nil, io.EOF
 			}),
 			schema.WithErrWrapper(func(err error) error {
-				doAudit(err)
+				doAudit(err, false)
 				return err
 			}),
 		), nil
@@ -300,7 +327,7 @@ func (m *ExecutionSecurityMiddleware) authorize(ctx context.Context, tCtx *adk.T
 			m.auditDecision(ctx, operation, decision, auth.approvalScope, "allowed")
 			return auth, nil
 		}
-		unlock := m.lockApproval(operation.GrantKey())
+		unlock := m.lockApproval(operation.SessionGrantKey())
 		defer unlock()
 		if m.grants.IsAllowed(operation) {
 			auth.approvalScope = securitycore.ApprovalScopeSession
@@ -465,7 +492,7 @@ func (m *ExecutionSecurityMiddleware) auditDecision(ctx context.Context, operati
 		"status", record.Status)
 }
 
-func (m *ExecutionSecurityMiddleware) auditExecution(ctx context.Context, auth authorization, start time.Time, err error, outputBytes int) {
+func (m *ExecutionSecurityMiddleware) auditExecution(ctx context.Context, auth authorization, start time.Time, err error, outputBytes int, recovered bool) {
 	operation := auth.operation
 	record := securitycore.NewAuditRecord(operation)
 	record.ElapsedMS = time.Since(start).Milliseconds()
@@ -486,10 +513,23 @@ func (m *ExecutionSecurityMiddleware) auditExecution(ctx context.Context, auth a
 		"elapsed_ms", record.ElapsedMS,
 	}
 	if err != nil {
+		if recovered {
+			logger.Error(ctx, err, "Capability execution recovered", append(kvs, "status", "tool_error_returned", "recovered", true)...)
+			return
+		}
 		logger.Error(ctx, err, "Capability execution failed", append(kvs, "status", "error")...)
 		return
 	}
 	logger.Info(ctx, 1, "Capability execution completed", append(kvs, "status", "success")...)
+}
+
+func errorToolResult(err error) *schema.ToolResult {
+	return &schema.ToolResult{
+		Parts: []schema.ToolOutputPart{{
+			Type: schema.ToolPartTypeText,
+			Text: toolresult.FormatError(err),
+		}},
+	}
 }
 
 func (m *ExecutionSecurityMiddleware) auditStreamOpened(ctx context.Context, auth authorization, start time.Time) {

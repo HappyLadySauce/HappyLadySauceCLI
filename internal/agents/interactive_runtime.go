@@ -8,7 +8,6 @@ import (
 
 	"github.com/cloudwego/eino/adk"
 	"github.com/cloudwego/eino/schema"
-	"k8s.io/klog/v2"
 
 	contextsession "github.com/HappyLadySauce/HappyLadySauceCLI/internal/context/session"
 	"github.com/HappyLadySauce/HappyLadySauceCLI/internal/input"
@@ -16,8 +15,12 @@ import (
 	"github.com/HappyLadySauce/HappyLadySauceCLI/internal/terminal"
 )
 
+type agentEventRunner interface {
+	Run(ctx context.Context, input []*schema.Message, opts ...adk.AgentRunOption) *adk.AsyncIterator[*adk.AgentEvent]
+}
+
 type interactiveRuntime struct {
-	runner          *adk.Runner
+	runner          agentEventRunner
 	contextSession  *contextsession.Service
 	promptReader    *input.PromptReader
 	renderer        *terminal.Renderer
@@ -46,7 +49,9 @@ func (r *interactiveRuntime) Run(ctx context.Context) error {
 
 		exited, err := r.runPrompt(ctx, prompt)
 		if err != nil {
-			return err
+			r.renderer.Error(err)
+			r.renderer.FinishTurn()
+			continue
 		}
 		if exited {
 			return nil
@@ -61,7 +66,7 @@ func (r *interactiveRuntime) Close() {
 		return
 	}
 	if err := r.contextSession.Close(); err != nil {
-		klog.ErrorS(err, "Could not close context session")
+		logger.Error(context.Background(), err, "Could not close context session", "phase", "session_close")
 	}
 }
 
@@ -102,7 +107,10 @@ func (r *interactiveRuntime) runPrompt(ctx context.Context, prompt string) (bool
 			"turn_messages", 1,
 			"history_messages", len(r.history),
 			"error", true)
-		return false, errors.Join(err, persistErr)
+		if persistErr != nil {
+			logger.Error(runCtx, persistErr, "Failed to persist errored user turn", "phase", "persistence")
+		}
+		return false, err
 	}
 
 	conversationMessages := append([]*schema.Message{userMessage}, turnMessages...)

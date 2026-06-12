@@ -7,6 +7,8 @@ import (
 	"strings"
 	"sync"
 	"time"
+
+	"github.com/HappyLadySauce/HappyLadySauceCLI/internal/tools/toolresult"
 )
 
 const thinkingFrameInterval = 120 * time.Millisecond
@@ -195,6 +197,10 @@ func (r *Renderer) ToolMessage(toolName, content string) {
 		toolName = "tool"
 	}
 	label := fmt.Sprintf("%s> ", toolName)
+	if toolresult.IsErrorPayload(content) {
+		_, _ = fmt.Fprintf(r.out, "%s%s\n", r.colorize(colorError, label+"[tool error] "), r.colorize(colorError, content))
+		return
+	}
 	_, _ = fmt.Fprintf(r.out, "%s%s\n", r.colorize(colorTool, label), content)
 }
 

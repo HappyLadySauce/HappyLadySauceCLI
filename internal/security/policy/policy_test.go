@@ -166,3 +166,27 @@ func TestSessionGrantsAreScopedToDescriptorKey(t *testing.T) {
 		t.Fatal("session grant leaked to a different resource")
 	}
 }
+
+func TestSessionGrantsReuseNetworkSessionKeyAcrossArgs(t *testing.T) {
+	t.Parallel()
+
+	grants := NewSessionGrants()
+	zhOperation := securitycore.OperationRequest{
+		Capability: capability.Descriptor{
+			Name:   "get_weather",
+			Type:   capability.TypeNativeTool,
+			Source: capability.SourceBuiltin,
+		},
+		OperationKind:        "network.weather",
+		Risk:                 capability.RiskLow,
+		Resources:            []securitycore.OperationResource{{Kind: "url", Value: "https://uapis.cn/api/v1/misc/weather"}},
+		SanitizedArgsSummary: "{city=重庆,lang=zh}",
+	}
+	jaOperation := zhOperation
+	jaOperation.SanitizedArgsSummary = "{city=重庆,lang=ja}"
+
+	grants.Allow(zhOperation)
+	if !grants.IsAllowed(jaOperation) {
+		t.Fatal("expected session grant to cover different network args for same resource")
+	}
+}

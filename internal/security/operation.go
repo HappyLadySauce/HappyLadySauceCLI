@@ -88,6 +88,25 @@ func (r OperationRequest) GrantKey() string {
 	return strings.Join(parts, "|")
 }
 
+// SessionGrantKey returns the approval key stored when the user chooses session scope.
+// SessionGrantKey 返回用户选择 session 审批范围时写入的授权 key。
+func (r OperationRequest) SessionGrantKey() string {
+	parts := []string{
+		escapeGrantKeyComponent(string(r.Capability.Type)),
+		escapeGrantKeyComponent(r.Capability.Source),
+		escapeGrantKeyComponent(r.Capability.Name),
+		escapeGrantKeyComponent(r.OperationKind),
+		escapeGrantKeyComponent(string(r.Risk)),
+	}
+	for _, resource := range sortedResources(r.Resources) {
+		parts = append(parts, escapeGrantKeyComponent(resource.Kind)+"="+escapeGrantKeyComponent(resource.Value))
+	}
+	if r.includeArgsSummaryInSessionGrantKey() {
+		parts = append(parts, "args_sha="+sha256Hex(SanitizeText(r.SanitizedArgsSummary)))
+	}
+	return strings.Join(parts, "|")
+}
+
 // ResourceSummary returns a safe, compact description for prompts and logs.
 // ResourceSummary 返回可用于提示和日志的安全简短资源描述。
 func (r OperationRequest) ResourceSummary() string {
@@ -129,6 +148,13 @@ func (r OperationRequest) includeArgsSummaryInGrantKey() bool {
 	return r.Risk == capability.RiskHigh ||
 		r.OperationKind == OperationCommandRun ||
 		strings.HasPrefix(r.OperationKind, "network.")
+}
+
+func (r OperationRequest) includeArgsSummaryInSessionGrantKey() bool {
+	if strings.HasPrefix(r.OperationKind, "network.") {
+		return false
+	}
+	return r.Risk == capability.RiskHigh || r.OperationKind == OperationCommandRun
 }
 
 // AuditRecord is the sanitized metadata emitted around policy and execution events.

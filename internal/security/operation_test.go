@@ -86,3 +86,28 @@ func TestOperationGrantKeyIncludesArgsForNetworkOperations(t *testing.T) {
 		t.Fatalf("GrantKey() missing args hash: %q", base.GrantKey())
 	}
 }
+
+func TestOperationSessionGrantKeyOmitsArgsForNetworkOperations(t *testing.T) {
+	t.Parallel()
+
+	base := OperationRequest{
+		Capability: capability.Descriptor{
+			Name:   "get_weather",
+			Type:   capability.TypeNativeTool,
+			Source: capability.SourceBuiltin,
+		},
+		OperationKind:        "network.weather",
+		Risk:                 capability.RiskLow,
+		Resources:            []OperationResource{{Kind: "url", Value: "https://uapis.cn/api/v1/misc/weather"}},
+		SanitizedArgsSummary: "{city=北京,lang=zh}",
+	}
+	other := base
+	other.SanitizedArgsSummary = "{city=重庆,lang=ja}"
+
+	if base.SessionGrantKey() != other.SessionGrantKey() {
+		t.Fatalf("SessionGrantKey() = %q, other = %q; want same network session key", base.SessionGrantKey(), other.SessionGrantKey())
+	}
+	if strings.Contains(base.SessionGrantKey(), "args_sha=") {
+		t.Fatalf("SessionGrantKey() should omit args hash for network operations: %q", base.SessionGrantKey())
+	}
+}

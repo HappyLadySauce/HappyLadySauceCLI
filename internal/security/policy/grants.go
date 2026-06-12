@@ -27,7 +27,7 @@ func (g *SessionGrants) Allow(operation securitycore.OperationRequest) {
 	}
 	g.mu.Lock()
 	defer g.mu.Unlock()
-	g.grants[operation.GrantKey()] = struct{}{}
+	g.grants[operation.SessionGrantKey()] = struct{}{}
 }
 
 // IsAllowed reports whether operation has a session-scoped approval.
@@ -38,6 +38,6 @@ func (g *SessionGrants) IsAllowed(operation securitycore.OperationRequest) bool 
 	}
 	g.mu.RLock()
 	defer g.mu.RUnlock()
-	_, ok := g.grants[operation.GrantKey()]
+	_, ok := g.grants[operation.SessionGrantKey()]
 	return ok
 }

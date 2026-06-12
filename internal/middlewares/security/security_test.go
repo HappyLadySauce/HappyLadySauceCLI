@@ -17,6 +17,7 @@ import (
 	"github.com/HappyLadySauce/HappyLadySauceCLI/internal/capability"
 	securitycore "github.com/HappyLadySauce/HappyLadySauceCLI/internal/security"
 	"github.com/HappyLadySauce/HappyLadySauceCLI/internal/security/policy"
+	"github.com/HappyLadySauce/HappyLadySauceCLI/internal/tools/toolresult"
 )
 
 type fakeApprover struct {
@@ -189,11 +190,38 @@ func TestWrapInvokableToolCallRejectsOversizedOutput(t *testing.T) {
 	}
 
 	got, err := wrapped(context.Background(), `{}`)
-	if err == nil {
-		t.Fatal("expected oversized output error")
+	if err != nil {
+		t.Fatalf("wrapped endpoint returned error: %v", err)
 	}
-	if got != "" {
-		t.Fatalf("oversized output leaked result: %q", got)
+	if !toolresult.IsErrorPayload(got) {
+		t.Fatalf("expected soft-fail payload, got %q", got)
+	}
+}
+
+func TestWrapInvokableToolCallSoftFailsEndpointExecutionError(t *testing.T) {
+	t.Parallel()
+
+	registry := newTestRegistry(t, capability.Descriptor{
+		Name:          "get_weather",
+		Type:          capability.TypeNativeTool,
+		Source:        capability.SourceBuiltin,
+		Risk:          capability.RiskLow,
+		DefaultPolicy: capability.DefaultPolicyAllow,
+	})
+	middleware := newTestMiddleware(t, registry, nil)
+	wrapped, err := middleware.WrapInvokableToolCall(context.Background(), func(ctx context.Context, argumentsInJSON string, opts ...tool.Option) (string, error) {
+		return "", errors.New("lang must be zh or en")
+	}, &adk.ToolContext{Name: "get_weather", CallID: "call-1"})
+	if err != nil {
+		t.Fatalf("WrapInvokableToolCall() error = %v", err)
+	}
+
+	got, err := wrapped(context.Background(), `{"city":"重庆","lang":"ja"}`)
+	if err != nil {
+		t.Fatalf("wrapped endpoint returned error: %v", err)
+	}
+	if !toolresult.IsErrorPayload(got) {
+		t.Fatalf("expected soft-fail payload, got %q", got)
 	}
 }
 
@@ -230,8 +258,46 @@ func TestWrapStreamableToolCallRejectsOversizedOutput(t *testing.T) {
 	if got, err := reader.Recv(); err != nil || got != "ok" {
 		t.Fatalf("first Recv() = %q, %v; want ok, nil", got, err)
 	}
-	if _, err := reader.Recv(); err == nil {
-		t.Fatal("expected oversized stream output error")
+	got, err := reader.Recv()
+	if err != nil {
+		t.Fatalf("second Recv() returned error: %v", err)
+	}
+	if !toolresult.IsErrorPayload(got) {
+		t.Fatalf("expected soft-fail payload, got %q", got)
+	}
+	if _, err := reader.Recv(); !errors.Is(err, io.EOF) {
+		t.Fatalf("third Recv() error = %v, want io.EOF", err)
+	}
+}
+
+func TestWrapStreamableToolCallSoftFailsEndpointSetupError(t *testing.T) {
+	t.Parallel()
+
+	registry := newTestRegistry(t, capability.Descriptor{
+		Name:          "stream_tool",
+		Type:          capability.TypeNativeTool,
+		Source:        capability.SourceBuiltin,
+		Risk:          capability.RiskLow,
+		DefaultPolicy: capability.DefaultPolicyAllow,
+	})
+	middleware := newTestMiddleware(t, registry, nil)
+	wrapped, err := middleware.WrapStreamableToolCall(context.Background(), func(ctx context.Context, argumentsInJSON string, opts ...tool.Option) (*schema.StreamReader[string], error) {
+		return nil, errors.New("network timeout")
+	}, &adk.ToolContext{Name: "stream_tool", CallID: "call-1"})
+	if err != nil {
+		t.Fatalf("WrapStreamableToolCall() error = %v", err)
+	}
+	reader, err := wrapped(context.Background(), `{}`)
+	if err != nil {
+		t.Fatalf("wrapped streamable returned error: %v", err)
+	}
+	defer reader.Close()
+	got, err := reader.Recv()
+	if err != nil {
+		t.Fatalf("Recv() returned error: %v", err)
+	}
+	if !toolresult.IsErrorPayload(got) {
+		t.Fatalf("expected soft-fail payload, got %q", got)
 	}
 }
 
@@ -395,6 +461,59 @@ func TestWrapInvokableToolCallCachesSessionApproval(t *testing.T) {
 	}
 }
 
+func TestWrapInvokableToolCallReusesSessionApprovalForDifferentNetworkArgs(t *testing.T) {
+	t.Parallel()
+
+	registry := newTestRegistry(t, capability.Descriptor{
+		Name:          "get_weather",
+		Type:          capability.TypeNativeTool,
+		Source:        capability.SourceBuiltin,
+		Risk:          capability.RiskLow,
+		DefaultPolicy: capability.DefaultPolicyReview,
+		Scopes:        []string{"network:weather"},
+		Resources:     []string{"https://uapis.cn/api/v1/misc/weather"},
+	})
+	approver := &fakeApprover{approve: true, scope: "session"}
+	middleware, err := NewExecutionSecurityMiddleware(Config{
+		Registry: registry,
+		Policy:   policy.NewEngine(),
+		Grants:   policy.NewSessionGrants(),
+		Approver: approver,
+		Builders: map[string]securitycore.OperationBuilder{
+			"get_weather": func(ctx context.Context, request securitycore.OperationRequest, argumentsSummary string) securitycore.OperationRequest {
+				request.OperationKind = "network.weather"
+				request.Resources = []securitycore.OperationResource{{Kind: "url", Value: "https://uapis.cn/api/v1/misc/weather"}}
+				return request
+			},
+		},
+	})
+	if err != nil {
+		t.Fatalf("NewExecutionSecurityMiddleware() error = %v", err)
+	}
+
+	var called atomic.Int32
+	wrapped, err := middleware.WrapInvokableToolCall(context.Background(), func(ctx context.Context, argumentsInJSON string, opts ...tool.Option) (string, error) {
+		called.Add(1)
+		return "ok", nil
+	}, &adk.ToolContext{Name: "get_weather", CallID: "call-1"})
+	if err != nil {
+		t.Fatalf("WrapInvokableToolCall() error = %v", err)
+	}
+
+	if _, err := wrapped(context.Background(), `{"city":"重庆","lang":"zh"}`); err != nil {
+		t.Fatalf("first wrapped endpoint returned error: %v", err)
+	}
+	if _, err := wrapped(context.Background(), `{"city":"重庆","lang":"ja"}`); err != nil {
+		t.Fatalf("second wrapped endpoint returned error: %v", err)
+	}
+	if approver.calls.Load() != 1 {
+		t.Fatalf("approver calls = %d, want 1", approver.calls.Load())
+	}
+	if called.Load() != 2 {
+		t.Fatalf("endpoint calls = %d, want 2", called.Load())
+	}
+}
+
 func TestWrapInvokableToolCallApprovalDefaultsToOneOperation(t *testing.T) {
 	t.Parallel()
 
@@ -488,9 +607,12 @@ func TestWrapInvokableToolCallAppliesTimeout(t *testing.T) {
 		t.Fatalf("WrapInvokableToolCall() error = %v", err)
 	}
 
-	_, err = wrapped(context.Background(), `{}`)
-	if !errors.Is(err, context.DeadlineExceeded) {
-		t.Fatalf("wrapped endpoint error = %v, want context deadline exceeded", err)
+	got, err := wrapped(context.Background(), `{}`)
+	if err != nil {
+		t.Fatalf("wrapped endpoint returned error: %v", err)
+	}
+	if !toolresult.IsErrorPayload(got) {
+		t.Fatalf("expected soft-fail payload, got %q", got)
 	}
 }
 

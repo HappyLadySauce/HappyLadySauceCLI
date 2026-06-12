@@ -37,6 +37,7 @@
 | `internal/security/policy/grants.go` | 会话级审批授权缓存 |
 | `internal/middlewares/security/security.go` | 执行安全中间件（核心） |
 | `internal/middlewares/middleware.go` | 中间件链组装工厂 |
+| `internal/tools/toolresult/toolresult.go` | 工具执行错误 JSON payload 格式化 |
 | `internal/agents/approver.go` | 终端人工审批实现 |
 
 ---
@@ -354,9 +355,11 @@ ensureToolOutputWithinLimit()        ← 输出大小检验
 auditExecution() / auditStreamOpened()  ← 审计日志
 ```
 
+**执行错误软失败：** 策略/审批/路径校验失败仍返回 Go error（阻断执行）。工具 endpoint 执行失败、网络失败或输出超限会被格式化为 `{"ok":false,"error":"..."}` 并以 `status=tool_error_returned recovered=true` 审计后回传给模型，ReAct 循环可继续。
+
 ### 9.4 流式输出的特殊处理
 
-对于流式工具调用，审计时机被推迟到 **流 EOF 消费时** 而非流建立时，以获得准确的执行耗时。使用 `toolOutputBudget` 累加器跟踪流式输出的累计字节数，超出限制时中断流并记录审计。
+对于流式工具调用，审计时机被推迟到 **流 EOF 消费时** 而非流建立时，以获得准确的执行耗时。使用 `toolOutputBudget` 累加器跟踪流式输出的累计字节数，超出限制时写入 error payload chunk 并结束流，而不是以 Go error 中断 ToolNode。
 
 ### 9.5 审批锁机制
 
@@ -393,6 +396,20 @@ Approve capability <tool> (operation=<kind> risk=<level> reason=<reason> resourc
 - 其他 — 拒绝
 
 审批过程使用 `sync.Mutex` 保证与主输入流的互斥。
+
+### 10.3 Session 授权 key
+
+用户选择 `s`（session）后，授权写入 [`SessionGrants`](../../internal/security/policy/grants.go)，查询时使用 `OperationRequest.SessionGrantKey()`（不是单次调用的完整 `GrantKey()`）。
+
+| 操作类型 | SessionGrantKey 是否含 `args_sha` | 含义 |
+|----------|-----------------------------------|------|
+| `network.*`（如 `get_weather`） | 否 | 同工具 + 同 URL 资源在本进程内免审，不同 city/lang 参数共享 session 授权 |
+| `command.run` / `RiskHigh` | 是 | 不同命令参数或高风险参数不自动继承 session 授权 |
+| 其他 | 否 | 按工具 + operation_kind + resources 复用 |
+
+并发审批锁 [`lockApproval`](../../internal/middlewares/security/security.go) 同样基于 `SessionGrantKey()`，避免同工具不同参数并发重复弹窗。
+
+单次 `GrantKey()` 仍含 `args_sha`（network 操作亦然），用于审计与审批提示展示，但不参与 session 存储。
 
 ---
 

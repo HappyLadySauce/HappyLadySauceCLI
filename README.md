@@ -161,13 +161,14 @@ HAPPLADYSAUCECLI_MODEL=<loaded-model-id>
 
 ### 诊断日志
 
-klog 诊断日志默认写入：
+klog 诊断日志**仅写入文件**，不会输出到终端。终端只保留交互对话、工具输出和 `[Stats: ...]` 状态行。
 
-```text
-<home>/logs/happyladysaucecli.log
-```
+| 文件 | 内容 |
+|------|------|
+| `<home>/logs/happyladysaucecli.log` | INFO 级 phase trace（V=1/V=2） |
+| `<home>/logs/happyladysaucecli.error.log` | ERROR 级（工具 recovered、持久化失败等） |
 
-终端只保留交互对话、工具输出和 `[Stats: ...]` 状态行；详细诊断写入日志文件。使用 `make run V=1` 打开因果主链，`make run V=2` 额外打开 model call 输入、compaction 检查、工具事件与持久化细节。
+使用 `make run V=1` 打开因果主链，`make run V=2` 额外打开 model call 输入、compaction 检查、工具事件与持久化细节。
 
 日志行统一带 `phase=` 字段，并尽量附带 `conversation_id` 与 `model_call`，便于 grep 串联一次用户交互：
 
@@ -258,6 +259,15 @@ pkg/
 - 基于 Eino ADK `ChatModelAgent`，启用流式输出
 - 中间件在每次模型调用前重写 `state.Messages`，不修改原始 state
 - 工具调用结果会渲染但不写入 assistant history（仅保留最后一条 assistant 消息）
+- 工具执行/网络/参数错误以 JSON payload 回传给模型，ReAct 可继续；策略拒绝与 LLM API 失败不会退出进程，REPL 仍可用
+
+## 错误处理
+
+| 场景 | 行为 |
+|------|------|
+| 策略/审批拒绝 | 工具不执行，终端提示原因，REPL 继续 |
+| 工具执行/网络/参数/输出超限 | 返回 `{"ok":false,"error":"..."}` 给模型，ReAct 继续 |
+| LLM API 失败 | 终端打印错误，当前回合结束，REPL 继续 |
 
 ## 文档
 
@@ -265,6 +275,7 @@ pkg/
 |------|------|
 | [`pkg/context/compact/README.md`](pkg/context/compact/README.md) | 压缩机制与包边界 |
 | [`internal/terminal/budget/README.md`](internal/terminal/budget/README.md) | 终端统计行格式 |
+| [`docs/security/architecture.md`](docs/security/architecture.md) | 安全架构与审计日志 |
 | [`CLAUDE.md`](CLAUDE.md) | 面向 AI 辅助开发的仓库指南 |
 
 ## 技术栈

@@ -4,6 +4,8 @@ import (
 	"bytes"
 	"context"
 	"errors"
+	"io"
+	"os"
 	"reflect"
 	"strings"
 	"testing"
@@ -133,9 +135,84 @@ func captureKlogOutput(t *testing.T, fn func()) string {
 	defer state.Restore()
 
 	var buf bytes.Buffer
+	if err := applyKlogFileOnly(); err != nil {
+		t.Fatalf("applyKlogFileOnly() error = %v", err)
+	}
 	klog.LogToStderr(false)
-	klog.SetOutput(&buf)
+	klog.SetOutputBySeverity("INFO", &buf)
+	klog.SetOutputBySeverity("ERROR", &buf)
 	fn()
 	klog.Flush()
 	return buf.String()
+}
+
+func TestConfigureFileRoutesInfoAndErrorSeparately(t *testing.T) {
+	logDir := t.TempDir()
+
+	closer, paths, err := configureFile(logDir)
+	if err != nil {
+		t.Fatalf("configureFile() error = %v", err)
+	}
+	defer closer.Close()
+
+	Info(context.Background(), 0, "info only", "phase", "test")
+	Error(context.Background(), errors.New("boom"), "error only", "phase", "test")
+	klog.Flush()
+
+	infoBytes, err := os.ReadFile(paths.InfoPath)
+	if err != nil {
+		t.Fatalf("ReadFile(info) error = %v", err)
+	}
+	errorBytes, err := os.ReadFile(paths.ErrorPath)
+	if err != nil {
+		t.Fatalf("ReadFile(error) error = %v", err)
+	}
+
+	infoText := string(infoBytes)
+	errorText := string(errorBytes)
+	if !strings.Contains(infoText, "info only") {
+		t.Fatalf("info log missing info message: %q", infoText)
+	}
+	if strings.Contains(infoText, "error only") {
+		t.Fatalf("info log should not contain error message: %q", infoText)
+	}
+	if !strings.Contains(errorText, "error only") {
+		t.Fatalf("error log missing error message: %q", errorText)
+	}
+	if strings.Count(errorText, "error only") != 1 {
+		t.Fatalf("error log duplicated error message: %q", errorText)
+	}
+}
+
+func TestConfigureFileDoesNotWriteErrorsToStderr(t *testing.T) {
+	logDir := t.TempDir()
+
+	closer, _, err := configureFile(logDir)
+	if err != nil {
+		t.Fatalf("configureFile() error = %v", err)
+	}
+	defer closer.Close()
+
+	stderrR, stderrW, err := os.Pipe()
+	if err != nil {
+		t.Fatalf("Pipe() error = %v", err)
+	}
+	oldStderr := os.Stderr
+	os.Stderr = stderrW
+	t.Cleanup(func() {
+		os.Stderr = oldStderr
+		_ = stderrW.Close()
+	})
+
+	Error(context.Background(), errors.New("boom"), "stderr should stay clean", "phase", "test")
+	klog.Flush()
+	_ = stderrW.Close()
+
+	stderrOut, err := io.ReadAll(stderrR)
+	if err != nil {
+		t.Fatalf("ReadAll(stderr) error = %v", err)
+	}
+	if len(stderrOut) != 0 {
+		t.Fatalf("expected empty stderr, got %q", string(stderrOut))
+	}
 }

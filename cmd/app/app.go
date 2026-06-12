@@ -48,7 +48,7 @@ func NewAPICommand(ctx context.Context, basename string) *cobra.Command {
 			// Initialize logging after flags are parsed and configuration is loaded.
 			// 在解析完标志并加载配置后初始化日志。
 			logs.InitLogs()
-			logCloser, logPath, err := logger.ConfigureDefaultFile()
+			logCloser, logPaths, err := logger.ConfigureDefaultFile()
 			if err != nil {
 				logs.FlushLogs()
 				return fmt.Errorf("configure logging: %w", err)
@@ -57,7 +57,9 @@ func NewAPICommand(ctx context.Context, basename string) *cobra.Command {
 				logs.FlushLogs()
 				_ = logCloser.Close()
 			}()
-			logger.Info(cmd.Context(), 0, "Logging initialized", "path", logPath)
+			logger.Info(cmd.Context(), 0, "Logging initialized",
+				"info_path", logPaths.InfoPath,
+				"error_path", logPaths.ErrorPath)
 
 			// Validate options after flags and configuration are fully populated.
 			// 在标志与配置全部就绪后校验选项。
