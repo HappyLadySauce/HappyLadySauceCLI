@@ -3,14 +3,14 @@ package terminal
 import (
 	"fmt"
 
-	contextmodel "github.com/HappyLadySauce/HappyLadySauceCLI/internal/context/model"
+	contextstatus "github.com/HappyLadySauce/HappyLadySauceCLI/internal/context/status"
 	terminalbudget "github.com/HappyLadySauce/HappyLadySauceCLI/internal/terminal/budget"
 )
 
 // WriteConversationStatus writes the post-conversation stats line to stderr.
 // WriteConversationStatus 将 conversation 结束后的统计行写入 stderr。
-func (r *Renderer) WriteConversationStatus(conversation *contextmodel.Conversation, maxContext int) {
-	line := r.formatConversationStatusLine(conversation, maxContext)
+func (r *Renderer) WriteConversationStatus(status contextstatus.Status, maxContext int) {
+	line := r.formatConversationStatusLine(status, maxContext)
 	if line == "" {
 		return
 	}
@@ -19,21 +19,21 @@ func (r *Renderer) WriteConversationStatus(conversation *contextmodel.Conversati
 	_, _ = fmt.Fprintln(r.errOut, line)
 }
 
-func (r *Renderer) formatConversationStatusLine(conversation *contextmodel.Conversation, maxContext int) string {
-	plain := terminalbudget.FormatConversationStatusLine(conversation, maxContext)
+func (r *Renderer) formatConversationStatusLine(status contextstatus.Status, maxContext int) string {
+	plain := terminalbudget.FormatConversationStatusLine(status, maxContext)
 	if plain == "" || !r.colorEnabled {
 		return plain
 	}
 
 	prefix := r.colorize(colorStats, "[Stats: ")
-	elapsed := r.colorize(colorStatsElapsed, fmt.Sprintf("elapsed=%s ", terminalbudget.FormatElapsed(conversation.Elapsed.Milliseconds())))
-	prompt := r.colorize(colorStatsPrompt, fmt.Sprintf("prompt↑=%d ", conversation.Prompt))
-	completion := r.colorize(colorStatsCompletion, fmt.Sprintf("completion↓=%d ", conversation.Completion))
-	content := r.colorize(colorStatsContent, fmt.Sprintf("content↑↓=%d", conversation.Total))
+	elapsed := r.colorize(colorStatsElapsed, fmt.Sprintf("elapsed=%s ", terminalbudget.FormatElapsed(status.Elapsed.Milliseconds())))
+	prompt := r.colorize(colorStatsPrompt, fmt.Sprintf("prompt↑=%d ", status.Prompt))
+	completion := r.colorize(colorStatsCompletion, fmt.Sprintf("completion↓=%d ", status.Completion))
+	content := r.colorize(colorStatsContent, fmt.Sprintf("content↑↓=%d", status.Total))
 
 	line := prefix + elapsed + prompt + completion + content
-	if maxContext > 0 && conversation.Total > 0 {
-		contextPart := " " + terminalbudget.FormatContextUsage(float64(conversation.Total)/float64(maxContext)*100, maxContext)
+	if maxContext > 0 && status.Total > 0 {
+		contextPart := " " + terminalbudget.FormatContextUsage(float64(status.Total)/float64(maxContext)*100, maxContext)
 		line += r.colorize(colorStatsWindow, contextPart)
 	}
 	return line + r.colorize(colorStats, "]")

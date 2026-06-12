@@ -1,6 +1,6 @@
 # terminal/budget 包
 
-`terminal/budget` 负责把 `context/model.Conversation` 聚合快照格式化为终端统计行。
+`terminal/budget` 负责把稳定的 `context/status.Status` DTO 格式化为终端统计行。
 
 ## 输出格式
 
@@ -14,6 +14,6 @@
 
 | API | 说明 |
 |-----|------|
-| `FormatConversationStatusLine(conversation, maxContext)` | 生成单行统计字符串 |
+| `FormatConversationStatusLine(status, maxContext)` | 生成单行统计字符串 |
 
 本包只做格式化，不写 stdout/stderr。`Renderer.WriteConversationStatus` 在 `internal/terminal` 中负责写入 `errOut`。

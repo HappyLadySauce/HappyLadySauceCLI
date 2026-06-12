@@ -7,7 +7,7 @@ import (
 	"testing"
 	"time"
 
-	contextmodel "github.com/HappyLadySauce/HappyLadySauceCLI/internal/context/model"
+	contextstatus "github.com/HappyLadySauce/HappyLadySauceCLI/internal/context/status"
 )
 
 func TestRendererWriteConversationStatusUsesErrOut(t *testing.T) {
@@ -26,7 +26,7 @@ func TestRendererWriteConversationStatusUsesErrOut(t *testing.T) {
 		t.Fatalf("stderr buffer = %q, want %q", got, want)
 	}
 
-	renderer.WriteConversationStatus(&contextmodel.Conversation{}, 128000)
+	renderer.WriteConversationStatus(contextstatus.Status{}, 128000)
 	if got := errOut.String(); got != want {
 		t.Fatalf("empty status should not write, got %q", got)
 	}
@@ -47,8 +47,8 @@ func TestRendererWriteConversationStatusAppliesColorOnTerminal(t *testing.T) {
 	}
 }
 
-func testConversation(elapsed time.Duration, prompt, completion, total int) *contextmodel.Conversation {
-	return &contextmodel.Conversation{
+func testConversation(elapsed time.Duration, prompt, completion, total int) contextstatus.Status {
+	return contextstatus.Status{
 		Elapsed:    elapsed,
 		Prompt:     prompt,
 		Completion: completion,

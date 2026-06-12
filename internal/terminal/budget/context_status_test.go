@@ -4,7 +4,7 @@ import (
 	"testing"
 	"time"
 
-	contextmodel "github.com/HappyLadySauce/HappyLadySauceCLI/internal/context/model"
+	contextstatus "github.com/HappyLadySauce/HappyLadySauceCLI/internal/context/status"
 )
 
 func TestFormatElapsed(t *testing.T) {
@@ -43,7 +43,7 @@ func TestFormatConversationStatusLine(t *testing.T) {
 func TestFormatConversationStatusLineEmpty(t *testing.T) {
 	t.Parallel()
 
-	if got := FormatConversationStatusLine(&contextmodel.Conversation{}, 128000); got != "" {
+	if got := FormatConversationStatusLine(contextstatus.Status{}, 128000); got != "" {
 		t.Fatalf("FormatConversationStatusLine(empty) = %q, want empty", got)
 	}
 }
@@ -93,8 +93,8 @@ func TestFormatConversationStatusLinePercentRounding(t *testing.T) {
 	}
 }
 
-func testConversation(elapsed time.Duration, prompt, completion, total int) *contextmodel.Conversation {
-	return &contextmodel.Conversation{
+func testConversation(elapsed time.Duration, prompt, completion, total int) contextstatus.Status {
+	return contextstatus.Status{
 		Elapsed:    elapsed,
 		Prompt:     prompt,
 		Completion: completion,
