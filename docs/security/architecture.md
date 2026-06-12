@@ -351,8 +351,8 @@ authorize()                          ← 策略评估 + 审批
   ├── operationForTool()             ← 构建 OperationRequest
   │   ├── OperationBuilder 补充信息
   │   ├── SanitizeText 脱敏参数
-  │   ├── NormalizePath 校验路径资源
-  │   └── validateOperationScopes 校验 network/url allowlist（见下）
+  │   ├── WorkspaceGuard.NormalizeResources 校验路径资源
+  │   └── security.ValidateNetworkResources 校验 network/url allowlist（见下）
   ├── policy.Evaluate()              ← 策略矩阵决策
   │
   ├── ActionAllow → 直接放行
@@ -387,7 +387,7 @@ auditExecution() / auditStreamOpened()  ← 审计日志
 
 用户/策略拒绝以 `status=denial_returned recovered=true` 审计；工具 endpoint 执行失败以 `status=tool_error_returned recovered=true` 审计后回传给模型，ReAct 循环可继续。
 
-**validateOperationScopes 触发条件**（满足任一即校验 `url` 资源）：
+**ValidateNetworkResources 触发条件**（满足任一即校验 `url` 资源）：
 
 - descriptor `Scopes` 含 `network:` 前缀
 - `OperationKind` 以 `network.` 开头

@@ -8,7 +8,6 @@ import (
 	"errors"
 	"fmt"
 	"io"
-	"strings"
 	"sync"
 	"sync/atomic"
 	"time"
@@ -22,7 +21,6 @@ import (
 	securitycore "github.com/HappyLadySauce/HappyLadySauceCLI/internal/security"
 	"github.com/HappyLadySauce/HappyLadySauceCLI/internal/security/policy"
 	"github.com/HappyLadySauce/HappyLadySauceCLI/internal/tools/toolresult"
-	"github.com/HappyLadySauce/HappyLadySauceCLI/internal/utils/urlscope"
 )
 
 // ApprovalRequest contains the information shown to a human approver.
@@ -425,7 +423,7 @@ func (m *ExecutionSecurityMiddleware) operationForTool(ctx context.Context, tCtx
 		SanitizedArgsSummary: input.Summary,
 	}
 	for _, resource := range descriptor.Resources {
-		operation.Resources = append(operation.Resources, securitycore.OperationResource{Kind: "declared", Value: resource})
+		operation.Resources = append(operation.Resources, securitycore.OperationResource{Kind: securitycore.ResourceKindDeclared, Value: resource})
 	}
 	if builder := m.builders[operation.ToolName]; builder != nil {
 		operation = builder(ctx, operation, input)
@@ -437,70 +435,15 @@ func (m *ExecutionSecurityMiddleware) operationForTool(ctx context.Context, tCtx
 		operation.OperationKind = securitycore.OperationNativeTool
 	}
 	operation.SanitizedArgsSummary = securitycore.SanitizeText(operation.SanitizedArgsSummary)
-	normalized, err := m.normalizeOperationResources(operation.Resources)
+	normalized, err := m.workspaceGuard.NormalizeResources(operation.Resources)
 	if err != nil {
 		return operation, err
 	}
 	operation.Resources = normalized
-	if err := m.validateOperationScopes(operation); err != nil {
+	if err := securitycore.ValidateNetworkResources(operation); err != nil {
 		return operation, err
 	}
 	return operation, nil
-}
-
-func (m *ExecutionSecurityMiddleware) normalizeOperationResources(resources []securitycore.OperationResource) ([]securitycore.OperationResource, error) {
-	if len(resources) == 0 {
-		return nil, nil
-	}
-	next := make([]securitycore.OperationResource, 0, len(resources))
-	for _, resource := range resources {
-		switch resource.Kind {
-		case "path", "file":
-			normalized, err := m.workspaceGuard.NormalizePath(resource.Value)
-			if err != nil {
-				return nil, fmt.Errorf("normalize operation resource: %w", err)
-			}
-			resource.Value = normalized
-		}
-		next = append(next, resource)
-	}
-	return next, nil
-}
-
-func (m *ExecutionSecurityMiddleware) validateOperationScopes(operation securitycore.OperationRequest) error {
-	if !requiresNetworkResourceValidation(operation) {
-		return nil
-	}
-
-	hasURL := false
-	for _, resource := range operation.Resources {
-		if resource.Kind != "url" {
-			continue
-		}
-		hasURL = true
-		if !urlscope.Allowed(resource.Value, operation.Capability.Resources) {
-			return fmt.Errorf("network resource is outside descriptor resources: %s", resource.Value)
-		}
-	}
-	if hasURL && len(operation.Capability.Resources) == 0 {
-		return fmt.Errorf("network resource requires descriptor resources allowlist")
-	}
-	return nil
-}
-
-func requiresNetworkResourceValidation(operation securitycore.OperationRequest) bool {
-	if hasScopePrefix(operation.Capability.Scopes, "network:") {
-		return true
-	}
-	if strings.HasPrefix(operation.OperationKind, "network.") {
-		return true
-	}
-	for _, resource := range operation.Resources {
-		if resource.Kind == "url" {
-			return true
-		}
-	}
-	return false
 }
 
 func (m *ExecutionSecurityMiddleware) finishAuthorize(ctx context.Context, auth authorization, err error) (string, bool, error) {
@@ -683,15 +626,6 @@ func toolOutputSize(value any) int {
 		}
 	}
 	return len(fmt.Sprint(value))
-}
-
-func hasScopePrefix(scopes []string, prefix string) bool {
-	for _, scope := range scopes {
-		if len(scope) >= len(prefix) && scope[:len(prefix)] == prefix {
-			return true
-		}
-	}
-	return false
 }
 
 func operationBuildInput(rawJSON string) securitycore.OperationBuildInput {

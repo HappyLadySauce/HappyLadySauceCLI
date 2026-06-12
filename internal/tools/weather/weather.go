@@ -141,7 +141,7 @@ func OperationBuilder() securitycore.OperationBuilder {
 	return func(ctx context.Context, request securitycore.OperationRequest, input securitycore.OperationBuildInput) securitycore.OperationRequest {
 		request.OperationKind = "network.weather"
 		request.Resources = []securitycore.OperationResource{
-			{Kind: "url", Value: weatherAPIURL},
+			{Kind: securitycore.ResourceKindURL, Value: weatherAPIURL},
 		}
 		request.SanitizedArgsSummary = input.Summary
 		return request

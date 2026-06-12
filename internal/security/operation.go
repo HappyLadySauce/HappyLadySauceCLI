@@ -13,6 +13,21 @@ import (
 )
 
 const (
+	// ResourceKindDeclared represents a descriptor-declared static resource.
+	// ResourceKindDeclared 表示 descriptor 声明的静态资源。
+	ResourceKindDeclared = "declared"
+	// ResourceKindPath represents a local filesystem path resource.
+	// ResourceKindPath 表示本地文件系统路径资源。
+	ResourceKindPath = "path"
+	// ResourceKindFile represents a local filesystem file resource.
+	// ResourceKindFile 表示本地文件系统文件资源。
+	ResourceKindFile = "file"
+	// ResourceKindURL represents a network URL resource.
+	// ResourceKindURL 表示网络 URL 资源。
+	ResourceKindURL = "url"
+)
+
+const (
 	// OperationNativeTool represents a built-in tool call without a narrower operation kind.
 	// OperationNativeTool 表示尚未细分操作类型的内置工具调用。
 	OperationNativeTool = "native.tool"
@@ -79,25 +94,16 @@ type OperationBuilder func(ctx context.Context, request OperationRequest, input 
 // GrantKey returns the stable reusable approval key for the operation.
 // GrantKey 返回该操作对应的稳定可复用授权 key。
 func (r OperationRequest) GrantKey() string {
-	parts := []string{
-		escapeGrantKeyComponent(string(r.Capability.Type)),
-		escapeGrantKeyComponent(r.Capability.Source),
-		escapeGrantKeyComponent(r.Capability.Name),
-		escapeGrantKeyComponent(r.OperationKind),
-		escapeGrantKeyComponent(string(r.Risk)),
-	}
-	for _, resource := range sortedResources(r.Resources) {
-		parts = append(parts, escapeGrantKeyComponent(resource.Kind)+"="+escapeGrantKeyComponent(resource.Value))
-	}
-	if r.includeArgsSummaryInGrantKey() {
-		parts = append(parts, "args_sha="+sha256Hex(SanitizeText(r.SanitizedArgsSummary)))
-	}
-	return strings.Join(parts, "|")
+	return r.grantKey(r.includeArgsSummaryInGrantKey())
 }
 
 // SessionGrantKey returns the approval key stored when the user chooses session scope.
 // SessionGrantKey 返回用户选择 session 审批范围时写入的授权 key。
 func (r OperationRequest) SessionGrantKey() string {
+	return r.grantKey(r.includeArgsSummaryInSessionGrantKey())
+}
+
+func (r OperationRequest) grantKey(includeArgsSummary bool) string {
 	parts := []string{
 		escapeGrantKeyComponent(string(r.Capability.Type)),
 		escapeGrantKeyComponent(r.Capability.Source),
@@ -108,7 +114,7 @@ func (r OperationRequest) SessionGrantKey() string {
 	for _, resource := range sortedResources(r.Resources) {
 		parts = append(parts, escapeGrantKeyComponent(resource.Kind)+"="+escapeGrantKeyComponent(resource.Value))
 	}
-	if r.includeArgsSummaryInSessionGrantKey() {
+	if includeArgsSummary {
 		parts = append(parts, "args_sha="+sha256Hex(SanitizeText(r.SanitizedArgsSummary)))
 	}
 	return strings.Join(parts, "|")
@@ -131,6 +137,29 @@ func (r OperationRequest) ResourceSummary() string {
 		return "[]"
 	}
 	return "[" + strings.Join(values, ",") + "]"
+}
+
+// HasResourceKind reports whether the operation touches at least one resource of kind.
+// HasResourceKind 判断 operation 是否涉及至少一个指定 kind 的资源。
+func (r OperationRequest) HasResourceKind(kind string) bool {
+	for _, resource := range r.Resources {
+		if resource.Kind == kind {
+			return true
+		}
+	}
+	return false
+}
+
+// IsNetworkOperation reports whether policy should treat the operation as network access.
+// IsNetworkOperation 判断策略是否应将 operation 视为网络访问。
+func (r OperationRequest) IsNetworkOperation() bool {
+	return strings.HasPrefix(r.OperationKind, "network.") || capability.HasNetworkScope(r.Capability.Scopes)
+}
+
+// RequiresNetworkResourceValidation reports whether URL allowlist validation is required.
+// RequiresNetworkResourceValidation 判断是否需要进行 URL 白名单校验。
+func (r OperationRequest) RequiresNetworkResourceValidation() bool {
+	return r.IsNetworkOperation() || r.HasResourceKind(ResourceKindURL)
 }
 
 func sortedResources(resources []OperationResource) []OperationResource {

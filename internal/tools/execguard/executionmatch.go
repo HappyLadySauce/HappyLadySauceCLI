@@ -11,7 +11,7 @@ import (
 // MatchAuthorizedURL 判断 resolvedURL 是否与已授权 url 资源匹配。
 func MatchAuthorizedURL(operation securitycore.OperationRequest, resolvedURL string) bool {
 	for _, resource := range operation.Resources {
-		if resource.Kind != "url" {
+		if resource.Kind != securitycore.ResourceKindURL {
 			continue
 		}
 		if urlscope.Allowed(resolvedURL, []string{resource.Value}) {

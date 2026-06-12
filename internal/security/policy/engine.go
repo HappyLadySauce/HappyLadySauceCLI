@@ -3,8 +3,6 @@
 package policy
 
 import (
-	"strings"
-
 	"github.com/HappyLadySauce/HappyLadySauceCLI/internal/capability"
 	securitycore "github.com/HappyLadySauce/HappyLadySauceCLI/internal/security"
 )
@@ -81,7 +79,7 @@ func (e *Engine) Evaluate(request securitycore.OperationRequest) PolicyDecision 
 	if request.OperationKind == securitycore.OperationCommandRun {
 		return review("command_run")
 	}
-	if strings.HasPrefix(request.OperationKind, "network.") || hasScopePrefix(descriptor.Scopes, "network:") {
+	if request.IsNetworkOperation() {
 		if allowLowRiskBuiltinNetwork(request, descriptor, risk) {
 			return PolicyDecision{Action: ActionAllow, Reason: "default_policy_allow"}
 		}
@@ -108,13 +106,4 @@ func allowLowRiskBuiltinNetwork(request securitycore.OperationRequest, descripto
 		return false
 	}
 	return true
-}
-
-func hasScopePrefix(scopes []string, prefix string) bool {
-	for _, scope := range scopes {
-		if strings.HasPrefix(scope, prefix) {
-			return true
-		}
-	}
-	return false
 }
