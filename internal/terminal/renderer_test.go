@@ -26,11 +26,12 @@ func TestRenderer_WritesInteractiveOutput(t *testing.T) {
 	renderer.FinishTurn()
 	renderer.Error(errors.New("boom"))
 
-	wantOut := "User> \nagent> hello world\nagent[thinking]> thinking\nsearch> done\nApprove capability run_shell? [y/N]: Agent exited.\n\n"
+	wantOut := "User> \nagent> hello world\nagent[thinking]> thinking\nsearch> done\nAgent exited.\n\n"
 	if out.String() != wantOut {
 		t.Fatalf("unexpected stdout: %q", out.String())
 	}
-	if errOut.String() != "Error: boom\n" {
+	wantErrOut := "Approve capability run_shell? [y/N]: Error: boom\n"
+	if errOut.String() != wantErrOut {
 		t.Fatalf("unexpected stderr: %q", errOut.String())
 	}
 }

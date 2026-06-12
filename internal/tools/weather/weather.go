@@ -8,6 +8,7 @@ import (
 	"net/http"
 	"net/url"
 	"strings"
+	"time"
 
 	"github.com/cloudwego/eino/components/tool"
 	"github.com/cloudwego/eino/components/tool/utils"
@@ -16,7 +17,11 @@ import (
 )
 
 // https://uapis.cn/docs/api-reference/get-misc-weather
-const weatherAPIURL = "https://uapis.cn/api/v1/misc/weather"
+var weatherAPIURL = "https://uapis.cn/api/v1/misc/weather"
+
+// weatherHTTPClient caps outbound weather API latency to avoid hung tool calls.
+// weatherHTTPClient 限制天气 API 出站请求耗时，避免 tool 调用永久阻塞。
+var weatherHTTPClient = &http.Client{Timeout: 10 * time.Second}
 
 // maxResponseBytes caps the weather API response body size to avoid unbounded reads.
 // maxResponseBytes 限制天气 API 响应体大小，避免无界读取。
@@ -67,11 +72,15 @@ func getWeather(ctx context.Context, req *WeatherToolParams) (*WeatherToolResult
 	}
 	httpReq.Header.Set("Accept", "application/json")
 
-	resp, err := http.DefaultClient.Do(httpReq)
+	resp, err := weatherHTTPClient.Do(httpReq)
 	if err != nil {
 		return nil, fmt.Errorf("call weather API: %w", err)
 	}
 	defer resp.Body.Close()
+
+	if resp.StatusCode < http.StatusOK || resp.StatusCode >= http.StatusMultipleChoices {
+		return nil, fmt.Errorf("weather API returned status %d", resp.StatusCode)
+	}
 
 	body, err := io.ReadAll(io.LimitReader(resp.Body, maxResponseBytes))
 	if err != nil {
@@ -99,13 +108,16 @@ func normalizeLang(lang string) (string, error) {
 	return lang, nil
 }
 
-func GetWeatherTool() tool.InvokableTool {
-	tool, _ := utils.InferTool(
+func GetWeatherTool() (tool.InvokableTool, error) {
+	t, err := utils.InferTool(
 		"get_weather",
 		"天气工具, 获取指定城市的天气信息",
 		getWeather,
 	)
-	return tool
+	if err != nil {
+		return nil, fmt.Errorf("infer get_weather tool: %w", err)
+	}
+	return t, nil
 }
 
 // CapabilityDescriptor returns the security metadata for get_weather.

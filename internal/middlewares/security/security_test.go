@@ -193,6 +193,95 @@ func TestWrapInvokableToolCallSerializesConcurrentApproval(t *testing.T) {
 	}
 }
 
+func TestWrapInvokableToolCallAllowsConcurrentApprovalForDifferentTools(t *testing.T) {
+	t.Parallel()
+
+	registry := newTestRegistry(t,
+		capability.Descriptor{
+			Name:          "review_a",
+			Type:          capability.TypeNativeTool,
+			Source:        capability.SourceBuiltin,
+			Risk:          capability.RiskHigh,
+			DefaultPolicy: capability.DefaultPolicyReview,
+		},
+		capability.Descriptor{
+			Name:          "review_b",
+			Type:          capability.TypeNativeTool,
+			Source:        capability.SourceBuiltin,
+			Risk:          capability.RiskHigh,
+			DefaultPolicy: capability.DefaultPolicyReview,
+		},
+	)
+	approver := &slowApprover{approve: true}
+	middleware := newTestMiddleware(t, registry, approver)
+
+	wrappedA, err := middleware.WrapInvokableToolCall(context.Background(), func(ctx context.Context, argumentsInJSON string, opts ...tool.Option) (string, error) {
+		return "a", nil
+	}, &adk.ToolContext{Name: "review_a", CallID: "call-a"})
+	if err != nil {
+		t.Fatalf("WrapInvokableToolCall(review_a) error = %v", err)
+	}
+	wrappedB, err := middleware.WrapInvokableToolCall(context.Background(), func(ctx context.Context, argumentsInJSON string, opts ...tool.Option) (string, error) {
+		return "b", nil
+	}, &adk.ToolContext{Name: "review_b", CallID: "call-b"})
+	if err != nil {
+		t.Fatalf("WrapInvokableToolCall(review_b) error = %v", err)
+	}
+
+	var wg sync.WaitGroup
+	errs := make(chan error, 2)
+	wg.Add(2)
+	go func() {
+		defer wg.Done()
+		_, err := wrappedA(context.Background(), `{}`)
+		errs <- err
+	}()
+	go func() {
+		defer wg.Done()
+		_, err := wrappedB(context.Background(), `{}`)
+		errs <- err
+	}()
+	wg.Wait()
+	close(errs)
+	for err := range errs {
+		if err != nil {
+			t.Fatalf("wrapped endpoint returned error: %v", err)
+		}
+	}
+
+	if approver.calls.Load() != 2 {
+		t.Fatalf("approver calls = %d, want 2", approver.calls.Load())
+	}
+	if approver.maxActive.Load() != 2 {
+		t.Fatalf("max concurrent approvals = %d, want 2", approver.maxActive.Load())
+	}
+}
+
+func TestWrapInvokableToolCallRequiresApproverForReviewedCapability(t *testing.T) {
+	t.Parallel()
+
+	registry := newTestRegistry(t, capability.Descriptor{
+		Name:          "review_tool",
+		Type:          capability.TypeNativeTool,
+		Source:        capability.SourceBuiltin,
+		Risk:          capability.RiskMedium,
+		DefaultPolicy: capability.DefaultPolicyReview,
+	})
+	middleware := newTestMiddleware(t, registry, nil)
+
+	wrapped, err := middleware.WrapInvokableToolCall(context.Background(), func(ctx context.Context, argumentsInJSON string, opts ...tool.Option) (string, error) {
+		return "ok", nil
+	}, &adk.ToolContext{Name: "review_tool", CallID: "call-1"})
+	if err != nil {
+		t.Fatalf("WrapInvokableToolCall() error = %v", err)
+	}
+
+	_, err = wrapped(context.Background(), `{}`)
+	if err == nil {
+		t.Fatal("expected approval required error")
+	}
+}
+
 func newTestRegistry(t *testing.T, descriptors ...capability.Descriptor) *capability.Registry {
 	t.Helper()
 	registry, err := capability.NewRegistry(descriptors...)

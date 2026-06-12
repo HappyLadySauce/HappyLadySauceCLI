@@ -53,11 +53,11 @@ type Config struct {
 // ExecutionSecurityMiddleware 通过策略与审批检查保护 Eino tool 执行。
 type ExecutionSecurityMiddleware struct {
 	*adk.BaseChatModelAgentMiddleware
-	registry   *capability.Registry
-	policy     *policy.Engine
-	grants     *policy.SessionGrants
-	approver   Approver
-	approvalMu sync.Mutex
+	registry      *capability.Registry
+	policy        *policy.Engine
+	grants        *policy.SessionGrants
+	approver      Approver
+	approvalLocks sync.Map
 }
 
 // NewExecutionSecurityMiddleware creates an execution security middleware.
@@ -85,13 +85,14 @@ func NewExecutionSecurityMiddleware(cfg Config) (*ExecutionSecurityMiddleware, e
 // WrapInvokableToolCall 保护标准 invokable tool 调用。
 func (m *ExecutionSecurityMiddleware) WrapInvokableToolCall(ctx context.Context, endpoint adk.InvokableToolCallEndpoint, tCtx *adk.ToolContext) (adk.InvokableToolCallEndpoint, error) {
 	return func(ctx context.Context, argumentsInJSON string, opts ...tool.Option) (string, error) {
-		if err := m.authorize(ctx, tCtx); err != nil {
+		descriptor, err := m.authorize(ctx, tCtx)
+		if err != nil {
 			return "", err
 		}
 
 		start := time.Now()
 		result, err := endpoint(ctx, argumentsInJSON, opts...)
-		m.auditExecution(ctx, tCtx, start, err)
+		m.auditExecution(ctx, tCtx, descriptor, start, err)
 		return result, err
 	}, nil
 }
@@ -100,14 +101,15 @@ func (m *ExecutionSecurityMiddleware) WrapInvokableToolCall(ctx context.Context,
 // WrapStreamableToolCall 保护标准 streamable tool 调用。
 func (m *ExecutionSecurityMiddleware) WrapStreamableToolCall(ctx context.Context, endpoint adk.StreamableToolCallEndpoint, tCtx *adk.ToolContext) (adk.StreamableToolCallEndpoint, error) {
 	return func(ctx context.Context, argumentsInJSON string, opts ...tool.Option) (*schema.StreamReader[string], error) {
-		if err := m.authorize(ctx, tCtx); err != nil {
+		descriptor, err := m.authorize(ctx, tCtx)
+		if err != nil {
 			return nil, err
 		}
 
 		start := time.Now()
 		result, err := endpoint(ctx, argumentsInJSON, opts...)
 		if err != nil {
-			m.auditExecution(ctx, tCtx, start, err)
+			m.auditExecution(ctx, tCtx, descriptor, start, err)
 			return nil, err
 		}
 
@@ -118,7 +120,7 @@ func (m *ExecutionSecurityMiddleware) WrapStreamableToolCall(ctx context.Context
 		doAudit := func(streamErr error) {
 			if !audited {
 				audited = true
-				m.auditExecution(ctx, tCtx, start, streamErr)
+				m.auditExecution(ctx, tCtx, descriptor, start, streamErr)
 			}
 		}
 		return schema.StreamReaderWithConvert(result,
@@ -139,13 +141,14 @@ func (m *ExecutionSecurityMiddleware) WrapStreamableToolCall(ctx context.Context
 // WrapEnhancedInvokableToolCall 保护 enhanced invokable tool 调用。
 func (m *ExecutionSecurityMiddleware) WrapEnhancedInvokableToolCall(ctx context.Context, endpoint adk.EnhancedInvokableToolCallEndpoint, tCtx *adk.ToolContext) (adk.EnhancedInvokableToolCallEndpoint, error) {
 	return func(ctx context.Context, toolArgument *schema.ToolArgument, opts ...tool.Option) (*schema.ToolResult, error) {
-		if err := m.authorize(ctx, tCtx); err != nil {
+		descriptor, err := m.authorize(ctx, tCtx)
+		if err != nil {
 			return nil, err
 		}
 
 		start := time.Now()
 		result, err := endpoint(ctx, toolArgument, opts...)
-		m.auditExecution(ctx, tCtx, start, err)
+		m.auditExecution(ctx, tCtx, descriptor, start, err)
 		return result, err
 	}, nil
 }
@@ -154,14 +157,15 @@ func (m *ExecutionSecurityMiddleware) WrapEnhancedInvokableToolCall(ctx context.
 // WrapEnhancedStreamableToolCall 保护 enhanced streamable tool 调用。
 func (m *ExecutionSecurityMiddleware) WrapEnhancedStreamableToolCall(ctx context.Context, endpoint adk.EnhancedStreamableToolCallEndpoint, tCtx *adk.ToolContext) (adk.EnhancedStreamableToolCallEndpoint, error) {
 	return func(ctx context.Context, toolArgument *schema.ToolArgument, opts ...tool.Option) (*schema.StreamReader[*schema.ToolResult], error) {
-		if err := m.authorize(ctx, tCtx); err != nil {
+		descriptor, err := m.authorize(ctx, tCtx)
+		if err != nil {
 			return nil, err
 		}
 
 		start := time.Now()
 		result, err := endpoint(ctx, toolArgument, opts...)
 		if err != nil {
-			m.auditExecution(ctx, tCtx, start, err)
+			m.auditExecution(ctx, tCtx, descriptor, start, err)
 			return nil, err
 		}
 
@@ -172,7 +176,7 @@ func (m *ExecutionSecurityMiddleware) WrapEnhancedStreamableToolCall(ctx context
 		doAudit := func(streamErr error) {
 			if !audited {
 				audited = true
-				m.auditExecution(ctx, tCtx, start, streamErr)
+				m.auditExecution(ctx, tCtx, descriptor, start, streamErr)
 			}
 		}
 		return schema.StreamReaderWithConvert(result,
@@ -189,31 +193,31 @@ func (m *ExecutionSecurityMiddleware) WrapEnhancedStreamableToolCall(ctx context
 	}, nil
 }
 
-func (m *ExecutionSecurityMiddleware) authorize(ctx context.Context, tCtx *adk.ToolContext) error {
+func (m *ExecutionSecurityMiddleware) authorize(ctx context.Context, tCtx *adk.ToolContext) (capability.Descriptor, error) {
 	descriptor, registered := m.descriptorForTool(tCtx)
 	decision := m.policy.Evaluate(descriptor, registered)
 
 	switch decision.Action {
 	case policy.ActionAllow:
 		m.auditDecision(ctx, tCtx, descriptor, decision, "none", "allowed")
-		return nil
+		return descriptor, nil
 	case policy.ActionDeny:
 		m.auditDecision(ctx, tCtx, descriptor, decision, "none", "denied")
-		return fmt.Errorf("capability denied by policy: %s", toolName(tCtx))
+		return descriptor, fmt.Errorf("capability denied by policy: %s", toolName(tCtx))
 	case policy.ActionReview:
 		if m.grants.IsAllowed(descriptor) {
 			m.auditDecision(ctx, tCtx, descriptor, decision, "session", "allowed")
-			return nil
+			return descriptor, nil
 		}
-		m.approvalMu.Lock()
-		defer m.approvalMu.Unlock()
+		unlock := m.lockApproval(descriptor.GrantKey())
+		defer unlock()
 		if m.grants.IsAllowed(descriptor) {
 			m.auditDecision(ctx, tCtx, descriptor, decision, "session", "allowed")
-			return nil
+			return descriptor, nil
 		}
 		if m.approver == nil {
 			m.auditDecision(ctx, tCtx, descriptor, decision, "none", "denied")
-			return fmt.Errorf("capability approval required: %s", toolName(tCtx))
+			return descriptor, fmt.Errorf("capability approval required: %s", toolName(tCtx))
 		}
 		approval, err := m.approver.Approve(ctx, ApprovalRequest{
 			ToolName:   toolName(tCtx),
@@ -223,18 +227,25 @@ func (m *ExecutionSecurityMiddleware) authorize(ctx context.Context, tCtx *adk.T
 		})
 		if err != nil {
 			m.auditDecision(ctx, tCtx, descriptor, decision, "none", "denied")
-			return fmt.Errorf("approve capability: %w", err)
+			return descriptor, fmt.Errorf("approve capability: %w", err)
 		}
 		if !approval.Approved {
 			m.auditDecision(ctx, tCtx, descriptor, decision, "none", "denied")
-			return fmt.Errorf("capability denied by user: %s", toolName(tCtx))
+			return descriptor, fmt.Errorf("capability denied by user: %s", toolName(tCtx))
 		}
 		m.grants.Allow(descriptor)
 		m.auditDecision(ctx, tCtx, descriptor, decision, "session", "approved")
-		return nil
+		return descriptor, nil
 	default:
-		return fmt.Errorf("unknown policy action: %s", decision.Action)
+		return descriptor, fmt.Errorf("unknown policy action: %s", decision.Action)
 	}
+}
+
+func (m *ExecutionSecurityMiddleware) lockApproval(grantKey string) func() {
+	value, _ := m.approvalLocks.LoadOrStore(grantKey, &sync.Mutex{})
+	mu := value.(*sync.Mutex)
+	mu.Lock()
+	return mu.Unlock
 }
 
 func (m *ExecutionSecurityMiddleware) descriptorForTool(tCtx *adk.ToolContext) (capability.Descriptor, bool) {
@@ -260,8 +271,7 @@ func (m *ExecutionSecurityMiddleware) auditDecision(ctx context.Context, tCtx *a
 		"status", status)
 }
 
-func (m *ExecutionSecurityMiddleware) auditExecution(ctx context.Context, tCtx *adk.ToolContext, start time.Time, err error) {
-	descriptor, _ := m.descriptorForTool(tCtx)
+func (m *ExecutionSecurityMiddleware) auditExecution(ctx context.Context, tCtx *adk.ToolContext, descriptor capability.Descriptor, start time.Time, err error) {
 	kvs := []any{
 		"phase", "capability_call",
 		"tool_name", toolName(tCtx),

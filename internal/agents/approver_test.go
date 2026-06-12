@@ -37,8 +37,8 @@ func TestTerminalApproverApprovesYesResponse(t *testing.T) {
 	if !decision.Approved {
 		t.Fatal("expected approval")
 	}
-	if !strings.Contains(out.String(), "Approve capability run_shell") {
-		t.Fatalf("approval prompt not rendered: %q", out.String())
+	if !strings.Contains(errOut.String(), "Approve capability run_shell") {
+		t.Fatalf("approval prompt not rendered: %q", errOut.String())
 	}
 }
 

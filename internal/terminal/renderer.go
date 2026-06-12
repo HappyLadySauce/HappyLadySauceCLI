@@ -203,7 +203,7 @@ func (r *Renderer) ToolMessage(toolName, content string) {
 func (r *Renderer) ApprovalPrompt(message string) {
 	r.mu.Lock()
 	defer r.mu.Unlock()
-	_, _ = fmt.Fprint(r.out, r.colorize(colorStats, message))
+	_, _ = fmt.Fprint(r.errOut, r.colorize(colorStats, message))
 }
 
 // EmitAgentEvent handles a structured agent stream event.

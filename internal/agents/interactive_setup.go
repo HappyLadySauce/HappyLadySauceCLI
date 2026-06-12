@@ -34,9 +34,7 @@ func newInteractiveRuntime(ctx context.Context, cfg *config.Config, in io.Reader
 	}
 
 	inputCtx, cancelInput := context.WithCancel(ctx)
-	promptReader := input.NewPromptReader(inputCtx, in)
 	renderer := terminal.NewRenderer(out, errOut)
-	agentTools := tools.NewAgentTools()
 
 	committed := false
 	defer func() {
@@ -49,6 +47,12 @@ func newInteractiveRuntime(ctx context.Context, cfg *config.Config, in io.Reader
 	capRegistry, err := tools.NewCapabilityRegistry()
 	if err != nil {
 		return nil, fmt.Errorf("new capability registry: %w", err)
+	}
+
+	promptReader := input.NewPromptReader(inputCtx, in)
+	agentTools, err := tools.NewAgentTools()
+	if err != nil {
+		return nil, fmt.Errorf("new agent tools: %w", err)
 	}
 
 	handlers, err := middlewares.NewChatModelAgentMiddlewares(middlewares.ChatModelAgentMiddlewareConfig{

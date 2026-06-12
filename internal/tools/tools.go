@@ -11,14 +11,18 @@ import (
 
 // NewAgentTools returns the Eino tools available to the agent.
 // NewAgentTools 返回 agent 可用的 Eino tools。
-func NewAgentTools() adk.ToolsConfig {
+func NewAgentTools() (adk.ToolsConfig, error) {
+	weatherTool, err := weather.GetWeatherTool()
+	if err != nil {
+		return adk.ToolsConfig{}, err
+	}
 	return adk.ToolsConfig{
 		ToolsNodeConfig: compose.ToolsNodeConfig{
 			Tools: []tool.BaseTool{
-				weather.GetWeatherTool(),
+				weatherTool,
 			},
 		},
-	}
+	}, nil
 }
 
 // NewCapabilityRegistry returns descriptors for the tools exposed by NewAgentTools.

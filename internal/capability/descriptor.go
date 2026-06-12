@@ -89,7 +89,7 @@ func (d Descriptor) Validate() error {
 	if strings.TrimSpace(d.Name) == "" {
 		errs = append(errs, errors.New("capability name is required"))
 	}
-	if !validCapabilityType(d.Type) || d.Type == TypeUnknown {
+	if !validCapabilityType(d.Type) {
 		errs = append(errs, fmt.Errorf("invalid capability type: %s", d.Type))
 	}
 	if strings.TrimSpace(d.Source) == "" {
@@ -131,7 +131,7 @@ func UnknownDescriptor(name string) Descriptor {
 
 func validCapabilityType(value CapabilityType) bool {
 	switch value {
-	case TypeNativeTool, TypeMCPTool, TypeMCPResource, TypeMCPPrompt, TypeSkill, TypeUnknown:
+	case TypeNativeTool, TypeMCPTool, TypeMCPResource, TypeMCPPrompt, TypeSkill:
 		return true
 	default:
 		return false

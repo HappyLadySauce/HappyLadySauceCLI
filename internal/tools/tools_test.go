@@ -10,7 +10,10 @@ import (
 func TestNewAgentToolsExposesWeatherTool(t *testing.T) {
 	t.Parallel()
 
-	cfg := NewAgentTools()
+	cfg, err := NewAgentTools()
+	if err != nil {
+		t.Fatalf("NewAgentTools() error = %v", err)
+	}
 	if len(cfg.Tools) != 1 {
 		t.Fatalf("tool count = %d, want 1", len(cfg.Tools))
 	}
