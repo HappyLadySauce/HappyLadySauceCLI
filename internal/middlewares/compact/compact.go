@@ -1,4 +1,4 @@
-package content
+package compact
 
 import (
 	"context"
@@ -11,20 +11,20 @@ import (
 	"github.com/HappyLadySauce/HappyLadySauceCLI/pkg/context/compact"
 )
 
-// contentMiddleware is a ChatModelAgent middleware for context-window compaction.
-// contentMiddleware 是一个用于上下文窗口压缩的 ChatModelAgent middleware。
-type contentMiddleware struct {
+// compactMiddleware is a ChatModelAgent middleware for context-window compaction.
+// compactMiddleware 是一个用于上下文窗口压缩的 ChatModelAgent middleware。
+type compactMiddleware struct {
 	*adk.BaseChatModelAgentMiddleware
 	compactor *compact.Compactor
 }
 
-// NewContentMiddleware creates a ChatModelAgent middleware for context-window compaction.
-// NewContentMiddleware 创建用于上下文窗口压缩的 ChatModelAgent middleware。
-func NewContentMiddleware(compactor *compact.Compactor) (adk.ChatModelAgentMiddleware, error) {
+// NewCompactMiddleware creates a ChatModelAgent middleware for context-window compaction.
+// NewCompactMiddleware 创建用于上下文窗口压缩的 ChatModelAgent middleware。
+func NewCompactMiddleware(compactor *compact.Compactor) (adk.ChatModelAgentMiddleware, error) {
 	if compactor == nil {
-		return nil, errors.New("content middleware compactor is required")
+		return nil, errors.New("compact middleware compactor is required")
 	}
-	return &contentMiddleware{
+	return &compactMiddleware{
 		BaseChatModelAgentMiddleware: &adk.BaseChatModelAgentMiddleware{},
 		compactor:                    compactor,
 	}, nil
@@ -32,7 +32,7 @@ func NewContentMiddleware(compactor *compact.Compactor) (adk.ChatModelAgentMiddl
 
 // BeforeModelRewriteState compacts model-visible messages before each model call.
 // BeforeModelRewriteState 在每次模型调用前压缩模型可见消息。
-func (m *contentMiddleware) BeforeModelRewriteState(ctx context.Context, state *adk.ChatModelAgentState, mc *adk.ModelContext) (context.Context, *adk.ChatModelAgentState, error) {
+func (m *compactMiddleware) BeforeModelRewriteState(ctx context.Context, state *adk.ChatModelAgentState, mc *adk.ModelContext) (context.Context, *adk.ChatModelAgentState, error) {
 	if state == nil || len(state.Messages) == 0 {
 		return ctx, state, nil
 	}

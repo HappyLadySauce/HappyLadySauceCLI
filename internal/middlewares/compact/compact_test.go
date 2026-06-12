@@ -1,4 +1,4 @@
-package content
+package compact
 
 import (
 	"context"
@@ -10,9 +10,9 @@ import (
 	"github.com/cloudwego/eino/components/model"
 	"github.com/cloudwego/eino/schema"
 
-	"github.com/HappyLadySauce/HappyLadySauceCLI/pkg/context/compact"
 	contextmodel "github.com/HappyLadySauce/HappyLadySauceCLI/internal/context/model"
 	contexttracker "github.com/HappyLadySauce/HappyLadySauceCLI/internal/context/tracker"
+	"github.com/HappyLadySauce/HappyLadySauceCLI/pkg/context/compact"
 )
 
 type fakeChatModel struct {
@@ -31,9 +31,9 @@ func (m *fakeChatModel) Stream(ctx context.Context, input []*schema.Message, opt
 	return schema.StreamReaderFromArray([]*schema.Message{}), nil
 }
 
-func TestNewContentMiddlewareRequiresCompactor(t *testing.T) {
-	if _, err := NewContentMiddleware(nil); err == nil {
-		t.Fatal("NewContentMiddleware(nil) error = nil, want error")
+func TestNewCompactMiddlewareRequiresCompactor(t *testing.T) {
+	if _, err := NewCompactMiddleware(nil); err == nil {
+		t.Fatal("NewCompactMiddleware(nil) error = nil, want error")
 	}
 }
 
@@ -146,9 +146,9 @@ func newTestMiddleware(t *testing.T, chatModel model.BaseChatModel, maxContext, 
 	if err != nil {
 		t.Fatalf("NewCompactor() error = %v", err)
 	}
-	middleware, err := NewContentMiddleware(compactor)
+	middleware, err := NewCompactMiddleware(compactor)
 	if err != nil {
-		t.Fatalf("NewContentMiddleware() error = %v", err)
+		t.Fatalf("NewCompactMiddleware() error = %v", err)
 	}
 	return middleware
 }

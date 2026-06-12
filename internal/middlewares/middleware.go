@@ -6,9 +6,9 @@ import (
 	"github.com/cloudwego/eino/adk"
 	"github.com/cloudwego/eino/components/model"
 
-	"github.com/HappyLadySauce/HappyLadySauceCLI/pkg/context/compact"
-	contentmiddleware "github.com/HappyLadySauce/HappyLadySauceCLI/internal/middlewares/content"
+	compactmiddleware "github.com/HappyLadySauce/HappyLadySauceCLI/internal/middlewares/compact"
 	usagemiddleware "github.com/HappyLadySauce/HappyLadySauceCLI/internal/middlewares/usage"
+	"github.com/HappyLadySauce/HappyLadySauceCLI/pkg/context/compact"
 )
 
 // ChatModelAgentMiddlewareConfig groups dependencies for the default agent middleware chain.
@@ -33,11 +33,11 @@ func NewChatModelAgentMiddlewares(cfg ChatModelAgentMiddlewareConfig) ([]adk.Cha
 		return nil, fmt.Errorf("new context compactor: %w", err)
 	}
 
-	contentMiddleware, err := contentmiddleware.NewContentMiddleware(compactor)
+	compactMiddleware, err := compactmiddleware.NewCompactMiddleware(compactor)
 	if err != nil {
-		return nil, fmt.Errorf("new content middleware: %w", err)
+		return nil, fmt.Errorf("new compact middleware: %w", err)
 	}
 	usageMiddleware := usagemiddleware.NewUsageMiddleware()
 
-	return []adk.ChatModelAgentMiddleware{contentMiddleware, usageMiddleware}, nil
+	return []adk.ChatModelAgentMiddleware{compactMiddleware, usageMiddleware}, nil
 }
