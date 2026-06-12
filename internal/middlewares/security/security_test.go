@@ -136,6 +136,8 @@ func TestWrapStreamableToolCallCanBeClosedWithoutConsumption(t *testing.T) {
 		t.Fatalf("wrapped streamable returned error: %v", err)
 	}
 	reader.Close()
+	// capability_call audit on Close-without-Recv is guaranteed by proxyStreamReaderWithFinalize;
+	// see TestProxyStreamReaderWithFinalizeRunsOnCloseWithoutConsumption.
 }
 
 func (a *fakeApprover) Approve(ctx context.Context, req ApprovalRequest) (ApprovalDecision, error) {

@@ -3,7 +3,17 @@
 > **日期**: 2026-06-12 21:45  
 > **基准**: `review/archives/2026-06-12_2130_MEDIUM_security-logging-observability-audit.md`  
 > **审查者**: Cursor Agent  
-> **测试**: `make test` 全绿（30 packages）
+> **测试**: `make test` 全绿（30 packages）  
+> **修复完成**: 2026-06-12 — N1（README phase 表）、N2（流式 Close 审计）已落地
+
+---
+
+## 修复记录（2026-06-12）
+
+| 项 | 修复 |
+|----|------|
+| N1 | `README.md` 诊断日志 phase 表与示例对齐 `AGENTS.md`（`user_prompt_len`、V=1 tool `agent_event`、`capability_*`、`session_close`） |
+| N2 | `stream_proxy.go` 新增 `proxyStreamReaderWithFinalize`；`WrapStreamable*` / `WrapEnhancedStreamable*` 在 Close 未消费时仍触发 `capability_call` 审计；单测覆盖 |
 
 ---
 

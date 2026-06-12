@@ -189,26 +189,29 @@ func (m *ExecutionSecurityMiddleware) WrapStreamableToolCall(ctx context.Context
 				m.auditExecution(ctx, auth, start, streamErr, int(outputBudget.Used()), recovered)
 			}
 		}
-		return schema.StreamReaderWithConvert(result,
-			func(s string) (string, error) {
-				if streamStopped.Load() {
-					return "", io.EOF
-				}
-				if limitErr := outputBudget.Add(s); limitErr != nil {
-					streamStopped.Store(true)
-					doAudit(limitErr, true)
-					return toolresult.FormatError(limitErr), nil
-				}
-				return s, nil
-			},
-			schema.WithOnEOF(func() (any, error) {
-				doAudit(nil, false)
-				return nil, io.EOF
-			}),
-			schema.WithErrWrapper(func(err error) error {
-				doAudit(err, false)
-				return err
-			}),
+		return proxyStreamReaderWithFinalize(
+			schema.StreamReaderWithConvert(result,
+				func(s string) (string, error) {
+					if streamStopped.Load() {
+						return "", io.EOF
+					}
+					if limitErr := outputBudget.Add(s); limitErr != nil {
+						streamStopped.Store(true)
+						doAudit(limitErr, true)
+						return toolresult.FormatError(limitErr), nil
+					}
+					return s, nil
+				},
+				schema.WithOnEOF(func() (any, error) {
+					doAudit(nil, false)
+					return nil, io.EOF
+				}),
+				schema.WithErrWrapper(func(err error) error {
+					doAudit(err, false)
+					return err
+				}),
+			),
+			func() { doAudit(nil, false) },
 		), nil
 	}, nil
 }
@@ -282,26 +285,29 @@ func (m *ExecutionSecurityMiddleware) WrapEnhancedStreamableToolCall(ctx context
 				m.auditExecution(ctx, auth, start, streamErr, int(outputBudget.Used()), recovered)
 			}
 		}
-		return schema.StreamReaderWithConvert(result,
-			func(tr *schema.ToolResult) (*schema.ToolResult, error) {
-				if streamStopped.Load() {
+		return proxyStreamReaderWithFinalize(
+			schema.StreamReaderWithConvert(result,
+				func(tr *schema.ToolResult) (*schema.ToolResult, error) {
+					if streamStopped.Load() {
+						return nil, io.EOF
+					}
+					if limitErr := outputBudget.Add(tr); limitErr != nil {
+						streamStopped.Store(true)
+						doAudit(limitErr, true)
+						return errorToolResult(limitErr), nil
+					}
+					return tr, nil
+				},
+				schema.WithOnEOF(func() (any, error) {
+					doAudit(nil, false)
 					return nil, io.EOF
-				}
-				if limitErr := outputBudget.Add(tr); limitErr != nil {
-					streamStopped.Store(true)
-					doAudit(limitErr, true)
-					return errorToolResult(limitErr), nil
-				}
-				return tr, nil
-			},
-			schema.WithOnEOF(func() (any, error) {
-				doAudit(nil, false)
-				return nil, io.EOF
-			}),
-			schema.WithErrWrapper(func(err error) error {
-				doAudit(err, false)
-				return err
-			}),
+				}),
+				schema.WithErrWrapper(func(err error) error {
+					doAudit(err, false)
+					return err
+				}),
+			),
+			func() { doAudit(nil, false) },
 		), nil
 	}, nil
 }

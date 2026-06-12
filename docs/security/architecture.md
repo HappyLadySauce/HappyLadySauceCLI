@@ -371,6 +371,8 @@ auditExecution() / auditStreamOpened()  ← 审计日志
 
 对于流式工具调用，审计时机被推迟到 **流 EOF 消费时** 而非流建立时，以获得准确的执行耗时。使用 `toolOutputBudget` 累加器跟踪流式输出的累计字节数，超出限制时写入 error payload chunk 并结束流，而不是以 Go error 中断 ToolNode。
 
+若 consumer 在未 Recv 的情况下直接 `Close()`，`proxyStreamReaderWithFinalize` 会在转发 goroutine 退出时触发 `capability_call` 完成审计（`doAudit` 通过 atomic 保证至多一次）。
+
 ### 9.5 审批锁机制
 
 `approvalLocks` 提供按 GrantKey 的并发审批串行化：
