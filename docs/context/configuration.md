@@ -71,7 +71,7 @@
 
 ## 5. 本地数据目录
 
-当前实现不暴露 `DBPath`、`db_path` 或 `data_dir`。需要 SQLite 的模块统一通过 `internal/storage/sqlite` 派生默认目录：
+当前实现不暴露 `DBPath`、`db_path` 或 `data_dir`。需要 SQLite 的模块统一通过 `pkg/storage/sqlite` 派生默认目录：
 
 | 资源 | 默认路径 |
 |------|----------|
@@ -138,7 +138,7 @@ type Config struct {
 }
 ```
 
-压缩配置和本地 context DB 路径不进入 `pkg/options`。压缩器通过 `ModelOptions` 和内部默认策略初始化，SQLite 路径通过 `internal/storage/sqlite` 派生。
+压缩配置和本地 context DB 路径不进入 `pkg/options`。压缩器通过 `ModelOptions` 和内部默认策略初始化，SQLite 路径通过 `pkg/storage/sqlite` 派生。
 
 ---
 

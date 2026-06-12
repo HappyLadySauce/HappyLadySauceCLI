@@ -18,10 +18,11 @@ import (
 	"github.com/HappyLadySauce/HappyLadySauceCLI/internal/input"
 	"github.com/HappyLadySauce/HappyLadySauceCLI/internal/middlewares"
 	"github.com/HappyLadySauce/HappyLadySauceCLI/internal/prompts"
-	storagesqlite "github.com/HappyLadySauce/HappyLadySauceCLI/pkg/storage/sqlite"
 	"github.com/HappyLadySauce/HappyLadySauceCLI/internal/terminal"
 	"github.com/HappyLadySauce/HappyLadySauceCLI/internal/tools"
+	"github.com/HappyLadySauce/HappyLadySauceCLI/migrations"
 	"github.com/HappyLadySauce/HappyLadySauceCLI/pkg/config"
+	storagesqlite "github.com/HappyLadySauce/HappyLadySauceCLI/pkg/storage/sqlite"
 )
 
 func RunLoop(ctx context.Context, cfg *config.Config) error {
@@ -44,10 +45,10 @@ func RunLoop(ctx context.Context, cfg *config.Config) error {
 		}
 	}()
 
-	contextStore := contextstore.New(contextDB)
-	if err := contextStore.Migrate(ctx); err != nil {
-		return fmt.Errorf("migrate context store: %w", err)
+	if err := migrations.Apply(ctx, contextDB); err != nil {
+		return fmt.Errorf("apply database migrations: %w", err)
 	}
+	contextStore := contextstore.New(contextDB)
 	sessionTracker := contexttracker.New()
 
 	agentInstruction := prompts.SystemPrompt

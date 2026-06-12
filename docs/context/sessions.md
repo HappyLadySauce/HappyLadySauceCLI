@@ -26,7 +26,7 @@
 | WAL 文件 | `context.sqlite-wal` | Write-Ahead Log |
 | SHM 文件 | `context.sqlite-shm` | 共享内存 |
 
-v1 不暴露 `sessions.db_path`、`DBPath` 或 `data_dir`；默认路径由 `internal/storage/sqlite` 统一派生。
+v1 不暴露 `sessions.db_path`、`DBPath` 或 `data_dir`；默认路径由 `pkg/storage/sqlite` 统一派生。
 
 ---
 

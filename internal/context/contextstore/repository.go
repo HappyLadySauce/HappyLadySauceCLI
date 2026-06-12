@@ -5,7 +5,6 @@ package contextstore
 import (
 	"context"
 	"database/sql"
-	"errors"
 	"fmt"
 	"time"
 
@@ -13,106 +12,21 @@ import (
 )
 
 // Repository stores context hierarchy records in a caller-owned SQL database.
-// The current schema is SQLite-oriented; connection creation belongs to internal/storage/sqlite.
+// The current schema is SQLite-oriented; connection creation belongs to pkg/storage/sqlite.
 //
 // Repository 将上下文层级记录存入调用方持有的 SQL 数据库。
-// 当前 schema 面向 SQLite；连接创建由 internal/storage/sqlite 负责。
+// 当前 schema 面向 SQLite；连接创建由 pkg/storage/sqlite 负责。
 type Repository struct {
 	db *sql.DB
 }
 
 // New creates a context repository from an existing database connection.
-// The caller must run Migrate before saving records and must close the database.
+// The caller must apply root migrations before saving records and must close the database.
 //
 // New 基于已有数据库连接创建上下文 repository。
-// 调用方必须先执行 Migrate 再保存记录，并负责关闭数据库。
+// 调用方必须先执行根 migrations 再保存记录，并负责关闭数据库。
 func New(db *sql.DB) *Repository {
 	return &Repository{db: db}
-}
-
-// Migrate applies the context persistence schema.
-// It is safe to call multiple times during startup.
-//
-// Migrate 应用上下文持久化 schema。
-// 启动阶段可安全重复调用。
-func (r *Repository) Migrate(ctx context.Context) error {
-	if r == nil || r.db == nil {
-		return errors.New("context store database is nil")
-	}
-	if _, err := r.db.ExecContext(ctx, `
-CREATE TABLE IF NOT EXISTS context_sessions (
-	id TEXT PRIMARY KEY,
-	started_at TEXT NOT NULL,
-	completed_at TEXT,
-	elapsed_ms INTEGER NOT NULL DEFAULT 0,
-	prompt_tokens INTEGER NOT NULL DEFAULT 0,
-	completion_tokens INTEGER NOT NULL DEFAULT 0,
-	total_tokens INTEGER NOT NULL DEFAULT 0,
-	conversation_count INTEGER NOT NULL DEFAULT 0,
-	status TEXT NOT NULL,
-	error TEXT NOT NULL DEFAULT '',
-	updated_at TEXT NOT NULL
-);
-
-CREATE TABLE IF NOT EXISTS context_conversations (
-	id TEXT PRIMARY KEY,
-	session_id TEXT NOT NULL,
-	sequence INTEGER NOT NULL,
-	started_at TEXT NOT NULL,
-	completed_at TEXT,
-	elapsed_ms INTEGER NOT NULL DEFAULT 0,
-	prompt_tokens INTEGER NOT NULL DEFAULT 0,
-	completion_tokens INTEGER NOT NULL DEFAULT 0,
-	total_tokens INTEGER NOT NULL DEFAULT 0,
-	turn_count INTEGER NOT NULL DEFAULT 0,
-	message_count INTEGER NOT NULL DEFAULT 0,
-	status TEXT NOT NULL,
-	error TEXT NOT NULL DEFAULT '',
-	updated_at TEXT NOT NULL,
-	FOREIGN KEY(session_id) REFERENCES context_sessions(id) ON DELETE CASCADE
-);
-
-CREATE INDEX IF NOT EXISTS idx_context_conversations_session_sequence
-	ON context_conversations(session_id, sequence);
-
-CREATE TABLE IF NOT EXISTS context_turns (
-	id TEXT PRIMARY KEY,
-	conversation_id TEXT NOT NULL,
-	sequence INTEGER NOT NULL,
-	started_at TEXT NOT NULL,
-	completed_at TEXT,
-	elapsed_ms INTEGER NOT NULL DEFAULT 0,
-	prompt_tokens INTEGER NOT NULL DEFAULT 0,
-	completion_tokens INTEGER NOT NULL DEFAULT 0,
-	total_tokens INTEGER NOT NULL DEFAULT 0,
-	status TEXT NOT NULL,
-	error TEXT NOT NULL DEFAULT '',
-	FOREIGN KEY(conversation_id) REFERENCES context_conversations(id) ON DELETE CASCADE
-);
-
-CREATE INDEX IF NOT EXISTS idx_context_turns_conversation_sequence
-	ON context_turns(conversation_id, sequence);
-
-CREATE TABLE IF NOT EXISTS context_messages (
-	id TEXT PRIMARY KEY,
-	conversation_id TEXT NOT NULL,
-	sequence INTEGER NOT NULL,
-	role TEXT NOT NULL,
-	content TEXT NOT NULL DEFAULT '',
-	reasoning TEXT NOT NULL DEFAULT '',
-	tool_name TEXT NOT NULL DEFAULT '',
-	tool_call_id TEXT NOT NULL DEFAULT '',
-	raw_json TEXT NOT NULL DEFAULT '',
-	created_at TEXT NOT NULL,
-	FOREIGN KEY(conversation_id) REFERENCES context_conversations(id) ON DELETE CASCADE
-);
-
-CREATE INDEX IF NOT EXISTS idx_context_messages_conversation_sequence
-	ON context_messages(conversation_id, sequence);
-`); err != nil {
-		return fmt.Errorf("migrate context store: %w", err)
-	}
-	return nil
 }
 
 // SaveSession upserts the session aggregate.

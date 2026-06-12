@@ -8,6 +8,7 @@ import (
 	"time"
 
 	contextmodel "github.com/HappyLadySauce/HappyLadySauceCLI/internal/context/model"
+	"github.com/HappyLadySauce/HappyLadySauceCLI/migrations"
 	storagesqlite "github.com/HappyLadySauce/HappyLadySauceCLI/pkg/storage/sqlite"
 )
 
@@ -23,8 +24,8 @@ func TestRepositorySavesSessionConversationTurnsAndMessages(t *testing.T) {
 	defer db.Close()
 
 	repo := New(db)
-	if err := repo.Migrate(ctx); err != nil {
-		t.Fatalf("Migrate() error = %v", err)
+	if err := migrations.Apply(ctx, db); err != nil {
+		t.Fatalf("migrations Apply() error = %v", err)
 	}
 
 	session := contextmodel.NewSession("session_test", time.Now())
