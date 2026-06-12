@@ -11,6 +11,8 @@ import (
 
 	"github.com/cloudwego/eino/components/tool"
 	"github.com/cloudwego/eino/components/tool/utils"
+
+	"github.com/HappyLadySauce/HappyLadySauceCLI/internal/capability"
 )
 
 // https://uapis.cn/docs/api-reference/get-misc-weather
@@ -104,4 +106,18 @@ func GetWeatherTool() tool.InvokableTool {
 		getWeather,
 	)
 	return tool
+}
+
+// CapabilityDescriptor returns the security metadata for get_weather.
+// CapabilityDescriptor 返回 get_weather 的安全元数据。
+func CapabilityDescriptor() capability.Descriptor {
+	return capability.Descriptor{
+		Name:          "get_weather",
+		Type:          capability.TypeNativeTool,
+		Source:        capability.SourceBuiltin,
+		Risk:          capability.RiskLow,
+		DefaultPolicy: capability.DefaultPolicyAllow,
+		Scopes:        []string{"network:weather"},
+		Resources:     []string{"https://uapis.cn/api/v1/misc/weather"},
+	}
 }

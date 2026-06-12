@@ -1,0 +1,238 @@
+package security
+
+import (
+	"context"
+	"errors"
+	"sync"
+	"sync/atomic"
+	"testing"
+	"time"
+
+	"github.com/cloudwego/eino/adk"
+	"github.com/cloudwego/eino/components/tool"
+
+	"github.com/HappyLadySauce/HappyLadySauceCLI/internal/capability"
+	"github.com/HappyLadySauce/HappyLadySauceCLI/internal/security/policy"
+)
+
+type fakeApprover struct {
+	approve bool
+	calls   atomic.Int32
+}
+
+func (a *fakeApprover) Approve(ctx context.Context, req ApprovalRequest) (ApprovalDecision, error) {
+	a.calls.Add(1)
+	return ApprovalDecision{Approved: a.approve}, nil
+}
+
+func TestWrapInvokableToolCallAllowsPolicyAllowedCapability(t *testing.T) {
+	t.Parallel()
+
+	registry := newTestRegistry(t, capability.Descriptor{
+		Name:          "get_weather",
+		Type:          capability.TypeNativeTool,
+		Source:        capability.SourceBuiltin,
+		Risk:          capability.RiskLow,
+		DefaultPolicy: capability.DefaultPolicyAllow,
+	})
+	middleware := newTestMiddleware(t, registry, nil)
+
+	var called atomic.Bool
+	endpoint := func(ctx context.Context, argumentsInJSON string, opts ...tool.Option) (string, error) {
+		called.Store(true)
+		return "sunny", nil
+	}
+	wrapped, err := middleware.WrapInvokableToolCall(context.Background(), endpoint, &adk.ToolContext{Name: "get_weather", CallID: "call-1"})
+	if err != nil {
+		t.Fatalf("WrapInvokableToolCall() error = %v", err)
+	}
+
+	got, err := wrapped(context.Background(), `{"city":"北京"}`)
+	if err != nil {
+		t.Fatalf("wrapped endpoint returned error: %v", err)
+	}
+	if got != "sunny" || !called.Load() {
+		t.Fatalf("wrapped endpoint result = %q called=%v", got, called.Load())
+	}
+}
+
+func TestWrapInvokableToolCallDeniesPolicyDeniedCapability(t *testing.T) {
+	t.Parallel()
+
+	registry := newTestRegistry(t, capability.Descriptor{
+		Name:          "danger",
+		Type:          capability.TypeNativeTool,
+		Source:        capability.SourceBuiltin,
+		Risk:          capability.RiskHigh,
+		DefaultPolicy: capability.DefaultPolicyDeny,
+	})
+	middleware := newTestMiddleware(t, registry, nil)
+
+	var called atomic.Bool
+	wrapped, err := middleware.WrapInvokableToolCall(context.Background(), func(ctx context.Context, argumentsInJSON string, opts ...tool.Option) (string, error) {
+		called.Store(true)
+		return "", nil
+	}, &adk.ToolContext{Name: "danger", CallID: "call-1"})
+	if err != nil {
+		t.Fatalf("WrapInvokableToolCall() error = %v", err)
+	}
+
+	_, err = wrapped(context.Background(), `{}`)
+	if err == nil {
+		t.Fatal("expected denial error")
+	}
+	if called.Load() {
+		t.Fatal("denied endpoint should not be called")
+	}
+}
+
+func TestWrapInvokableToolCallCachesSessionApproval(t *testing.T) {
+	t.Parallel()
+
+	registry := newTestRegistry(t, capability.Descriptor{
+		Name:          "high_risk",
+		Type:          capability.TypeNativeTool,
+		Source:        capability.SourceBuiltin,
+		Risk:          capability.RiskHigh,
+		DefaultPolicy: capability.DefaultPolicyReview,
+	})
+	approver := &fakeApprover{approve: true}
+	middleware := newTestMiddleware(t, registry, approver)
+
+	var called atomic.Int32
+	wrapped, err := middleware.WrapInvokableToolCall(context.Background(), func(ctx context.Context, argumentsInJSON string, opts ...tool.Option) (string, error) {
+		called.Add(1)
+		return "ok", nil
+	}, &adk.ToolContext{Name: "high_risk", CallID: "call-1"})
+	if err != nil {
+		t.Fatalf("WrapInvokableToolCall() error = %v", err)
+	}
+
+	for i := 0; i < 2; i++ {
+		if _, err := wrapped(context.Background(), `{}`); err != nil {
+			t.Fatalf("wrapped endpoint call %d returned error: %v", i+1, err)
+		}
+	}
+	if approver.calls.Load() != 1 {
+		t.Fatalf("approver calls = %d, want 1", approver.calls.Load())
+	}
+	if called.Load() != 2 {
+		t.Fatalf("endpoint calls = %d, want 2", called.Load())
+	}
+}
+
+func TestWrapInvokableToolCallStopsWhenReviewDenied(t *testing.T) {
+	t.Parallel()
+
+	registry := newTestRegistry(t, capability.Descriptor{
+		Name:          "review_tool",
+		Type:          capability.TypeNativeTool,
+		Source:        capability.SourceBuiltin,
+		Risk:          capability.RiskMedium,
+		DefaultPolicy: capability.DefaultPolicyReview,
+	})
+	middleware := newTestMiddleware(t, registry, &fakeApprover{approve: false})
+
+	wrapped, err := middleware.WrapInvokableToolCall(context.Background(), func(ctx context.Context, argumentsInJSON string, opts ...tool.Option) (string, error) {
+		return "", errors.New("endpoint should not run")
+	}, &adk.ToolContext{Name: "review_tool", CallID: "call-1"})
+	if err != nil {
+		t.Fatalf("WrapInvokableToolCall() error = %v", err)
+	}
+
+	_, err = wrapped(context.Background(), `{}`)
+	if err == nil {
+		t.Fatal("expected review denial error")
+	}
+}
+
+func TestWrapInvokableToolCallSerializesConcurrentApproval(t *testing.T) {
+	t.Parallel()
+
+	registry := newTestRegistry(t, capability.Descriptor{
+		Name:          "review_parallel",
+		Type:          capability.TypeNativeTool,
+		Source:        capability.SourceBuiltin,
+		Risk:          capability.RiskHigh,
+		DefaultPolicy: capability.DefaultPolicyReview,
+	})
+	approver := &slowApprover{approve: true}
+	middleware := newTestMiddleware(t, registry, approver)
+
+	wrapped, err := middleware.WrapInvokableToolCall(context.Background(), func(ctx context.Context, argumentsInJSON string, opts ...tool.Option) (string, error) {
+		return "ok", nil
+	}, &adk.ToolContext{Name: "review_parallel", CallID: "call-1"})
+	if err != nil {
+		t.Fatalf("WrapInvokableToolCall() error = %v", err)
+	}
+
+	const calls = 8
+	var wg sync.WaitGroup
+	errs := make(chan error, calls)
+	for i := 0; i < calls; i++ {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			_, err := wrapped(context.Background(), `{}`)
+			errs <- err
+		}()
+	}
+	wg.Wait()
+	close(errs)
+	for err := range errs {
+		if err != nil {
+			t.Fatalf("wrapped endpoint returned error: %v", err)
+		}
+	}
+
+	if approver.calls.Load() != 1 {
+		t.Fatalf("approver calls = %d, want 1", approver.calls.Load())
+	}
+	if approver.maxActive.Load() != 1 {
+		t.Fatalf("max concurrent approvals = %d, want 1", approver.maxActive.Load())
+	}
+}
+
+func newTestRegistry(t *testing.T, descriptors ...capability.Descriptor) *capability.Registry {
+	t.Helper()
+	registry, err := capability.NewRegistry(descriptors...)
+	if err != nil {
+		t.Fatalf("NewRegistry() error = %v", err)
+	}
+	return registry
+}
+
+func newTestMiddleware(t *testing.T, registry *capability.Registry, approver Approver) *ExecutionSecurityMiddleware {
+	t.Helper()
+	middleware, err := NewExecutionSecurityMiddleware(Config{
+		Registry: registry,
+		Policy:   policy.NewEngine(),
+		Grants:   policy.NewSessionGrants(),
+		Approver: approver,
+	})
+	if err != nil {
+		t.Fatalf("NewExecutionSecurityMiddleware() error = %v", err)
+	}
+	return middleware
+}
+
+type slowApprover struct {
+	approve   bool
+	calls     atomic.Int32
+	active    atomic.Int32
+	maxActive atomic.Int32
+}
+
+func (a *slowApprover) Approve(ctx context.Context, req ApprovalRequest) (ApprovalDecision, error) {
+	a.calls.Add(1)
+	active := a.active.Add(1)
+	for {
+		currentMax := a.maxActive.Load()
+		if active <= currentMax || a.maxActive.CompareAndSwap(currentMax, active) {
+			break
+		}
+	}
+	time.Sleep(10 * time.Millisecond)
+	a.active.Add(-1)
+	return ApprovalDecision{Approved: a.approve}, nil
+}

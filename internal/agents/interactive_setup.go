@@ -32,18 +32,27 @@ func newInteractiveRuntime(ctx context.Context, cfg *config.Config, in io.Reader
 	if err != nil {
 		return nil, err
 	}
+
+	inputCtx, cancelInput := context.WithCancel(ctx)
+	promptReader := input.NewPromptReader(inputCtx, in)
+	renderer := terminal.NewRenderer(out, errOut)
+	agentTools := tools.NewAgentTools()
+
 	committed := false
 	defer func() {
 		if !committed {
+			cancelInput()
 			_ = contextSession.Close()
 		}
 	}()
 
 	handlers, err := middlewares.NewChatModelAgentMiddlewares(middlewares.ChatModelAgentMiddlewareConfig{
-		Model:           chatModel,
-		ModelName:       cfg.Model.Model,
-		MaxModelContext: cfg.Model.MaxModelContext,
-		MaxOutputTokens: cfg.Model.MaxOutputTokens,
+		Model:              chatModel,
+		ModelName:          cfg.Model.Model,
+		MaxModelContext:    cfg.Model.MaxModelContext,
+		MaxOutputTokens:    cfg.Model.MaxOutputTokens,
+		CapabilityRegistry: tools.NewCapabilityRegistry(),
+		Approver:           newTerminalApprover(promptReader, renderer),
 	})
 	if err != nil {
 		return nil, err
@@ -54,7 +63,7 @@ func newInteractiveRuntime(ctx context.Context, cfg *config.Config, in io.Reader
 		Name:        "HappyLadySauce",
 		Description: "A Agent for HAPPLADYSAUCECLI",
 		Instruction: prompts.SystemPrompt,
-		ToolsConfig: tools.NewAgentTools(),
+		ToolsConfig: agentTools,
 		Handlers:    handlers,
 	})
 	if err != nil {
@@ -68,8 +77,8 @@ func newInteractiveRuntime(ctx context.Context, cfg *config.Config, in io.Reader
 			EnableStreaming: true,
 		}),
 		contextSession:  contextSession,
-		promptReader:    input.NewPromptReader(ctx, in),
-		renderer:        terminal.NewRenderer(out, errOut),
+		promptReader:    promptReader,
+		renderer:        renderer,
 		maxModelContext: cfg.Model.MaxModelContext,
 	}, nil
 }

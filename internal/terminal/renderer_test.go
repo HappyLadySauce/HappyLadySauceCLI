@@ -21,11 +21,12 @@ func TestRenderer_WritesInteractiveOutput(t *testing.T) {
 	renderer.Token("thinking")
 	renderer.FinishMessage()
 	renderer.ToolMessage("search", "done")
+	renderer.ApprovalPrompt("Approve capability run_shell? [y/N]: ")
 	renderer.Exit()
 	renderer.FinishTurn()
 	renderer.Error(errors.New("boom"))
 
-	wantOut := "User> \nagent> hello world\nagent[thinking]> thinking\nsearch> done\nAgent exited.\n\n"
+	wantOut := "User> \nagent> hello world\nagent[thinking]> thinking\nsearch> done\nApprove capability run_shell? [y/N]: Agent exited.\n\n"
 	if out.String() != wantOut {
 		t.Fatalf("unexpected stdout: %q", out.String())
 	}

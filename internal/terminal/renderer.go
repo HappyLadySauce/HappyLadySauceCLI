@@ -198,6 +198,14 @@ func (r *Renderer) ToolMessage(toolName, content string) {
 	_, _ = fmt.Fprintf(r.out, "%s%s\n", r.colorize(colorTool, label), content)
 }
 
+// ApprovalPrompt renders a security approval prompt without reading input.
+// ApprovalPrompt 渲染安全审批提示，但不读取输入。
+func (r *Renderer) ApprovalPrompt(message string) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	_, _ = fmt.Fprint(r.out, r.colorize(colorStats, message))
+}
+
 // EmitAgentEvent handles a structured agent stream event.
 // kind uses the string constants defined by internal/agents.AgentStreamEvent*.
 // The method intentionally accepts strings instead of importing internal/agents
