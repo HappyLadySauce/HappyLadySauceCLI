@@ -146,7 +146,7 @@ func captureKlogOutput(t *testing.T, fn func()) string {
 	return buf.String()
 }
 
-func TestConfigureFileRoutesInfoAndErrorSeparately(t *testing.T) {
+func TestConfigureFileWritesInfoAndErrorToSameFile(t *testing.T) {
 	logDir := t.TempDir()
 
 	closer, paths, err := configureFile(logDir)
@@ -159,28 +159,20 @@ func TestConfigureFileRoutesInfoAndErrorSeparately(t *testing.T) {
 	Error(context.Background(), errors.New("boom"), "error only", "phase", "test")
 	klog.Flush()
 
-	infoBytes, err := os.ReadFile(paths.InfoPath)
+	logBytes, err := os.ReadFile(paths.Path)
 	if err != nil {
-		t.Fatalf("ReadFile(info) error = %v", err)
-	}
-	errorBytes, err := os.ReadFile(paths.ErrorPath)
-	if err != nil {
-		t.Fatalf("ReadFile(error) error = %v", err)
+		t.Fatalf("ReadFile(log) error = %v", err)
 	}
 
-	infoText := string(infoBytes)
-	errorText := string(errorBytes)
-	if !strings.Contains(infoText, "info only") {
-		t.Fatalf("info log missing info message: %q", infoText)
+	logText := string(logBytes)
+	if !strings.Contains(logText, "info only") {
+		t.Fatalf("log missing info message: %q", logText)
 	}
-	if strings.Contains(infoText, "error only") {
-		t.Fatalf("info log should not contain error message: %q", infoText)
+	if !strings.Contains(logText, "error only") {
+		t.Fatalf("log missing error message: %q", logText)
 	}
-	if !strings.Contains(errorText, "error only") {
-		t.Fatalf("error log missing error message: %q", errorText)
-	}
-	if strings.Count(errorText, "error only") != 1 {
-		t.Fatalf("error log duplicated error message: %q", errorText)
+	if strings.Count(logText, "error only") != 1 {
+		t.Fatalf("log duplicated error message: %q", logText)
 	}
 }
 

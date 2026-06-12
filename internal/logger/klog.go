@@ -1,7 +1,6 @@
 package logger
 
 import (
-	"errors"
 	"flag"
 	"fmt"
 	"io"
@@ -13,23 +12,19 @@ import (
 	"github.com/HappyLadySauce/HappyLadySauceCLI/pkg/appdirs"
 )
 
-const (
-	defaultLogFilename      = "happyladysaucecli.log"
-	defaultErrorLogFilename = "happyladysaucecli.error.log"
-)
+const defaultLogFilename = "happyladysaucecli.log"
 
-// FilePaths holds the on-disk diagnostic log destinations.
+// FilePaths holds the on-disk diagnostic log destination.
 // FilePaths 保存磁盘诊断日志路径。
 type FilePaths struct {
-	InfoPath  string
-	ErrorPath string
+	Path string
 }
 
-// ConfigureDefaultFile redirects klog output to <home>/logs/ and disables terminal logging.
-// The returned closer must be closed after klog has been flushed.
+// ConfigureDefaultFile redirects klog output to <home>/logs/happyladysaucecli.log and disables terminal logging.
+// INFO and ERROR severities share the same file. The returned closer must be closed after klog has been flushed.
 //
-// ConfigureDefaultFile 将 klog 输出重定向到 <home>/logs/，并禁用终端日志输出。
-// 调用方必须在 flush klog 后关闭返回的 closer。
+// ConfigureDefaultFile 将 klog 输出重定向到 <home>/logs/happyladysaucecli.log，并禁用终端日志输出。
+// INFO 与 ERROR 级别写入同一文件。调用方必须在 flush klog 后关闭返回的 closer。
 func ConfigureDefaultFile() (io.Closer, FilePaths, error) {
 	logDir, err := appdirs.LogsDir()
 	if err != nil {
@@ -50,25 +45,19 @@ func configureFile(logDir string) (io.Closer, FilePaths, error) {
 	}
 
 	paths := FilePaths{
-		InfoPath:  filepath.Join(logDir, defaultLogFilename),
-		ErrorPath: filepath.Join(logDir, defaultErrorLogFilename),
+		Path: filepath.Join(logDir, defaultLogFilename),
 	}
 
-	infoFile, err := os.OpenFile(paths.InfoPath, os.O_CREATE|os.O_WRONLY|os.O_APPEND, 0o600)
+	logFile, err := os.OpenFile(paths.Path, os.O_CREATE|os.O_WRONLY|os.O_APPEND, 0o600)
 	if err != nil {
-		return nil, FilePaths{}, fmt.Errorf("open info log file: %w", err)
-	}
-	errorFile, err := os.OpenFile(paths.ErrorPath, os.O_CREATE|os.O_WRONLY|os.O_APPEND, 0o600)
-	if err != nil {
-		_ = infoFile.Close()
-		return nil, FilePaths{}, fmt.Errorf("open error log file: %w", err)
+		return nil, FilePaths{}, fmt.Errorf("open log file: %w", err)
 	}
 
 	klog.LogToStderr(false)
-	klog.SetOutputBySeverity("INFO", infoFile)
-	klog.SetOutputBySeverity("ERROR", errorFile)
+	klog.SetOutputBySeverity("INFO", logFile)
+	klog.SetOutputBySeverity("ERROR", logFile)
 
-	return &multiCloser{closers: []io.Closer{infoFile, errorFile}}, paths, nil
+	return logFile, paths, nil
 }
 
 func applyKlogFileOnly() error {
@@ -86,22 +75,4 @@ func applyKlogFileOnly() error {
 		}
 	}
 	return nil
-}
-
-type multiCloser struct {
-	closers []io.Closer
-}
-
-func (m *multiCloser) Close() error {
-	if m == nil {
-		return nil
-	}
-	var joined error
-	for _, closer := range m.closers {
-		if closer == nil {
-			continue
-		}
-		joined = errors.Join(joined, closer.Close())
-	}
-	return joined
 }

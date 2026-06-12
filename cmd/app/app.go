@@ -58,8 +58,7 @@ func NewAPICommand(ctx context.Context, basename string) *cobra.Command {
 				_ = logCloser.Close()
 			}()
 			logger.Info(cmd.Context(), 0, "Logging initialized",
-				"info_path", logPaths.InfoPath,
-				"error_path", logPaths.ErrorPath)
+				"log_path", logPaths.Path)
 
 			// Validate options after flags and configuration are fully populated.
 			// 在标志与配置全部就绪后校验选项。
