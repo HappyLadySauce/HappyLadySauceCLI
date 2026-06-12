@@ -9,7 +9,6 @@ import (
 	"github.com/spf13/viper"
 	"k8s.io/component-base/cli/flag"
 	"k8s.io/component-base/logs"
-	"k8s.io/klog/v2"
 
 	"github.com/HappyLadySauce/HappyLadySauceCLI/cmd/app/options"
 	"github.com/HappyLadySauce/HappyLadySauceCLI/internal/agents"
@@ -58,7 +57,7 @@ func NewAPICommand(ctx context.Context, basename string) *cobra.Command {
 				logs.FlushLogs()
 				_ = logCloser.Close()
 			}()
-			klog.Infof("logging initialized path=%s", logPath)
+			logger.Info(cmd.Context(), 0, "Logging initialized", "path", logPath)
 
 			// Validate options after flags and configuration are fully populated.
 			// 在标志与配置全部就绪后校验选项。

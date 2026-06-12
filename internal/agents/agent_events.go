@@ -26,7 +26,6 @@ import (
 
 	"github.com/cloudwego/eino/adk"
 	"github.com/cloudwego/eino/schema"
-	"k8s.io/klog/v2"
 
 	"github.com/HappyLadySauce/HappyLadySauceCLI/internal/logger"
 )
@@ -109,7 +108,6 @@ func ConsumeAgentEvents(ctx context.Context, iter *adk.AsyncIterator[*adk.AgentE
 			return turnMessages, false, nil
 		}
 		if event.Err != nil {
-			klog.Errorf("agent loop error: %v", event.Err)
 			logAgentEvent(ctx, AgentStreamEventError, event.AgentName, "", "", event.Err)
 			stream.EmitAgentEvent(AgentStreamEventError, event.AgentName, "", "", event.Err)
 			return nil, false, fmt.Errorf("agent loop error: %w", event.Err)
@@ -143,7 +141,7 @@ func ConsumeAgentEvents(ctx context.Context, iter *adk.AsyncIterator[*adk.AgentE
 }
 
 func logAgentEvent(ctx context.Context, kind, agentName, toolName, content string, eventErr error) {
-	kvs := []any{"kind", kind, "agent_name", agentName}
+	kvs := []any{"phase", "agent_event", "kind", kind, "agent_name", agentName}
 	if toolName != "" {
 		kvs = append(kvs, "tool_name", toolName)
 	}
@@ -151,9 +149,10 @@ func logAgentEvent(ctx context.Context, kind, agentName, toolName, content strin
 		kvs = append(kvs, "content_len", len(content))
 	}
 	if eventErr != nil {
-		kvs = append(kvs, "error", eventErr.Error())
+		logger.Error(ctx, eventErr, "Agent event failed", kvs...)
+		return
 	}
-	logger.PhaseInfo(ctx, 2, "agent_event", kvs...)
+	logger.Info(ctx, 2, "Agent event emitted", kvs...)
 }
 
 // shouldAppendToHistory reports whether a message should persist across runner turns.

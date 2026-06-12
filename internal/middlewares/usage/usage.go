@@ -97,7 +97,8 @@ func (m *trackingModel) Stream(ctx context.Context, input []*schema.Message, opt
 func recordModelUsage(ctx context.Context, elapsed time.Duration, msg *schema.Message, callErr error) {
 	tracker := contexttracker.FromContext(ctx)
 	if tracker == nil {
-		logger.PhaseInfo(ctx, 2, "model_call_end",
+		logger.Info(ctx, 2, "Model call completed",
+			"phase", "model_call_end",
 			"reason", "tracker_missing",
 			"elapsed_ms", elapsed.Milliseconds(),
 			"error", callErr != nil)
@@ -105,19 +106,22 @@ func recordModelUsage(ctx context.Context, elapsed time.Duration, msg *schema.Me
 	}
 	turn := contextusage.TurnFromMessage(elapsed, msg, callErr)
 	if turn.Prompt == 0 && turn.Completion == 0 && turn.Total == 0 && callErr == nil {
-		logger.PhaseInfo(ctx, 2, "model_call_end",
+		logger.Info(ctx, 2, "Model call completed",
+			"phase", "model_call_end",
 			"reason", "missing_provider_usage",
 			"elapsed_ms", elapsed.Milliseconds())
 	}
 	recorded := tracker.AddTurn(turn)
 	if recorded == nil {
-		logger.PhaseInfo(ctx, 2, "model_call_end",
+		logger.Info(ctx, 2, "Model call completed",
+			"phase", "model_call_end",
 			"reason", "active_conversation_missing",
 			"elapsed_ms", elapsed.Milliseconds(),
 			"error", callErr != nil)
 		return
 	}
-	logger.PhaseInfo(ctx, 1, "model_call_end",
+	logger.Info(ctx, 1, "Model call completed",
+		"phase", "model_call_end",
 		"turn_id", recorded.ID,
 		"turn_seq", recorded.Sequence,
 		"prompt", recorded.Prompt,

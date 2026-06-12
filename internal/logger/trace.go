@@ -1,5 +1,5 @@
-// Package logger provides the project logging system: trace correlation, phase logging, and conversation detail.
-// Package logger 提供项目日志系统：trace 关联、phase 日志与对话明细。
+// Package logger provides structured diagnostic logging and trace correlation.
+// Package logger 提供结构化诊断日志与 trace 关联。
 package logger
 
 import (

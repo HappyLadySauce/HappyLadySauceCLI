@@ -96,7 +96,8 @@ func (c *Compactor) CompactIfNeeded(ctx stdcontext.Context, messages []*schema.M
 
 	triggerTokens := c.triggerTokens()
 	if sessionTotal <= 0 {
-		logger.PhaseInfo(ctx, 2, "compaction_check",
+		logger.Info(ctx, 2, "Context compaction checked",
+			"phase", "compaction_check",
 			"reason", "missing_provider_usage",
 			"content", sessionTotal,
 			"trigger", triggerTokens,
@@ -104,7 +105,8 @@ func (c *Compactor) CompactIfNeeded(ctx stdcontext.Context, messages []*schema.M
 		return messages, false, nil
 	}
 	if sessionTotal < triggerTokens {
-		logger.PhaseInfo(ctx, 2, "compaction_check",
+		logger.Info(ctx, 2, "Context compaction checked",
+			"phase", "compaction_check",
 			"reason", "below_threshold",
 			"content", sessionTotal,
 			"trigger", triggerTokens,
@@ -118,7 +120,8 @@ func (c *Compactor) CompactIfNeeded(ctx stdcontext.Context, messages []*schema.M
 	systemMessages, contextMessages := splitSystemAndContextMessages(messages)
 	boundary := selectBoundary(contextMessages)
 	if !boundary.ok {
-		logger.PhaseInfo(ctx, 2, "compaction_check",
+		logger.Info(ctx, 2, "Context compaction checked",
+			"phase", "compaction_check",
 			"reason", "unsafe_boundary",
 			"content", sessionTotal,
 			"trigger", triggerTokens,
@@ -129,7 +132,8 @@ func (c *Compactor) CompactIfNeeded(ctx stdcontext.Context, messages []*schema.M
 
 	middleTokens := c.estimator.CountMessages(boundary.middle)
 	summaryLimit := c.summaryTokenLimit()
-	logger.PhaseInfo(ctx, 2, "compaction_check",
+	logger.Info(ctx, 2, "Context compaction checked",
+		"phase", "compaction_check",
 		"reason", "summary_planned",
 		"content", sessionTotal,
 		"trigger", triggerTokens,
@@ -144,7 +148,8 @@ func (c *Compactor) CompactIfNeeded(ctx stdcontext.Context, messages []*schema.M
 	}
 
 	next := assembleCompactedMessages(systemMessages, boundary.head, summary, boundary.tail)
-	logger.PhaseInfo(ctx, 0, "compaction_done",
+	logger.Info(ctx, 0, "Context compaction completed",
+		"phase", "compaction_done",
 		"content", sessionTotal,
 		"trigger", triggerTokens,
 		"original_messages", len(messages),
@@ -189,7 +194,8 @@ func (c *Compactor) safePromptBudget() int {
 // generateSummary 调用辅助模型生成中间段的结构化摘要。
 func (c *Compactor) generateSummary(ctx stdcontext.Context, middle []*schema.Message, estimatedTokens int) (*schema.Message, error) {
 	targetTokens := c.summaryTokenLimit()
-	logger.PhaseInfo(ctx, 2, "compaction_check",
+	logger.Info(ctx, 2, "Context summary generation started",
+		"phase", "compaction_check",
 		"reason", "summary_started",
 		"middle_messages", len(middle),
 		"middle_estimated_tokens", estimatedTokens,

@@ -95,9 +95,9 @@ The project uses a dual-channel logging system:
 | Diagnostic log | `<home>/logs/happyladysaucecli.log` | text `key=value` | Lightweight phase tracking with trace correlation |
 | Conversation detail | `<home>/logs/session/<session_id>.jsonl` | JSONL | Full prompt, tool results, agent events (one file per session) |
 
-**Trace**: Correlation IDs (`session_id`, `conversation_id`, `user_turn_seq`, `model_call`) are propagated via `logger.AttachTurn()` / `logger.FromContext()`. All `PhaseInfo` calls auto-inject trace fields and `detail_log` pointer.
+**Trace**: Correlation IDs (`session_id`, `conversation_id`, `user_turn_seq`, `model_call`) are propagated via `logger.AttachTurn()` / `logger.FromContext()`. `logger.Info()` and `logger.Error()` auto-inject trace fields into structured klog entries.
 
-**Phase API**: `logger.PhaseInfo(ctx, v, phase, kvs...)` for verbosity-gated lines, `logger.PhaseWarn(ctx, phase, kvs...)` / `logger.PhaseError(ctx, phase, kvs...)` for always-visible warnings/errors. V=1 covers `session_open`, `user_turn_begin`, `model_call_end`, `user_turn_end`; V=2 adds `model_call_begin`, `compaction_check`, `agent_event`, `persistence`.
+**Structured diagnostic API**: `logger.Info(ctx, v, msg, kvs...)` for verbosity-gated structured lines and `logger.Error(ctx, err, msg, kvs...)` for error lines. Callers pass `phase` as a structured field. V=1 covers `session_open`, `user_turn_begin`, `model_call_end`, `user_turn_end`; V=2 adds `model_call_begin`, `compaction_check`, `agent_event`, `persistence`.
 
 **klog setup**: `logger.ConfigureDefaultFile()` redirects klog output during app startup (called from `cmd/app/app.go`). The built-in default home is `~/.HAPPLADYSAUCECLI`; the repo `settings.json` uses `${HAPPLADYSAUCECLI_HOME}` and Makefile defaults `HAPPLADYSAUCECLI_HOME=.HAPPLADYSAUCECLI` for local development.
 

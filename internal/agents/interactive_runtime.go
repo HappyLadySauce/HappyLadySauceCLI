@@ -11,8 +11,8 @@ import (
 	"k8s.io/klog/v2"
 
 	contextsession "github.com/HappyLadySauce/HappyLadySauceCLI/internal/context/session"
-	"github.com/HappyLadySauce/HappyLadySauceCLI/internal/logger"
 	"github.com/HappyLadySauce/HappyLadySauceCLI/internal/input"
+	"github.com/HappyLadySauce/HappyLadySauceCLI/internal/logger"
 	"github.com/HappyLadySauce/HappyLadySauceCLI/internal/terminal"
 )
 
@@ -61,7 +61,7 @@ func (r *interactiveRuntime) Close() {
 		return
 	}
 	if err := r.contextSession.Close(); err != nil {
-		klog.Errorf("close context session: %v", err)
+		klog.ErrorS(err, "Could not close context session")
 	}
 }
 
@@ -73,7 +73,7 @@ func (r *interactiveRuntime) receivePrompt(ctx context.Context) (string, bool, e
 	}
 	if promptResult.Error != nil {
 		if errors.Is(promptResult.Error, context.Canceled) || errors.Is(promptResult.Error, context.DeadlineExceeded) {
-			klog.Info("Agent loop stopped by context cancellation.")
+			logger.Info(ctx, 0, "Agent loop stopped by context cancellation")
 			return "", false, nil
 		}
 		return "", false, fmt.Errorf("receive user input: %w", promptResult.Error)
@@ -87,7 +87,8 @@ func (r *interactiveRuntime) runPrompt(ctx context.Context, prompt string) (bool
 	r.history = append(r.history, userMessage)
 
 	runCtx := r.contextSession.BeginTurn(ctx, prompt)
-	logger.PhaseInfo(runCtx, 1, "user_turn_begin",
+	logger.Info(runCtx, 1, "User turn started",
+		"phase", "user_turn_begin",
 		"user_prompt_len", len(prompt),
 		"history_messages", len(r.history))
 	iter := r.runner.Run(runCtx, r.history)
@@ -95,7 +96,8 @@ func (r *interactiveRuntime) runPrompt(ctx context.Context, prompt string) (bool
 	if err != nil {
 		modelCalls := r.contextSession.CurrentTurnCount()
 		_, persistErr := r.contextSession.FinishTurn(runCtx, []*schema.Message{userMessage}, err)
-		logger.PhaseInfo(runCtx, 1, "user_turn_end",
+		logger.Info(runCtx, 1, "User turn completed",
+			"phase", "user_turn_end",
 			"model_calls", modelCalls,
 			"turn_messages", 1,
 			"history_messages", len(r.history),
@@ -113,7 +115,8 @@ func (r *interactiveRuntime) runPrompt(ctx context.Context, prompt string) (bool
 		r.history = append(r.history, turnMessages...)
 	}
 
-	logger.PhaseInfo(runCtx, 1, "user_turn_end",
+	logger.Info(runCtx, 1, "User turn completed",
+		"phase", "user_turn_end",
 		"model_calls", modelCalls,
 		"turn_messages", len(conversationMessages),
 		"history_messages", len(r.history),

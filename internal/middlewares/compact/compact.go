@@ -5,7 +5,6 @@ import (
 	"errors"
 
 	"github.com/cloudwego/eino/adk"
-	"k8s.io/klog/v2"
 
 	contexttracker "github.com/HappyLadySauce/HappyLadySauceCLI/internal/context/tracker"
 	"github.com/HappyLadySauce/HappyLadySauceCLI/internal/logger"
@@ -38,32 +37,38 @@ func (m *compactMiddleware) BeforeModelRewriteState(ctx context.Context, state *
 		return ctx, state, nil
 	}
 
-	modelCall := logger.NextModelCall(ctx)
+	logger.NextModelCall(ctx)
 	sessionTotal := 0
 	if tracker := contexttracker.FromContext(ctx); tracker != nil {
 		sessionTotal = tracker.TotalTokens()
 	} else {
-		logger.PhaseInfo(ctx, 2, "compaction_check",
+		logger.Info(ctx, 2, "Context compaction checked",
+			"phase", "compaction_check",
 			"reason", "tracker_missing",
 			"input_messages", len(state.Messages))
 	}
 
-	logger.PhaseInfo(ctx, 2, "model_call_begin",
+	logger.Info(ctx, 2, "Model call started",
+		"phase", "model_call_begin",
 		"input_messages", len(state.Messages),
 		"content", sessionTotal)
 
 	beforeCount := len(state.Messages)
 	messages, changed, err := m.compactor.CompactIfNeeded(ctx, state.Messages, sessionTotal)
 	if err != nil {
-		klog.Warningf("phase=compaction_check conversation_id=%s model_call=%d reason=error content=%d input_messages=%d error=%v",
-			conversationID(ctx), modelCall, sessionTotal, beforeCount, err)
+		logger.Error(ctx, err, "Context compaction check failed",
+			"phase", "compaction_check",
+			"reason", "error",
+			"content", sessionTotal,
+			"input_messages", beforeCount)
 		return ctx, state, nil
 	}
 	if !changed {
 		return ctx, state, nil
 	}
 
-	logger.PhaseInfo(ctx, 2, "compaction_check",
+	logger.Info(ctx, 2, "Context compaction checked",
+		"phase", "compaction_check",
 		"reason", "applied",
 		"before_messages", beforeCount,
 		"after_messages", len(messages))
@@ -71,12 +76,4 @@ func (m *compactMiddleware) BeforeModelRewriteState(ctx context.Context, state *
 	next := *state
 	next.Messages = messages
 	return ctx, &next, nil
-}
-
-func conversationID(ctx context.Context) string {
-	trace := logger.FromContext(ctx)
-	if trace == nil {
-		return ""
-	}
-	return trace.ConversationID
 }

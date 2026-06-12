@@ -1,7 +1,10 @@
 package logger
 
 import (
+	"bytes"
 	"context"
+	"errors"
+	"reflect"
 	"strings"
 	"testing"
 
@@ -36,80 +39,103 @@ func TestNextModelCall(t *testing.T) {
 	}
 }
 
-func TestEmitPhaseTraceInjection(t *testing.T) {
-	t.Parallel()
-
+func TestValuesWithTracePrependsTraceFields(t *testing.T) {
 	ctx := AttachTurn(context.Background(), "s1", "c1", 3)
 	NextModelCall(ctx) // model_call=1
 
-	line := emitPhase(ctx, SeverityInfo, 0, "test_phase", "key1", "val1")
+	got := valuesWithTrace(ctx, "phase", "model_call_end", "prompt", 10)
+	want := []any{
+		"session_id", "s1",
+		"conversation_id", "c1",
+		"user_turn_seq", 3,
+		"model_call", 1,
+		"phase", "model_call_end",
+		"prompt", 10,
+	}
+	if !reflect.DeepEqual(got, want) {
+		t.Fatalf("valuesWithTrace() = %#v, want %#v", got, want)
+	}
+}
+
+func TestValuesWithTraceNoTrace(t *testing.T) {
+	t.Parallel()
+
+	got := valuesWithTrace(context.Background(), "phase", "model_call_end")
+	want := []any{"phase", "model_call_end"}
+	if !reflect.DeepEqual(got, want) {
+		t.Fatalf("valuesWithTrace() = %#v, want %#v", got, want)
+	}
+}
+
+func TestInfoWritesStructuredKlogWithTrace(t *testing.T) {
+	ctx := AttachTurn(context.Background(), "s1", "c1", 3)
+	NextModelCall(ctx)
+
+	output := captureKlogOutput(t, func() {
+		Info(ctx, 0, "Model call completed",
+			"phase", "model_call_end",
+			"prompt", 10)
+	})
 	for _, want := range []string{
-		"phase=test_phase",
-		"session_id=s1",
-		"conversation_id=c1",
-		"user_turn_seq=3",
-		"model_call=1",
-		"detail_log=session/s1.jsonl",
-		"key1=val1",
+		`"Model call completed"`,
+		`session_id="s1"`,
+		`conversation_id="c1"`,
+		`user_turn_seq=3`,
+		`model_call=1`,
+		`phase="model_call_end"`,
+		`prompt=10`,
 	} {
-		if !strings.Contains(line, want) {
-			t.Fatalf("emitPhase() line missing %q:\n  %s", want, line)
+		if !strings.Contains(output, want) {
+			t.Fatalf("Info() output missing %q:\n%s", want, output)
 		}
 	}
-}
-
-func TestEmitPhaseNoTrace(t *testing.T) {
-	t.Parallel()
-
-	line := emitPhase(context.Background(), SeverityInfo, 0, "test_phase", "a", 1)
-	if !strings.Contains(line, "phase=test_phase") {
-		t.Fatalf("emitPhase() = %q, want phase=test_phase", line)
-	}
-	if !strings.Contains(line, "a=1") {
-		t.Fatalf("emitPhase() = %q, want a=1", line)
-	}
-	if strings.Contains(line, "session_id") {
-		t.Fatalf("emitPhase() with no trace should not contain session_id: %s", line)
+	if strings.Contains(output, "detail_log") {
+		t.Fatalf("Info() output should not contain detail_log:\n%s", output)
 	}
 }
 
-func TestEmitPhaseFieldsOrder(t *testing.T) {
-	t.Parallel()
-
-	ctx := AttachTurn(context.Background(), "s1", "c1", 1)
-	line := emitPhase(ctx, SeverityInfo, 0, "test_phase", "z", "last", "a", "first")
-
-	// User fields appear in caller order (z before a).
-	zIdx := strings.Index(line, "z=last")
-	aIdx := strings.Index(line, "a=first")
-	if zIdx < 0 || aIdx < 0 || zIdx >= aIdx {
-		t.Fatalf("emitPhase() fields out of order: %s", line)
+func TestInfoVerbosityGate(t *testing.T) {
+	output := captureKlogOutput(t, func() {
+		Info(context.Background(), klog.Level(10000), "Should not appear", "phase", "test")
+	})
+	if output != "" {
+		t.Fatalf("Info() with disabled verbosity wrote output:\n%s", output)
 	}
 }
 
-func TestFormatFieldValue(t *testing.T) {
-	t.Parallel()
+func TestErrorWritesStructuredKlogWithTrace(t *testing.T) {
+	ctx := AttachTurn(context.Background(), "s1", "c1", 3)
+	NextModelCall(ctx)
 
-	tests := []struct{ in, want string }{
-		{"hello", "hello"},
-		{"hello world", `"hello world"`},
-		{"a\tb", `"a\tb"`},
-		{"a\nb", `"a\nb"`},
-	}
-	for _, tc := range tests {
-		if got := formatFieldValue(tc.in); got != tc.want {
-			t.Fatalf("formatFieldValue(%q) = %q, want %q", tc.in, got, tc.want)
+	output := captureKlogOutput(t, func() {
+		Error(ctx, errors.New("boom"), "Could not persist conversation", "phase", "persistence")
+	})
+	for _, want := range []string{
+		`"Could not persist conversation"`,
+		`err="boom"`,
+		`session_id="s1"`,
+		`conversation_id="c1"`,
+		`phase="persistence"`,
+	} {
+		if !strings.Contains(output, want) {
+			t.Fatalf("Error() output missing %q:\n%s", want, output)
 		}
 	}
+	if strings.Contains(output, "detail_log") {
+		t.Fatalf("Error() output should not contain detail_log:\n%s", output)
+	}
 }
 
-func TestPhaseInfoVerbosityGate(t *testing.T) {
-	// klog.V(10000) is never enabled → should produce no output.
-	PhaseInfo(context.Background(), klog.Level(10000), "should_not_appear", "x", "y")
-}
+func captureKlogOutput(t *testing.T, fn func()) string {
+	t.Helper()
 
-func TestPhaseWarnAndErrorSmoke(t *testing.T) {
-	// Smoke test: these should not panic.
-	PhaseWarn(context.Background(), "test_warn", "reason", "smoke_test")
-	PhaseError(context.Background(), "test_error", "reason", "smoke_test")
+	state := klog.CaptureState()
+	defer state.Restore()
+
+	var buf bytes.Buffer
+	klog.LogToStderr(false)
+	klog.SetOutput(&buf)
+	fn()
+	klog.Flush()
+	return buf.String()
 }

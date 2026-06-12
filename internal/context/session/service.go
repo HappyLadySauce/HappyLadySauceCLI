@@ -8,7 +8,6 @@ import (
 	"fmt"
 
 	"github.com/cloudwego/eino/schema"
-	"k8s.io/klog/v2"
 
 	"github.com/HappyLadySauce/HappyLadySauceCLI/internal/context/contextstore"
 	contextmodel "github.com/HappyLadySauce/HappyLadySauceCLI/internal/context/model"
@@ -58,7 +57,9 @@ func Open(ctx context.Context) (*Service, error) {
 		store:   contextstore.New(db),
 		tracker: contexttracker.New(),
 	}
-	logger.PhaseInfo(ctx, 1, "session_open", "session_id", service.tracker.Session().ID)
+	logger.Info(ctx, 1, "Context session opened",
+		"phase", "session_open",
+		"session_id", service.tracker.Session().ID)
 	return service, nil
 }
 
@@ -98,7 +99,7 @@ func (s *Service) FinishTurn(ctx context.Context, messages []*schema.Message, ru
 	contextTokens := s.tracker.TotalTokens()
 	s.status = statusFromConversation(conversation, contextTokens)
 	if err := s.persist(ctx, conversation); err != nil {
-		klog.Errorf("save context turn failed: %v", err)
+		logger.Error(ctx, err, "Could not save context turn", "phase", "persistence")
 		return s.status, err
 	}
 	return s.status, nil
@@ -138,7 +139,8 @@ func (s *Service) persist(ctx context.Context, conversation *contextmodel.Conver
 		savedTurns = len(conversation.Turns)
 		savedMessages = len(conversation.Messages)
 	}
-	logger.PhaseInfo(ctx, 2, "persistence",
+	logger.Info(ctx, 2, "Context conversation persisted",
+		"phase", "persistence",
 		"saved_turns", savedTurns,
 		"saved_messages", savedMessages)
 	return nil
