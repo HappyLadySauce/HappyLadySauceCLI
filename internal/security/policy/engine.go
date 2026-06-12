@@ -69,7 +69,8 @@ func NewEngine(configs ...Config) *Engine {
 //	DefaultPolicyDeny       → ActionDeny    (default_policy_deny)
 //	Operation RiskHigh      → ActionReview  (high_risk)          — overrides DefaultPolicyAllow
 //	command.run             → ActionReview  (command_run)
-//	network.*               → ActionReview  (network_operation)
+//	network.* + RiskLow + DefaultPolicyAllow → ActionAllow (default_policy_allow)
+//	network.* (otherwise)   → ActionReview  (network_operation)
 //	DefaultPolicyReview     → ActionReview  (default_policy_review)
 //	otherwise               → ActionAllow   (default_policy_allow)
 //
@@ -97,6 +98,9 @@ func (e *Engine) Evaluate(request securitycore.OperationRequest) PolicyDecision 
 		return e.review("command_run")
 	}
 	if strings.HasPrefix(request.OperationKind, "network.") || hasScopePrefix(descriptor.Scopes, "network:") {
+		if risk == capability.RiskLow && descriptor.DefaultPolicy == capability.DefaultPolicyAllow {
+			return PolicyDecision{Action: ActionAllow, Reason: "default_policy_allow"}
+		}
 		return e.review("network_operation")
 	}
 	if descriptor.DefaultPolicy == capability.DefaultPolicyReview {

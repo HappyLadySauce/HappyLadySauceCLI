@@ -191,7 +191,7 @@ type OperationBuilder func(ctx context.Context, request OperationRequest, argume
 | 2 | `DefaultPolicy == deny` | `ActionDeny` | `default_policy_deny` |
 | 3 | `Risk == high` | `ActionReview` | `high_risk` |
 | 4 | `OperationKind == "command.run"` | `ActionReview` | `command_run` |
-| 5 | `OperationKind` 前缀为 `network.` 或 scope 前缀为 `network:` | `ActionReview` | `network_operation` |
+| 5 | `network.*` / `network:` scope，且非 `RiskLow + DefaultPolicyAllow` | `ActionReview` | `network_operation` |
 | 6 | `DefaultPolicy == review` | `ActionReview` | `default_policy_review` |
 | 7 | 其他情况 | `ActionAllow` | `default_policy_allow` |
 

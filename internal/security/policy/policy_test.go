@@ -86,7 +86,7 @@ func TestEngineReviewsCommandOperations(t *testing.T) {
 	}
 }
 
-func TestEngineReviewsNetworkOperations(t *testing.T) {
+func TestEngineAllowsLowRiskNetworkAllowCapability(t *testing.T) {
 	t.Parallel()
 
 	decision := NewEngine(Config{ApprovalDefault: "review"}).Evaluate(securitycore.OperationRequest{
@@ -100,6 +100,28 @@ func TestEngineReviewsNetworkOperations(t *testing.T) {
 			Risk:          capability.RiskLow,
 			DefaultPolicy: capability.DefaultPolicyAllow,
 			Scopes:        []string{"network:weather"},
+		},
+	})
+
+	if decision.Action != ActionAllow || decision.Reason != "default_policy_allow" {
+		t.Fatalf("decision = %#v, want low-risk network allow", decision)
+	}
+}
+
+func TestEngineReviewsNetworkOperationsWhenNotLowRiskAllow(t *testing.T) {
+	t.Parallel()
+
+	decision := NewEngine(Config{ApprovalDefault: "review"}).Evaluate(securitycore.OperationRequest{
+		Registered:    true,
+		OperationKind: "network.weather",
+		Risk:          capability.RiskMedium,
+		Capability: capability.Descriptor{
+			Name:          "fetch_data",
+			Type:          capability.TypeNativeTool,
+			Source:        capability.SourceBuiltin,
+			Risk:          capability.RiskMedium,
+			DefaultPolicy: capability.DefaultPolicyAllow,
+			Scopes:        []string{"network:api"},
 		},
 	})
 
