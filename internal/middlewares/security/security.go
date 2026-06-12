@@ -4,10 +4,12 @@ package security
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"github.com/cloudwego/eino/adk"
@@ -68,7 +70,13 @@ type ExecutionSecurityMiddleware struct {
 	workspaceGuard        *securitycore.WorkspaceGuard
 	commandTimeoutSeconds int
 	maxToolOutputBytes    int
-	approvalLocks         sync.Map
+	approvalLocksMu       sync.Mutex
+	approvalLocks         map[string]*approvalLockEntry
+}
+
+type approvalLockEntry struct {
+	mu   sync.Mutex
+	refs int
 }
 
 // NewExecutionSecurityMiddleware creates an execution security middleware.
@@ -100,6 +108,7 @@ func NewExecutionSecurityMiddleware(cfg Config) (*ExecutionSecurityMiddleware, e
 		workspaceGuard:               cfg.WorkspaceGuard,
 		commandTimeoutSeconds:        cfg.CommandTimeoutSeconds,
 		maxToolOutputBytes:           cfg.MaxToolOutputBytes,
+		approvalLocks:                make(map[string]*approvalLockEntry),
 	}, nil
 }
 
@@ -112,8 +121,16 @@ func (m *ExecutionSecurityMiddleware) WrapInvokableToolCall(ctx context.Context,
 			return "", err
 		}
 
+		ctx, cancel := m.executionContext(ctx)
+		defer cancel()
 		start := time.Now()
 		result, err := endpoint(ctx, argumentsInJSON, opts...)
+		if err == nil {
+			if limitErr := m.ensureToolOutputWithinLimit(result); limitErr != nil {
+				err = limitErr
+				result = ""
+			}
+		}
 		m.auditExecution(ctx, operation, start, err)
 		return result, err
 	}, nil
@@ -128,9 +145,11 @@ func (m *ExecutionSecurityMiddleware) WrapStreamableToolCall(ctx context.Context
 			return nil, err
 		}
 
+		ctx, cancel := m.executionContext(ctx)
 		start := time.Now()
 		result, err := endpoint(ctx, argumentsInJSON, opts...)
 		if err != nil {
+			cancel()
 			m.auditExecution(ctx, operation, start, err)
 			return nil, err
 		}
@@ -139,15 +158,22 @@ func (m *ExecutionSecurityMiddleware) WrapStreamableToolCall(ctx context.Context
 		// Wrap the stream so audit fires on actual stream completion (EOF) rather
 		// than at stream setup time. This gives accurate elapsed time.
 		// 包装 stream 使审计在流实际消费完（EOF）时触发，而非在 stream 建立时，以获取准确的耗时。
-		var audited bool
+		var audited atomic.Bool
+		outputBudget := newToolOutputBudget(m.maxToolOutputBytes)
 		doAudit := func(streamErr error) {
-			if !audited {
-				audited = true
+			if audited.CompareAndSwap(false, true) {
+				cancel()
 				m.auditExecution(ctx, operation, start, streamErr)
 			}
 		}
 		return schema.StreamReaderWithConvert(result,
-			func(s string) (string, error) { return s, nil },
+			func(s string) (string, error) {
+				if limitErr := outputBudget.Add(s); limitErr != nil {
+					doAudit(limitErr)
+					return "", limitErr
+				}
+				return s, nil
+			},
 			schema.WithOnEOF(func() (any, error) {
 				doAudit(nil)
 				return nil, io.EOF
@@ -169,8 +195,16 @@ func (m *ExecutionSecurityMiddleware) WrapEnhancedInvokableToolCall(ctx context.
 			return nil, err
 		}
 
+		ctx, cancel := m.executionContext(ctx)
+		defer cancel()
 		start := time.Now()
 		result, err := endpoint(ctx, toolArgument, opts...)
+		if err == nil {
+			if limitErr := m.ensureToolOutputWithinLimit(result); limitErr != nil {
+				err = limitErr
+				result = nil
+			}
+		}
 		m.auditExecution(ctx, operation, start, err)
 		return result, err
 	}, nil
@@ -185,9 +219,11 @@ func (m *ExecutionSecurityMiddleware) WrapEnhancedStreamableToolCall(ctx context
 			return nil, err
 		}
 
+		ctx, cancel := m.executionContext(ctx)
 		start := time.Now()
 		result, err := endpoint(ctx, toolArgument, opts...)
 		if err != nil {
+			cancel()
 			m.auditExecution(ctx, operation, start, err)
 			return nil, err
 		}
@@ -196,15 +232,22 @@ func (m *ExecutionSecurityMiddleware) WrapEnhancedStreamableToolCall(ctx context
 		// Wrap the stream so audit fires on actual stream completion (EOF) rather
 		// than at stream setup time. This gives accurate elapsed time.
 		// 包装 stream 使审计在流实际消费完（EOF）时触发，而非在 stream 建立时，以获取准确的耗时。
-		var audited bool
+		var audited atomic.Bool
+		outputBudget := newToolOutputBudget(m.maxToolOutputBytes)
 		doAudit := func(streamErr error) {
-			if !audited {
-				audited = true
+			if audited.CompareAndSwap(false, true) {
+				cancel()
 				m.auditExecution(ctx, operation, start, streamErr)
 			}
 		}
 		return schema.StreamReaderWithConvert(result,
-			func(tr *schema.ToolResult) (*schema.ToolResult, error) { return tr, nil },
+			func(tr *schema.ToolResult) (*schema.ToolResult, error) {
+				if limitErr := outputBudget.Add(tr); limitErr != nil {
+					doAudit(limitErr)
+					return nil, limitErr
+				}
+				return tr, nil
+			},
 			schema.WithOnEOF(func() (any, error) {
 				doAudit(nil)
 				return nil, io.EOF
@@ -276,10 +319,28 @@ func (m *ExecutionSecurityMiddleware) authorize(ctx context.Context, tCtx *adk.T
 }
 
 func (m *ExecutionSecurityMiddleware) lockApproval(grantKey string) func() {
-	value, _ := m.approvalLocks.LoadOrStore(grantKey, &sync.Mutex{})
-	mu := value.(*sync.Mutex)
-	mu.Lock()
-	return mu.Unlock
+	m.approvalLocksMu.Lock()
+	if m.approvalLocks == nil {
+		m.approvalLocks = make(map[string]*approvalLockEntry)
+	}
+	entry := m.approvalLocks[grantKey]
+	if entry == nil {
+		entry = &approvalLockEntry{}
+		m.approvalLocks[grantKey] = entry
+	}
+	entry.refs++
+	m.approvalLocksMu.Unlock()
+
+	entry.mu.Lock()
+	return func() {
+		entry.mu.Unlock()
+		m.approvalLocksMu.Lock()
+		entry.refs--
+		if entry.refs == 0 {
+			delete(m.approvalLocks, grantKey)
+		}
+		m.approvalLocksMu.Unlock()
+	}
 }
 
 func (m *ExecutionSecurityMiddleware) descriptorForTool(tCtx *adk.ToolContext) (capability.Descriptor, bool) {
@@ -401,6 +462,59 @@ func (m *ExecutionSecurityMiddleware) auditStreamOpened(ctx context.Context, ope
 		"risk", record.Risk,
 		"elapsed_ms", record.ElapsedMS,
 		"status", "stream_opened")
+}
+
+func (m *ExecutionSecurityMiddleware) executionContext(ctx context.Context) (context.Context, context.CancelFunc) {
+	if m.commandTimeoutSeconds <= 0 {
+		return ctx, func() {}
+	}
+	return context.WithTimeout(ctx, time.Duration(m.commandTimeoutSeconds)*time.Second)
+}
+
+func (m *ExecutionSecurityMiddleware) ensureToolOutputWithinLimit(value any) error {
+	if m.maxToolOutputBytes <= 0 {
+		return nil
+	}
+	size := toolOutputSize(value)
+	if size > m.maxToolOutputBytes {
+		return fmt.Errorf("tool output exceeds security.max_tool_output_bytes: %d > %d", size, m.maxToolOutputBytes)
+	}
+	return nil
+}
+
+type toolOutputBudget struct {
+	max  int
+	used atomic.Int64
+}
+
+func newToolOutputBudget(max int) *toolOutputBudget {
+	return &toolOutputBudget{max: max}
+}
+
+func (b *toolOutputBudget) Add(value any) error {
+	if b == nil || b.max <= 0 {
+		return nil
+	}
+	used := b.used.Add(int64(toolOutputSize(value)))
+	if used > int64(b.max) {
+		return fmt.Errorf("stream tool output exceeds security.max_tool_output_bytes: %d > %d", used, b.max)
+	}
+	return nil
+}
+
+func toolOutputSize(value any) int {
+	switch typed := value.(type) {
+	case nil:
+		return 0
+	case string:
+		return len(typed)
+	case *schema.ToolResult:
+		data, err := json.Marshal(typed)
+		if err == nil {
+			return len(data)
+		}
+	}
+	return len(fmt.Sprint(value))
 }
 
 func toolName(tCtx *adk.ToolContext) string {

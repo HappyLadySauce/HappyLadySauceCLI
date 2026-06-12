@@ -73,14 +73,14 @@ type OperationBuilder func(ctx context.Context, request OperationRequest, argume
 // GrantKey 返回该操作对应的稳定可复用授权 key。
 func (r OperationRequest) GrantKey() string {
 	parts := []string{
-		string(r.Capability.Type),
-		r.Capability.Source,
-		r.Capability.Name,
-		r.OperationKind,
-		string(r.Risk),
+		escapeGrantKeyComponent(string(r.Capability.Type)),
+		escapeGrantKeyComponent(r.Capability.Source),
+		escapeGrantKeyComponent(r.Capability.Name),
+		escapeGrantKeyComponent(r.OperationKind),
+		escapeGrantKeyComponent(string(r.Risk)),
 	}
 	for _, resource := range sortedResources(r.Resources) {
-		parts = append(parts, resource.Kind+"="+resource.Value)
+		parts = append(parts, escapeGrantKeyComponent(resource.Kind)+"="+escapeGrantKeyComponent(resource.Value))
 	}
 	return strings.Join(parts, "|")
 }
@@ -115,6 +115,11 @@ func sortedResources(resources []OperationResource) []OperationResource {
 		return left < right
 	})
 	return next
+}
+
+func escapeGrantKeyComponent(value string) string {
+	replacer := strings.NewReplacer(`\`, `\\`, `|`, `\|`, `=`, `\=`)
+	return replacer.Replace(value)
 }
 
 // AuditRecord is the sanitized metadata emitted around policy and execution events.

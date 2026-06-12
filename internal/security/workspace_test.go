@@ -42,3 +42,22 @@ func TestWorkspaceGuardRejectsSymlinkEscape(t *testing.T) {
 		t.Fatal("expected symlink escape rejection")
 	}
 }
+
+func TestWorkspaceGuardRejectsSymlinkParentForMissingFile(t *testing.T) {
+	t.Parallel()
+
+	root := t.TempDir()
+	outside := t.TempDir()
+	link := filepath.Join(root, "outside")
+	if err := os.Symlink(outside, link); err != nil {
+		t.Skipf("symlink unavailable: %v", err)
+	}
+
+	guard, err := NewWorkspaceGuard([]string{root})
+	if err != nil {
+		t.Fatalf("NewWorkspaceGuard() error = %v", err)
+	}
+	if _, err := guard.NormalizePath(filepath.Join(link, "new.txt")); err == nil {
+		t.Fatal("expected symlink parent escape rejection")
+	}
+}

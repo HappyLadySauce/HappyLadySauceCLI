@@ -3,6 +3,7 @@ package security
 import (
 	"strings"
 	"testing"
+	"unicode/utf8"
 )
 
 func TestSanitizeTextRedactsCommonSecrets(t *testing.T) {
@@ -34,8 +35,8 @@ func TestSanitizeJSONRedactsNestedSecrets(t *testing.T) {
 func TestSanitizeTextRedactsKnownTokenPrefixesWithoutSensitiveKey(t *testing.T) {
 	t.Parallel()
 
-	got := SanitizeText("city=sk-live_1234567890abcd tokenless=ghp_1234567890abcdef")
-	for _, leaked := range []string{"sk-live_1234567890abcd", "ghp_1234567890abcdef"} {
+	got := SanitizeText("auth=Bearer:token123 city=sk-live_1234567890abcd tokenless=ghp_1234567890abcdef")
+	for _, leaked := range []string{"token123", "sk-live_1234567890abcd", "ghp_1234567890abcdef"} {
 		if strings.Contains(got, leaked) {
 			t.Fatalf("SanitizeText leaked prefixed token %q in %q", leaked, got)
 		}
@@ -56,5 +57,17 @@ func TestSummarizeArgumentsIsDeterministicAndSanitized(t *testing.T) {
 	}
 	if strings.Index(first, "a=") > strings.Index(first, "api_key=") || strings.Index(first, "api_key=") > strings.Index(first, "z=") {
 		t.Fatalf("SummarizeArguments() keys are not sorted: %q", first)
+	}
+}
+
+func TestTruncatePreservesUTF8(t *testing.T) {
+	t.Parallel()
+
+	got := truncate(strings.Repeat("界", 100), 10)
+	if !utf8.ValidString(got) {
+		t.Fatalf("truncate() returned invalid UTF-8: %q", got)
+	}
+	if len(got) > 10 {
+		t.Fatalf("truncate() length = %d, want <= 10", len(got))
 	}
 }

@@ -36,3 +36,28 @@ func TestOperationGrantKeySortsResources(t *testing.T) {
 		t.Fatalf("ResourceSummary() is not sorted: %q", base.ResourceSummary())
 	}
 }
+
+func TestOperationGrantKeyEscapesSeparators(t *testing.T) {
+	t.Parallel()
+
+	left := OperationRequest{
+		Capability: capability.Descriptor{
+			Name:   "tool|kind",
+			Type:   capability.TypeNativeTool,
+			Source: capability.SourceBuiltin,
+		},
+		OperationKind: "read",
+		Risk:          capability.RiskHigh,
+		Resources:     []OperationResource{{Kind: "path", Value: "C:/workspace/a=b.txt"}},
+	}
+	right := left
+	right.Capability.Name = "tool"
+	right.OperationKind = "kind|read"
+
+	if left.GrantKey() == right.GrantKey() {
+		t.Fatalf("GrantKey() collision for escaped separators: %q", left.GrantKey())
+	}
+	if !strings.Contains(left.GrantKey(), `tool\|kind`) || !strings.Contains(left.GrantKey(), `a\=b.txt`) {
+		t.Fatalf("GrantKey() did not escape separators: %q", left.GrantKey())
+	}
+}

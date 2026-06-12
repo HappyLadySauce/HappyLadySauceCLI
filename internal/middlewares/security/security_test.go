@@ -162,6 +162,79 @@ func TestWrapInvokableToolCallAllowsPolicyAllowedCapability(t *testing.T) {
 	}
 }
 
+func TestWrapInvokableToolCallRejectsOversizedOutput(t *testing.T) {
+	t.Parallel()
+
+	registry := newTestRegistry(t, capability.Descriptor{
+		Name:          "small_output",
+		Type:          capability.TypeNativeTool,
+		Source:        capability.SourceBuiltin,
+		Risk:          capability.RiskLow,
+		DefaultPolicy: capability.DefaultPolicyAllow,
+	})
+	middleware, err := NewExecutionSecurityMiddleware(Config{
+		Registry:           registry,
+		Policy:             policy.NewEngine(),
+		Grants:             policy.NewSessionGrants(),
+		MaxToolOutputBytes: 4,
+	})
+	if err != nil {
+		t.Fatalf("NewExecutionSecurityMiddleware() error = %v", err)
+	}
+	wrapped, err := middleware.WrapInvokableToolCall(context.Background(), func(ctx context.Context, argumentsInJSON string, opts ...tool.Option) (string, error) {
+		return "too large", nil
+	}, &adk.ToolContext{Name: "small_output", CallID: "call-1"})
+	if err != nil {
+		t.Fatalf("WrapInvokableToolCall() error = %v", err)
+	}
+
+	got, err := wrapped(context.Background(), `{}`)
+	if err == nil {
+		t.Fatal("expected oversized output error")
+	}
+	if got != "" {
+		t.Fatalf("oversized output leaked result: %q", got)
+	}
+}
+
+func TestWrapStreamableToolCallRejectsOversizedOutput(t *testing.T) {
+	t.Parallel()
+
+	registry := newTestRegistry(t, capability.Descriptor{
+		Name:          "stream_tool",
+		Type:          capability.TypeNativeTool,
+		Source:        capability.SourceBuiltin,
+		Risk:          capability.RiskLow,
+		DefaultPolicy: capability.DefaultPolicyAllow,
+	})
+	middleware, err := NewExecutionSecurityMiddleware(Config{
+		Registry:           registry,
+		Policy:             policy.NewEngine(),
+		Grants:             policy.NewSessionGrants(),
+		MaxToolOutputBytes: 2,
+	})
+	if err != nil {
+		t.Fatalf("NewExecutionSecurityMiddleware() error = %v", err)
+	}
+	wrapped, err := middleware.WrapStreamableToolCall(context.Background(), func(ctx context.Context, argumentsInJSON string, opts ...tool.Option) (*schema.StreamReader[string], error) {
+		return schema.StreamReaderFromArray([]string{"ok", "too-large"}), nil
+	}, &adk.ToolContext{Name: "stream_tool", CallID: "call-1"})
+	if err != nil {
+		t.Fatalf("WrapStreamableToolCall() error = %v", err)
+	}
+	reader, err := wrapped(context.Background(), `{}`)
+	if err != nil {
+		t.Fatalf("wrapped streamable returned error: %v", err)
+	}
+	defer reader.Close()
+	if got, err := reader.Recv(); err != nil || got != "ok" {
+		t.Fatalf("first Recv() = %q, %v; want ok, nil", got, err)
+	}
+	if _, err := reader.Recv(); err == nil {
+		t.Fatal("expected oversized stream output error")
+	}
+}
+
 func TestWrapInvokableToolCallRejectsEscapingPathResource(t *testing.T) {
 	t.Parallel()
 
@@ -304,6 +377,68 @@ func TestWrapInvokableToolCallApprovalDefaultsToOneOperation(t *testing.T) {
 	}
 	if approver.calls.Load() != 2 {
 		t.Fatalf("approver calls = %d, want 2", approver.calls.Load())
+	}
+}
+
+func TestWrapInvokableToolCallCleansApprovalLock(t *testing.T) {
+	t.Parallel()
+
+	registry := newTestRegistry(t, capability.Descriptor{
+		Name:          "high_risk_once",
+		Type:          capability.TypeNativeTool,
+		Source:        capability.SourceBuiltin,
+		Risk:          capability.RiskHigh,
+		DefaultPolicy: capability.DefaultPolicyReview,
+	})
+	middleware := newTestMiddleware(t, registry, &fakeApprover{approve: true})
+
+	wrapped, err := middleware.WrapInvokableToolCall(context.Background(), func(ctx context.Context, argumentsInJSON string, opts ...tool.Option) (string, error) {
+		return "ok", nil
+	}, &adk.ToolContext{Name: "high_risk_once", CallID: "call-1"})
+	if err != nil {
+		t.Fatalf("WrapInvokableToolCall() error = %v", err)
+	}
+	if _, err := wrapped(context.Background(), `{}`); err != nil {
+		t.Fatalf("wrapped endpoint returned error: %v", err)
+	}
+
+	middleware.approvalLocksMu.Lock()
+	defer middleware.approvalLocksMu.Unlock()
+	if len(middleware.approvalLocks) != 0 {
+		t.Fatalf("approval lock count = %d, want 0", len(middleware.approvalLocks))
+	}
+}
+
+func TestWrapInvokableToolCallAppliesTimeout(t *testing.T) {
+	t.Parallel()
+
+	registry := newTestRegistry(t, capability.Descriptor{
+		Name:          "slow_tool",
+		Type:          capability.TypeNativeTool,
+		Source:        capability.SourceBuiltin,
+		Risk:          capability.RiskLow,
+		DefaultPolicy: capability.DefaultPolicyAllow,
+	})
+	middleware, err := NewExecutionSecurityMiddleware(Config{
+		Registry:              registry,
+		Policy:                policy.NewEngine(),
+		Grants:                policy.NewSessionGrants(),
+		CommandTimeoutSeconds: 1,
+	})
+	if err != nil {
+		t.Fatalf("NewExecutionSecurityMiddleware() error = %v", err)
+	}
+	wrapped, err := middleware.WrapInvokableToolCall(context.Background(), func(ctx context.Context, argumentsInJSON string, opts ...tool.Option) (string, error) {
+		<-ctx.Done()
+		return "", ctx.Err()
+	}, &adk.ToolContext{Name: "slow_tool", CallID: "call-1"})
+	if err != nil {
+		t.Fatalf("WrapInvokableToolCall() error = %v", err)
+	}
+
+	_, err = wrapped(context.Background(), `{}`)
+	if !errors.Is(err, context.DeadlineExceeded) {
+		t.Fatalf("wrapped endpoint error = %v, want context deadline exceeded", err)
 	}
 }
 

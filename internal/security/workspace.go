@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"runtime"
 	"strings"
 )
 
@@ -64,24 +65,43 @@ func canonicalPath(path string) (string, error) {
 		}
 		path = filepath.Join(cwd, path)
 	}
-	cleaned := filepath.Clean(path)
-	evaluated, err := filepath.EvalSymlinks(cleaned)
-	if err == nil {
-		cleaned = evaluated
-	} else if !os.IsNotExist(err) {
-		return "", fmt.Errorf("resolve symlinks: %w", err)
-	}
-	absolute, err := filepath.Abs(cleaned)
+	absolute, err := filepath.Abs(filepath.Clean(path))
 	if err != nil {
 		return "", fmt.Errorf("resolve absolute path: %w", err)
 	}
-	return filepath.Clean(absolute), nil
+	resolved, err := resolveSymlinksUpToLastExisting(absolute)
+	if err != nil {
+		return "", err
+	}
+	return filepath.Clean(resolved), nil
+}
+
+func resolveSymlinksUpToLastExisting(path string) (string, error) {
+	evaluated, err := filepath.EvalSymlinks(path)
+	if err == nil {
+		return evaluated, nil
+	}
+	if !os.IsNotExist(err) {
+		return "", fmt.Errorf("resolve symlinks: %w", err)
+	}
+	parent := filepath.Dir(path)
+	if parent == path {
+		return path, nil
+	}
+	resolvedParent, err := resolveSymlinksUpToLastExisting(parent)
+	if err != nil {
+		return "", err
+	}
+	return filepath.Join(resolvedParent, filepath.Base(path)), nil
 }
 
 func pathWithinRoot(path, root string) bool {
 	path = filepath.Clean(path)
 	root = filepath.Clean(root)
-	if strings.EqualFold(path, root) {
+	if path == root {
+		return true
+	}
+	if runtime.GOOS == "windows" && strings.EqualFold(path, root) {
 		return true
 	}
 	rel, err := filepath.Rel(root, path)

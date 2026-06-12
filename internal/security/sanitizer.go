@@ -6,12 +6,13 @@ import (
 	"regexp"
 	"sort"
 	"strings"
+	"unicode/utf8"
 )
 
 const redactedValue = "[REDACTED]"
 
 var sensitivePatterns = []*regexp.Regexp{
-	regexp.MustCompile(`(?i)(bearer\s+)[A-Za-z0-9._~+/=-]+`),
+	regexp.MustCompile(`(?i)(bearer[\s:]+)[A-Za-z0-9._~+/=-]+`),
 	regexp.MustCompile(`(?i)((?:api[_-]?key|auth[_-]?token|access[_-]?token|secret|password|passwd|pwd)\s*[:=]\s*)("[^"]+"|'[^']+'|[^\s,;}\]]+)`),
 	regexp.MustCompile(`(?is)-----BEGIN [A-Z ]*PRIVATE KEY-----.*?-----END [A-Z ]*PRIVATE KEY-----`),
 	regexp.MustCompile(`\b(sk-[A-Za-z0-9_-]{12,}|ghp_[A-Za-z0-9_]{12,}|github_pat_[A-Za-z0-9_]{20,}|xox[baprs]-[A-Za-z0-9-]{10,}|AKIA[0-9A-Z]{12,})\b`),
@@ -140,7 +141,21 @@ func truncate(value string, maxLen int) string {
 		return value
 	}
 	if maxLen <= 3 {
-		return value[:maxLen]
+		return validUTF8Prefix(value, maxLen)
 	}
-	return value[:maxLen-3] + "..."
+	return validUTF8Prefix(value, maxLen-3) + "..."
+}
+
+func validUTF8Prefix(value string, maxBytes int) string {
+	if maxBytes <= 0 {
+		return ""
+	}
+	if len(value) <= maxBytes {
+		return value
+	}
+	cut := maxBytes
+	for cut > 0 && !utf8.ValidString(value[:cut]) {
+		cut--
+	}
+	return value[:cut]
 }
