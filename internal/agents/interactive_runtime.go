@@ -78,7 +78,9 @@ func (r *interactiveRuntime) receivePrompt(ctx context.Context) (string, bool, e
 	}
 	if promptResult.Error != nil {
 		if errors.Is(promptResult.Error, context.Canceled) || errors.Is(promptResult.Error, context.DeadlineExceeded) {
-			logger.Info(ctx, 0, "Agent loop stopped by context cancellation")
+			logger.Info(ctx, 0, "Agent loop stopped by context cancellation",
+				"phase", "agent_loop",
+				"status", "context_cancelled")
 			return "", false, nil
 		}
 		return "", false, fmt.Errorf("receive user input: %w", promptResult.Error)

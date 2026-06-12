@@ -78,6 +78,9 @@ func TestInfoWritesStructuredKlogWithTrace(t *testing.T) {
 			"phase", "model_call_end",
 			"prompt", 10)
 	})
+	if !strings.HasPrefix(output, "[Info] ") {
+		t.Fatalf("Info() output should start with readable severity, got:\n%s", output)
+	}
 	for _, want := range []string{
 		`"Model call completed"`,
 		`session_id="s1"`,
@@ -93,6 +96,9 @@ func TestInfoWritesStructuredKlogWithTrace(t *testing.T) {
 	}
 	if strings.Contains(output, "detail_log") {
 		t.Fatalf("Info() output should not contain detail_log:\n%s", output)
+	}
+	if strings.Contains(output, "logging.go:") {
+		t.Fatalf("Info() caller should point at the call site, not logger wrapper:\n%s", output)
 	}
 }
 
@@ -112,6 +118,9 @@ func TestErrorWritesStructuredKlogWithTrace(t *testing.T) {
 	output := captureKlogOutput(t, func() {
 		Error(ctx, errors.New("boom"), "Could not persist conversation", "phase", "persistence")
 	})
+	if !strings.HasPrefix(output, "[Error] ") {
+		t.Fatalf("Error() output should start with readable severity, got:\n%s", output)
+	}
 	for _, want := range []string{
 		`"Could not persist conversation"`,
 		`err="boom"`,
@@ -126,6 +135,9 @@ func TestErrorWritesStructuredKlogWithTrace(t *testing.T) {
 	if strings.Contains(output, "detail_log") {
 		t.Fatalf("Error() output should not contain detail_log:\n%s", output)
 	}
+	if strings.Contains(output, "logging.go:") {
+		t.Fatalf("Error() caller should point at the call site, not logger wrapper:\n%s", output)
+	}
 }
 
 func captureKlogOutput(t *testing.T, fn func()) string {
@@ -139,8 +151,8 @@ func captureKlogOutput(t *testing.T, fn func()) string {
 		t.Fatalf("applyKlogFileOnly() error = %v", err)
 	}
 	klog.LogToStderr(false)
-	klog.SetOutputBySeverity("INFO", &buf)
-	klog.SetOutputBySeverity("ERROR", &buf)
+	klog.SetOutputBySeverity("INFO", newSeverityLabelWriter(&buf, 'I', "[Info] "))
+	klog.SetOutputBySeverity("ERROR", newSeverityLabelWriter(&buf, 'E', "[Error] "))
 	fn()
 	klog.Flush()
 	return buf.String()
@@ -173,6 +185,12 @@ func TestConfigureFileWritesInfoAndErrorToSameFile(t *testing.T) {
 	}
 	if strings.Count(logText, "error only") != 1 {
 		t.Fatalf("log duplicated error message: %q", logText)
+	}
+	if !strings.Contains(logText, "\n[Error] ") && !strings.HasPrefix(logText, "[Error] ") {
+		t.Fatalf("log missing readable error severity: %q", logText)
+	}
+	if !strings.HasPrefix(logText, "[Info] ") && !strings.Contains(logText, "\n[Info] ") {
+		t.Fatalf("log missing readable info severity: %q", logText)
 	}
 }
 

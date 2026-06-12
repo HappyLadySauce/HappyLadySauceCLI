@@ -116,7 +116,7 @@ The project uses a single diagnostic log plus sanitized SQLite context persisten
 
 | Channel | Path | Format | Content |
 |---------|------|--------|---------|
-| Diagnostic log | `<home>/logs/happyladysaucecli.log` | text `key=value` | Lightweight phase tracking with trace correlation |
+| Diagnostic log | `<home>/logs/happyladysaucecli.log` | `[Info]`/`[Error]` prefix + text `key=value` | Lightweight phase tracking with trace correlation |
 | Context replay | `<home>/context.sqlite` | SQLite | Sanitized or metadata-only conversation snapshots |
 
 **Trace**: Correlation IDs (`session_id`, `conversation_id`, `user_turn_seq`, `model_call`) are propagated via `logger.AttachTurn()` / `logger.FromContext()`. `logger.Info()` and `logger.Error()` auto-inject trace fields into structured klog entries.

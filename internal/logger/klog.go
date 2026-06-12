@@ -54,8 +54,8 @@ func configureFile(logDir string) (io.Closer, FilePaths, error) {
 	}
 
 	klog.LogToStderr(false)
-	klog.SetOutputBySeverity("INFO", logFile)
-	klog.SetOutputBySeverity("ERROR", logFile)
+	klog.SetOutputBySeverity("INFO", newSeverityLabelWriter(logFile, 'I', "[Info] "))
+	klog.SetOutputBySeverity("ERROR", newSeverityLabelWriter(logFile, 'E', "[Error] "))
 
 	return logFile, paths, nil
 }

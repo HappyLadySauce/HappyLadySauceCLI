@@ -9,13 +9,13 @@ import (
 // Info writes a structured diagnostic log entry with trace fields injected from context.
 // Info 写入结构化诊断日志，并自动注入 context 中的 trace 字段。
 func Info(ctx context.Context, v klog.Level, msg string, kvs ...any) {
-	klog.V(v).InfoS(msg, valuesWithTrace(ctx, kvs...)...)
+	klog.V(v).InfoSDepth(1, msg, valuesWithTrace(ctx, kvs...)...)
 }
 
 // Error writes a structured diagnostic error log entry with trace fields injected from context.
 // Error 写入结构化错误诊断日志，并自动注入 context 中的 trace 字段。
 func Error(ctx context.Context, err error, msg string, kvs ...any) {
-	klog.ErrorS(err, msg, valuesWithTrace(ctx, kvs...)...)
+	klog.ErrorSDepth(1, err, msg, valuesWithTrace(ctx, kvs...)...)
 }
 
 func valuesWithTrace(ctx context.Context, kvs ...any) []any {
