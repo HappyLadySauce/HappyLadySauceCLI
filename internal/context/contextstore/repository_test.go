@@ -8,7 +8,7 @@ import (
 	"time"
 
 	contextmodel "github.com/HappyLadySauce/HappyLadySauceCLI/internal/context/model"
-	storagesqlite "github.com/HappyLadySauce/HappyLadySauceCLI/internal/storage/sqlite"
+	storagesqlite "github.com/HappyLadySauce/HappyLadySauceCLI/pkg/storage/sqlite"
 )
 
 func TestRepositorySavesSessionConversationTurnsAndMessages(t *testing.T) {
