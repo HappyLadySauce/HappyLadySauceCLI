@@ -121,3 +121,52 @@ func TestDescriptorValidationJoinsMultipleErrors(t *testing.T) {
 		t.Fatal("expected non-empty error message")
 	}
 }
+
+func TestDescriptorValidationRequiresNetworkResourcesAllowlist(t *testing.T) {
+	t.Parallel()
+
+	err := Descriptor{
+		Name:          "fetch",
+		Type:          TypeNativeTool,
+		Source:        SourceBuiltin,
+		Risk:          RiskMedium,
+		DefaultPolicy: DefaultPolicyReview,
+		Scopes:        []string{"network:api"},
+	}.Validate()
+	if err == nil {
+		t.Fatal("expected network scope without Resources to fail validation")
+	}
+}
+
+func TestDescriptorValidationRequiresNetworkScopeForHTTPResources(t *testing.T) {
+	t.Parallel()
+
+	err := Descriptor{
+		Name:          "fetch",
+		Type:          TypeNativeTool,
+		Source:        SourceBuiltin,
+		Risk:          RiskMedium,
+		DefaultPolicy: DefaultPolicyReview,
+		Resources:     []string{"https://example.com/api"},
+	}.Validate()
+	if err == nil {
+		t.Fatal("expected http Resources without network scope to fail validation")
+	}
+}
+
+func TestDescriptorValidationRejectsEmptyNetworkScopeSuffix(t *testing.T) {
+	t.Parallel()
+
+	err := Descriptor{
+		Name:          "fetch",
+		Type:          TypeNativeTool,
+		Source:        SourceBuiltin,
+		Risk:          RiskMedium,
+		DefaultPolicy: DefaultPolicyReview,
+		Scopes:        []string{"network:"},
+		Resources:     []string{"https://example.com/api"},
+	}.Validate()
+	if err == nil {
+		t.Fatal("expected empty network: scope suffix to fail validation")
+	}
+}

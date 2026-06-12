@@ -4,6 +4,8 @@ import (
 	"errors"
 	"strings"
 	"testing"
+
+	securitycore "github.com/HappyLadySauce/HappyLadySauceCLI/internal/security"
 )
 
 func TestFormatErrorMarshalsStableJSON(t *testing.T) {
@@ -35,15 +37,15 @@ func TestFormatErrorUnwrapsWrappedMessage(t *testing.T) {
 func TestFormatFailureIncludesReason(t *testing.T) {
 	t.Parallel()
 
-	got := FormatFailure(errors.New("capability denied by user: get_weather"), ReasonUserDenied)
+	got := FormatFailure(errors.New("capability denied by user: get_weather"), securitycore.DenialReasonUserDenied)
 	if !strings.Contains(got, `"reason":"user_denied"`) {
 		t.Fatalf("FormatFailure() = %q, want user_denied reason", got)
 	}
 	if !IsDeniedPayload(got) {
 		t.Fatal("expected denied payload")
 	}
-	if DenialReason(got) != ReasonUserDenied {
-		t.Fatalf("DenialReason() = %q, want %q", DenialReason(got), ReasonUserDenied)
+	if DenialReason(got) != securitycore.DenialReasonUserDenied {
+		t.Fatalf("DenialReason() = %q, want %q", DenialReason(got), securitycore.DenialReasonUserDenied)
 	}
 }
 

@@ -89,10 +89,11 @@ func TestEngineReviewsCommandOperations(t *testing.T) {
 func TestEngineAllowsLowRiskNetworkAllowCapability(t *testing.T) {
 	t.Parallel()
 
-	decision := NewEngine(Config{ApprovalDefault: "review"}).Evaluate(securitycore.OperationRequest{
+	decision := NewEngine().Evaluate(securitycore.OperationRequest{
 		Registered:    true,
 		OperationKind: "network.weather",
 		Risk:          capability.RiskLow,
+		Resources:     []securitycore.OperationResource{{Kind: "url", Value: "https://uapis.cn/api/v1/misc/weather"}},
 		Capability: capability.Descriptor{
 			Name:          "get_weather",
 			Type:          capability.TypeNativeTool,
@@ -100,6 +101,7 @@ func TestEngineAllowsLowRiskNetworkAllowCapability(t *testing.T) {
 			Risk:          capability.RiskLow,
 			DefaultPolicy: capability.DefaultPolicyAllow,
 			Scopes:        []string{"network:weather"},
+			Resources:     []string{"https://uapis.cn/api/v1/misc/weather"},
 		},
 	})
 
@@ -108,13 +110,36 @@ func TestEngineAllowsLowRiskNetworkAllowCapability(t *testing.T) {
 	}
 }
 
+func TestEngineReviewsLowRiskNetworkWithoutResources(t *testing.T) {
+	t.Parallel()
+
+	decision := NewEngine().Evaluate(securitycore.OperationRequest{
+		Registered:    true,
+		OperationKind: "network.weather",
+		Risk:          capability.RiskLow,
+		Capability: capability.Descriptor{
+			Name:          "fetch_data",
+			Type:          capability.TypeNativeTool,
+			Source:        capability.SourceBuiltin,
+			Risk:          capability.RiskLow,
+			DefaultPolicy: capability.DefaultPolicyAllow,
+			Scopes:        []string{"network:api"},
+		},
+	})
+
+	if decision.Action != ActionReview || decision.Reason != "network_operation" {
+		t.Fatalf("decision = %#v, want network review without resources", decision)
+	}
+}
+
 func TestEngineReviewsNetworkOperationsWhenNotLowRiskAllow(t *testing.T) {
 	t.Parallel()
 
-	decision := NewEngine(Config{ApprovalDefault: "review"}).Evaluate(securitycore.OperationRequest{
+	decision := NewEngine().Evaluate(securitycore.OperationRequest{
 		Registered:    true,
 		OperationKind: "network.weather",
 		Risk:          capability.RiskMedium,
+		Resources:     []securitycore.OperationResource{{Kind: "url", Value: "https://example.com/api"}},
 		Capability: capability.Descriptor{
 			Name:          "fetch_data",
 			Type:          capability.TypeNativeTool,
@@ -122,6 +147,7 @@ func TestEngineReviewsNetworkOperationsWhenNotLowRiskAllow(t *testing.T) {
 			Risk:          capability.RiskMedium,
 			DefaultPolicy: capability.DefaultPolicyAllow,
 			Scopes:        []string{"network:api"},
+			Resources:     []string{"https://example.com/api"},
 		},
 	})
 
@@ -139,19 +165,6 @@ func TestEngineReviewsMissingDescriptor(t *testing.T) {
 	})
 	if decision.Action != ActionReview {
 		t.Fatalf("decision action = %s, want %s", decision.Action, ActionReview)
-	}
-}
-
-func TestEngineUsesApprovalDefaultForReviewDecisions(t *testing.T) {
-	t.Parallel()
-
-	decision := NewEngine(Config{ApprovalDefault: "deny"}).Evaluate(securitycore.OperationRequest{
-		Capability: capability.Descriptor{Name: "unregistered"},
-		Registered: false,
-	})
-
-	if decision.Action != ActionDeny || decision.Reason != "approval_default_unsupported" {
-		t.Fatalf("decision = %#v, want fail-closed approval default denial", decision)
 	}
 }
 

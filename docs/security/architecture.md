@@ -49,7 +49,6 @@
 ```go
 type SecurityOptions struct {
     WorkspaceRoots        []string  // 允许的工作区根目录
-    ApprovalDefault       string    // 默认审批模式（目前仅支持 "review"）
     PersistContent        string    // 持久化模式："sanitized" | "metadata_only"
     CommandTimeoutSeconds int       // command.run 执行超时（秒）
     MaxToolOutputBytes    int       // 工具输出最大字节数
@@ -61,7 +60,6 @@ type SecurityOptions struct {
 | 字段 | 默认值 | 说明 |
 |------|--------|------|
 | `WorkspaceRoots` | `[当前工作目录]` | 文件操作的允许根目录 |
-| `ApprovalDefault` | `"review"` | 需要审批的操作默认要求交互确认 |
 | `PersistContent` | `"sanitized"` | 持久化内容经过脱敏处理 |
 | `CommandTimeoutSeconds` | `30` | `command.run` 默认 30 秒超时 |
 | `MaxToolOutputBytes` | `1048576` (1 MiB) | 工具输出上限 |
@@ -70,7 +68,6 @@ type SecurityOptions struct {
 
 ```
 --security-workspace-roots           (string slice)
---security-approval-default          (string, 仅支持 "review")
 --security-persist-content           (string, "sanitized" 或 "metadata_only")
 --security-command-timeout-seconds   (int)
 --security-max-tool-output-bytes     (int)
@@ -80,7 +77,6 @@ type SecurityOptions struct {
 
 ```
 HAPPLADYSAUCECLI_SECURITY_WORKSPACE_ROOTS
-HAPPLADYSAUCECLI_SECURITY_APPROVAL_DEFAULT
 HAPPLADYSAUCECLI_SECURITY_PERSIST_CONTENT
 HAPPLADYSAUCECLI_SECURITY_COMMAND_TIMEOUT_SECONDS
 HAPPLADYSAUCECLI_SECURITY_MAX_TOOL_OUTPUT_BYTES
@@ -137,6 +133,17 @@ type Descriptor struct {
 
 线程安全的 `map[name]Descriptor`，支持并发读写。未注册工具通过 `UnknownDescriptor(name)` 返回 `TypeUnknown / RiskHigh / DefaultPolicyReview` 的占位描述符。
 
+### 3.6 Descriptor.Validate 网络注册纪律
+
+`Register()` 调用 `Descriptor.Validate()`，对 HTTP 出站能力强制以下约束，避免新工具疏漏导致绕过 `network.*` 策略分支：
+
+| 规则 | 说明 |
+|------|------|
+| `network:` scope 非空后缀 | 如 `network:weather`，禁止裸 `network:` |
+| scope ↔ Resources | 含 `network:` scope 时必须声明 `Resources` URL 白名单 |
+| Resources ↔ scope | 含 `http(s)` Resources 时必须声明 `network:` scope |
+| builder 集成测试 | `tools_test.go` 对含 network/HTTP 描述符的工具断言 builder 产出 `network.*` OperationKind 与非空 Resources |
+
 ---
 
 ## 四、操作请求模型
@@ -175,9 +182,11 @@ type OperationRequest struct {
 type OperationBuilder func(ctx context.Context, request OperationRequest, argumentsSummary string) OperationRequest
 ```
 
-### 4.4 GrantKey 生成
+### 4.4 GrantKey 与 SessionGrantKey
 
-`GrantKey()` 方法从操作属性中生成一个稳定的、确定性的标识符，用于会话级授权缓存。key 的组成部分包括 capability type、source、name、operation kind、risk 和排序后的资源列表。分隔符 `\`、`|`、`=` 会被转义以防止碰撞攻击。高风险、`command.run` 与 `network.*` 操作还会纳入脱敏参数摘要的 SHA，避免 session 授权过粗。
+`GrantKey()` 从操作属性生成稳定的单次调用标识符，用于审计与审批提示展示。key 的组成部分包括 capability type、source、name、operation kind、risk 和排序后的资源列表。分隔符 `\`、`|`、`=` 会被转义以防止碰撞攻击。高风险、`command.run` 与 `network.*` 操作还会纳入脱敏参数摘要的 SHA。
+
+`SessionGrantKey()` 用于 session 级授权缓存与审批锁，在 `GrantKey` 基础上省略 `args_sha`（network 操作亦然），使同工具、同 URL 资源的不同参数可共享 session 授权。详见 §6.1 与 §10.3。
 
 ---
 
@@ -191,13 +200,13 @@ type OperationBuilder func(ctx context.Context, request OperationRequest, argume
 | 2 | `DefaultPolicy == deny` | `ActionDeny` | `default_policy_deny` |
 | 3 | `Risk == high` | `ActionReview` | `high_risk` |
 | 4 | `OperationKind == "command.run"` | `ActionReview` | `command_run` |
-| 5 | `network.*` / `network:` scope，且非 `RiskLow + DefaultPolicyAllow` | `ActionReview` | `network_operation` |
+| 5 | `network.*` / `network:` scope，且非（`SourceBuiltin` + `RiskLow` + `DefaultPolicyAllow` + resources 非空） | `ActionReview` | `network_operation` |
 | 6 | `DefaultPolicy == review` | `ActionReview` | `default_policy_review` |
 | 7 | 其他情况 | `ActionAllow` | `default_policy_allow` |
 
 ### 5.2 关键设计决策
 
-**RiskMedium + DefaultPolicyAllow = ActionAllow**：中等风险工具如果声明了 Allow 策略，则被信任可直接执行；中等风险工具如果声明了 Review 策略，则会提示用户确认。这是刻意设计——将审批粒度交由工具注册时自行声明。
+**RiskMedium + DefaultPolicyAllow = ActionAllow**（非 network）：中等风险工具如果声明了 Allow 策略，则被信任可直接执行；中等风险工具如果声明了 Review 策略，则会提示用户确认。**中等风险 network 工具一律 Review**，即使声明 `DefaultPolicyAllow`。
 
 ### 5.3 接口
 
@@ -217,13 +226,13 @@ type PolicyDecision struct {
 ```go
 type SessionGrants struct {
     mu     sync.RWMutex
-    grants map[string]struct{}  // key = GrantKey()
+    grants map[string]struct{}  // key = SessionGrantKey()
 }
 ```
 
 - 线程安全的 `sync.RWMutex` 保护
-- 用户选择 session 范围审批后，GrantKey 被存入
-- 后续相同 GrantKey 的调用自动跳过审批
+- 用户选择 session 范围审批后，`SessionGrantKey()` 被存入
+- 后续相同 `SessionGrantKey()` 的调用自动跳过审批
 - 仅在当前进程生命周期内有效
 
 ### 6.2 审批范围
@@ -232,7 +241,7 @@ type SessionGrants struct {
 |------|------|------|
 | 无 | `none` | 无需审批或拒绝 |
 | 一次性 | `once` | 仅当前操作有效，下次重新提示 |
-| 会话级 | `session` | 当前进程内同 GrantKey 操作自动放行 |
+| 会话级 | `session` | 当前进程内同 SessionGrantKey 操作自动放行 |
 
 ---
 
@@ -309,7 +318,7 @@ type ExecutionSecurityMiddleware struct {
     commandTimeoutSeconds int
     maxToolOutputBytes    int
     approvalLocksMu       sync.Mutex
-    approvalLocks         map[string]*approvalLockEntry  // 按 GrantKey 的审批锁
+    approvalLocks         map[string]*approvalLockEntry  // 按 SessionGrantKey 的审批锁
 }
 ```
 
@@ -375,9 +384,9 @@ auditExecution() / auditStreamOpened()  ← 审计日志
 
 ### 9.5 审批锁机制
 
-`approvalLocks` 提供按 GrantKey 的并发审批串行化：
+`approvalLocks` 提供按 `SessionGrantKey()` 的并发审批串行化：
 
-- 多个 goroutine 对同一 GrantKey 的工具调用会阻塞在同一把 `sync.Mutex` 上
+- 多个 goroutine 对同一 `SessionGrantKey()` 的工具调用会阻塞在同一把 `sync.Mutex` 上
 - 只有一个审批对话框展示给用户
 - 不同工具可以并发审批
 - 使用引用计数 (`refs`) 进行安全回收

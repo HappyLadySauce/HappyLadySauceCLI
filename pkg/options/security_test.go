@@ -15,9 +15,6 @@ func TestSecurityOptionsValidateAppliesDefaults(t *testing.T) {
 	if len(opts.WorkspaceRoots) != 1 || !filepath.IsAbs(opts.WorkspaceRoots[0]) {
 		t.Fatalf("WorkspaceRoots = %#v, want one absolute default root", opts.WorkspaceRoots)
 	}
-	if opts.ApprovalDefault != ApprovalDefaultReview {
-		t.Fatalf("ApprovalDefault = %q, want review", opts.ApprovalDefault)
-	}
 	if opts.PersistContent != PersistContentSanitized {
 		t.Fatalf("PersistContent = %q, want sanitized", opts.PersistContent)
 	}

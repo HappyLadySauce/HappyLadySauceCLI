@@ -438,8 +438,8 @@ func TestWrapInvokableToolCallDeniesPolicyDeniedCapability(t *testing.T) {
 	if !toolresult.IsDeniedPayload(got) {
 		t.Fatalf("expected denial payload, got %q", got)
 	}
-	if toolresult.DenialReason(got) != toolresult.ReasonPolicyDenied {
-		t.Fatalf("DenialReason() = %q, want %q", toolresult.DenialReason(got), toolresult.ReasonPolicyDenied)
+	if toolresult.DenialReason(got) != securitycore.DenialReasonPolicyDenied {
+		t.Fatalf("DenialReason() = %q, want %q", toolresult.DenialReason(got), securitycore.DenialReasonPolicyDenied)
 	}
 	if called.Load() {
 		t.Fatal("denied endpoint should not be called")
@@ -695,8 +695,8 @@ func TestWrapInvokableToolCallStopsWhenReviewDenied(t *testing.T) {
 	if !toolresult.IsDeniedPayload(got) {
 		t.Fatalf("expected denial payload, got %q", got)
 	}
-	if toolresult.DenialReason(got) != toolresult.ReasonUserDenied {
-		t.Fatalf("DenialReason() = %q, want %q", toolresult.DenialReason(got), toolresult.ReasonUserDenied)
+	if toolresult.DenialReason(got) != securitycore.DenialReasonUserDenied {
+		t.Fatalf("DenialReason() = %q, want %q", toolresult.DenialReason(got), securitycore.DenialReasonUserDenied)
 	}
 }
 

@@ -41,6 +41,12 @@ func IsRecoverableAuthorizationDenial(err error) bool {
 	return errors.Is(err, ErrCapabilityDeniedByUser) || errors.Is(err, ErrCapabilityDeniedByPolicy)
 }
 
+// IsStructuredDenialReason reports whether reason is a known authorization denial payload reason.
+// IsStructuredDenialReason 判断 reason 是否为已知的授权拒绝 payload 原因。
+func IsStructuredDenialReason(reason string) bool {
+	return reason == DenialReasonUserDenied || reason == DenialReasonPolicyDenied
+}
+
 // DenialReasonFor returns the structured denial reason for recoverable authorization errors.
 // DenialReasonFor 返回可恢复授权错误对应的结构化拒绝原因。
 func DenialReasonFor(err error) string {

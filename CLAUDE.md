@@ -141,6 +141,13 @@ Thread-safe renderer with ANSI color support (disabled for non-terminal writers)
 - `pkg/context/compact.summaryPrefix` — marks compacted content as `[CONTEXT COMPACTION - REFERENCE ONLY]`
 - `pkg/context/compact.renderMessagesForSummary()` — renders messages as stable text transcript for the summarizer
 
+### Execution Security & Tool Soft-Fail (`internal/middlewares/security/`)
+
+- `ExecutionSecurityMiddleware` wraps tool invocations: policy evaluation → user approval → audit → endpoint
+- Recoverable failures (user/policy denial, tool execution errors) return JSON payloads to the model with `nil` Go error so the ReAct loop continues; invariant violations (path/scope, missing approver) still hard-fail
+- Denial sentinels and reasons live in `internal/security/denial.go`; JSON formatting in `internal/tools/toolresult/`
+- Full error-handling matrix: `docs/security/architecture.md` §9
+
 ### Tools (`internal/tools/`)
 
 - `tools.go` — `AgentTools` struct wrapping Eino `ToolsConfig`; currently registers only the weather tool

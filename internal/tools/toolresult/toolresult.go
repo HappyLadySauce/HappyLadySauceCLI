@@ -6,15 +6,8 @@ import (
 	"encoding/json"
 	"errors"
 	"strings"
-)
 
-const (
-	// ReasonUserDenied marks a human approval rejection payload.
-	// ReasonUserDenied 标记人工审批拒绝 payload。
-	ReasonUserDenied = "user_denied"
-	// ReasonPolicyDenied marks a policy engine denial payload.
-	// ReasonPolicyDenied 标记策略引擎拒绝 payload。
-	ReasonPolicyDenied = "policy_denied"
+	securitycore "github.com/HappyLadySauce/HappyLadySauceCLI/internal/security"
 )
 
 type errorPayload struct {
@@ -64,8 +57,7 @@ func IsErrorPayload(content string) bool {
 // IsDeniedPayload reports whether content is a structured authorization denial payload.
 // IsDeniedPayload 判断 content 是否为结构化授权拒绝 payload。
 func IsDeniedPayload(content string) bool {
-	reason := DenialReason(content)
-	return reason == ReasonUserDenied || reason == ReasonPolicyDenied
+	return securitycore.IsStructuredDenialReason(DenialReason(content))
 }
 
 // DenialReason returns the structured denial reason from a tool payload, if any.

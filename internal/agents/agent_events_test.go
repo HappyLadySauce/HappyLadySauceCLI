@@ -10,6 +10,7 @@ import (
 	"github.com/cloudwego/eino/adk"
 	"github.com/cloudwego/eino/schema"
 
+	"github.com/HappyLadySauce/HappyLadySauceCLI/internal/security"
 	"github.com/HappyLadySauce/HappyLadySauceCLI/internal/terminal"
 	"github.com/HappyLadySauce/HappyLadySauceCLI/internal/tools/toolresult"
 )
@@ -240,7 +241,7 @@ func TestConsumeAgentEvents_ReActTurnWithToolDeniedPayload(t *testing.T) {
 			},
 		},
 	})
-	denialPayload := toolresult.FormatFailure(errors.New("capability denied by user: get_weather"), toolresult.ReasonUserDenied)
+	denialPayload := toolresult.FormatFailure(errors.New("capability denied by user: get_weather"), security.DenialReasonUserDenied)
 	gen.Send(&adk.AgentEvent{
 		AgentName: "assistant",
 		Output: &adk.AgentOutput{

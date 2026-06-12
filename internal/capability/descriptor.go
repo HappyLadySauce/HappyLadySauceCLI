@@ -100,7 +100,43 @@ func (d Descriptor) Validate() error {
 	if !validDefaultPolicy(d.DefaultPolicy) {
 		errs = append(errs, fmt.Errorf("invalid default policy: %s", d.DefaultPolicy))
 	}
+	for _, scope := range d.Scopes {
+		scope = strings.TrimSpace(scope)
+		if strings.HasPrefix(scope, "network:") && strings.TrimSpace(strings.TrimPrefix(scope, "network:")) == "" {
+			errs = append(errs, errors.New("network scope must include a non-empty suffix after network:"))
+		}
+	}
+	if HasNetworkScope(d.Scopes) && len(d.Resources) == 0 {
+		errs = append(errs, errors.New("capabilities with network: scopes must declare Resources allowlist"))
+	}
+	if HasHTTPResource(d.Resources) && !HasNetworkScope(d.Scopes) {
+		errs = append(errs, errors.New("capabilities with http(s) Resources must declare network: scopes"))
+	}
 	return errors.Join(errs...)
+}
+
+// HasNetworkScope reports whether scopes include a non-empty network: entry.
+// HasNetworkScope 判断 scopes 是否包含非空的 network: 条目。
+func HasNetworkScope(scopes []string) bool {
+	for _, scope := range scopes {
+		scope = strings.TrimSpace(scope)
+		if strings.HasPrefix(scope, "network:") && strings.TrimSpace(strings.TrimPrefix(scope, "network:")) != "" {
+			return true
+		}
+	}
+	return false
+}
+
+// HasHTTPResource reports whether resources include an http(s) URL allowlist entry.
+// HasHTTPResource 判断 resources 是否包含 http(s) URL 白名单条目。
+func HasHTTPResource(resources []string) bool {
+	for _, resource := range resources {
+		resource = strings.TrimSpace(strings.ToLower(resource))
+		if strings.HasPrefix(resource, "http://") || strings.HasPrefix(resource, "https://") {
+			return true
+		}
+	}
+	return false
 }
 
 // UnknownDescriptor returns a review-only descriptor for unregistered capabilities.

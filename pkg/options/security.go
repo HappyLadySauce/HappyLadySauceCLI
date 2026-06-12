@@ -11,10 +11,6 @@ import (
 )
 
 const (
-	// ApprovalDefaultReview requires interactive confirmation for reviewed operations.
-	// ApprovalDefaultReview 表示需要对 review 操作进行交互确认。
-	ApprovalDefaultReview = "review"
-
 	// PersistContentSanitized stores sanitized message content and raw JSON.
 	// PersistContentSanitized 表示保存脱敏后的消息内容与 raw JSON。
 	PersistContentSanitized = "sanitized"
@@ -27,7 +23,6 @@ const (
 // SecurityOptions 配置执行安全与持久化脱敏策略。
 type SecurityOptions struct {
 	WorkspaceRoots        []string `mapstructure:"workspace_roots"`
-	ApprovalDefault       string   `mapstructure:"approval_default"`
 	PersistContent        string   `mapstructure:"persist_content"`
 	CommandTimeoutSeconds int      `mapstructure:"command_timeout_seconds"`
 	MaxToolOutputBytes    int      `mapstructure:"max_tool_output_bytes"`
@@ -42,7 +37,6 @@ func NewSecurityOptions() *SecurityOptions {
 	}
 	return &SecurityOptions{
 		WorkspaceRoots:        []string{cwd},
-		ApprovalDefault:       ApprovalDefaultReview,
 		PersistContent:        PersistContentSanitized,
 		CommandTimeoutSeconds: 30,
 		MaxToolOutputBytes:    1 << 20,
@@ -58,9 +52,6 @@ func (o *SecurityOptions) Validate() error {
 	defaults := NewSecurityOptions()
 	if len(o.WorkspaceRoots) == 0 {
 		o.WorkspaceRoots = append([]string(nil), defaults.WorkspaceRoots...)
-	}
-	if strings.TrimSpace(o.ApprovalDefault) == "" {
-		o.ApprovalDefault = defaults.ApprovalDefault
 	}
 	if strings.TrimSpace(o.PersistContent) == "" {
 		o.PersistContent = defaults.PersistContent
@@ -81,11 +72,6 @@ func (o *SecurityOptions) Validate() error {
 		}
 		o.WorkspaceRoots[i] = normalized
 	}
-	switch o.ApprovalDefault {
-	case ApprovalDefaultReview:
-	default:
-		errs = errors.Join(errs, fmt.Errorf("security.approval_default must be %q", ApprovalDefaultReview))
-	}
 	switch o.PersistContent {
 	case PersistContentSanitized, PersistContentMetadataOnly:
 	default:
@@ -104,7 +90,6 @@ func (o *SecurityOptions) Validate() error {
 // AddFlags 注册安全配置命令行参数。
 func (o *SecurityOptions) AddFlags(fs *pflag.FlagSet) {
 	fs.StringSliceVar(&o.WorkspaceRoots, "security-workspace-roots", o.WorkspaceRoots, "Allowed workspace roots for path/file operation resources")
-	fs.StringVar(&o.ApprovalDefault, "security-approval-default", o.ApprovalDefault, "Default approval mode for reviewed operations")
 	fs.StringVar(&o.PersistContent, "security-persist-content", o.PersistContent, "Context persistence mode: sanitized or metadata_only")
 	fs.IntVar(&o.CommandTimeoutSeconds, "security-command-timeout-seconds", o.CommandTimeoutSeconds, "Default timeout for command.run operations")
 	fs.IntVar(&o.MaxToolOutputBytes, "security-max-tool-output-bytes", o.MaxToolOutputBytes, "Maximum tool output bytes")

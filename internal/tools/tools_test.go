@@ -2,6 +2,7 @@ package tools
 
 import (
 	"context"
+	"strings"
 	"testing"
 
 	"github.com/HappyLadySauce/HappyLadySauceCLI/internal/capability"
@@ -72,6 +73,50 @@ func TestOperationBuildersCoverAllRegisteredTools(t *testing.T) {
 		}
 		if builders[info.Name] == nil {
 			t.Fatalf("tool %q has no operation builder", info.Name)
+		}
+	}
+}
+
+func TestOperationBuildersHonorNetworkScopeDiscipline(t *testing.T) {
+	t.Parallel()
+
+	cfg, err := NewAgentTools()
+	if err != nil {
+		t.Fatalf("NewAgentTools() error = %v", err)
+	}
+	registry, err := NewCapabilityRegistry()
+	if err != nil {
+		t.Fatalf("NewCapabilityRegistry() error = %v", err)
+	}
+	builders := NewOperationBuilders()
+
+	for _, registeredTool := range cfg.Tools {
+		info, err := registeredTool.Info(context.Background())
+		if err != nil {
+			t.Fatalf("tool info error: %v", err)
+		}
+		desc, ok := registry.Get(info.Name)
+		if !ok {
+			t.Fatalf("tool %q has no capability descriptor", info.Name)
+		}
+		if !capability.HasNetworkScope(desc.Scopes) && !capability.HasHTTPResource(desc.Resources) {
+			continue
+		}
+		builder := builders[info.Name]
+		if builder == nil {
+			t.Fatalf("tool %q has no operation builder", info.Name)
+		}
+		operation := builder(context.Background(), securitycore.OperationRequest{
+			ToolName:   info.Name,
+			Capability: desc,
+			Registered: true,
+			Risk:       desc.Risk,
+		}, `{}`)
+		if !strings.HasPrefix(operation.OperationKind, "network.") {
+			t.Fatalf("tool %q OperationKind = %q, want network.* prefix", info.Name, operation.OperationKind)
+		}
+		if len(operation.Resources) == 0 {
+			t.Fatalf("tool %q builder returned no Resources for network capability", info.Name)
 		}
 	}
 }
