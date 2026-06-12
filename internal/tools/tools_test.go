@@ -41,7 +41,7 @@ func TestNewOperationBuildersRegistersWeatherBuilder(t *testing.T) {
 		ToolName:      "get_weather",
 		OperationKind: securitycore.OperationNativeTool,
 		Risk:          capability.RiskLow,
-	}, `{city=北京}`)
+	}, securitycore.OperationBuildInput{Summary: `{city=北京}`})
 	if operation.OperationKind != "network.weather" {
 		t.Fatalf("OperationKind = %q, want network.weather", operation.OperationKind)
 	}
@@ -111,7 +111,7 @@ func TestOperationBuildersHonorNetworkScopeDiscipline(t *testing.T) {
 			Capability: desc,
 			Registered: true,
 			Risk:       desc.Risk,
-		}, `{}`)
+		}, securitycore.OperationBuildInput{RawJSON: `{}`, Summary: securitycore.SummarizeArguments(`{}`)})
 		if !strings.HasPrefix(operation.OperationKind, "network.") {
 			t.Fatalf("tool %q OperationKind = %q, want network.* prefix", info.Name, operation.OperationKind)
 		}

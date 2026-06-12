@@ -337,7 +337,7 @@ func TestWrapInvokableToolCallRejectsEscapingPathResource(t *testing.T) {
 		Grants:         policy.NewSessionGrants(),
 		WorkspaceGuard: guard,
 		Builders: map[string]securitycore.OperationBuilder{
-			"read_file": func(ctx context.Context, request securitycore.OperationRequest, argumentsSummary string) securitycore.OperationRequest {
+			"read_file": func(ctx context.Context, request securitycore.OperationRequest, input securitycore.OperationBuildInput) securitycore.OperationRequest {
 				request.OperationKind = securitycore.OperationFileRead
 				request.Resources = []securitycore.OperationResource{{Kind: "path", Value: filepath.Join(outside, "secret.txt")}}
 				return request
@@ -382,7 +382,7 @@ func TestWrapInvokableToolCallRejectsNetworkResourceOutsideScope(t *testing.T) {
 		Policy:   policy.NewEngine(),
 		Grants:   policy.NewSessionGrants(),
 		Builders: map[string]securitycore.OperationBuilder{
-			"network_tool": func(ctx context.Context, request securitycore.OperationRequest, argumentsSummary string) securitycore.OperationRequest {
+			"network_tool": func(ctx context.Context, request securitycore.OperationRequest, input securitycore.OperationBuildInput) securitycore.OperationRequest {
 				request.OperationKind = "network.test"
 				request.Resources = []securitycore.OperationResource{{Kind: "url", Value: "https://example.com/other"}}
 				return request
@@ -407,6 +407,99 @@ func TestWrapInvokableToolCallRejectsNetworkResourceOutsideScope(t *testing.T) {
 	}
 	if called.Load() {
 		t.Fatal("endpoint should not run for disallowed network resource")
+	}
+}
+
+func TestWrapInvokableToolCallRejectsNetworkResourceWithoutNetworkScope(t *testing.T) {
+	t.Parallel()
+
+	registry := newTestRegistry(t, capability.Descriptor{
+		Name:          "network_tool",
+		Type:          capability.TypeNativeTool,
+		Source:        capability.SourceBuiltin,
+		Risk:          capability.RiskLow,
+		DefaultPolicy: capability.DefaultPolicyAllow,
+	})
+	middleware, err := NewExecutionSecurityMiddleware(Config{
+		Registry: registry,
+		Policy:   policy.NewEngine(),
+		Grants:   policy.NewSessionGrants(),
+		Builders: map[string]securitycore.OperationBuilder{
+			"network_tool": func(ctx context.Context, request securitycore.OperationRequest, input securitycore.OperationBuildInput) securitycore.OperationRequest {
+				request.OperationKind = "network.test"
+				request.Resources = []securitycore.OperationResource{{Kind: "url", Value: "https://example.com/other"}}
+				return request
+			},
+		},
+	})
+	if err != nil {
+		t.Fatalf("NewExecutionSecurityMiddleware() error = %v", err)
+	}
+
+	var called atomic.Bool
+	wrapped, err := middleware.WrapInvokableToolCall(context.Background(), func(ctx context.Context, argumentsInJSON string, opts ...tool.Option) (string, error) {
+		called.Store(true)
+		return "ok", nil
+	}, &adk.ToolContext{Name: "network_tool", CallID: "call-1"})
+	if err != nil {
+		t.Fatalf("WrapInvokableToolCall() error = %v", err)
+	}
+
+	if _, err := wrapped(context.Background(), `{}`); err == nil {
+		t.Fatal("expected network resource error without network scope")
+	}
+	if called.Load() {
+		t.Fatal("endpoint should not run for disallowed network resource")
+	}
+}
+
+func TestWrapInvokableToolCallInjectsAuthorizedOperationIntoContext(t *testing.T) {
+	t.Parallel()
+
+	registry := newTestRegistry(t, capability.Descriptor{
+		Name:          "get_weather",
+		Type:          capability.TypeNativeTool,
+		Source:        capability.SourceBuiltin,
+		Risk:          capability.RiskLow,
+		DefaultPolicy: capability.DefaultPolicyAllow,
+		Scopes:        []string{"network:weather"},
+		Resources:     []string{"https://uapis.cn/api/v1/misc/weather"},
+	})
+	middleware, err := NewExecutionSecurityMiddleware(Config{
+		Registry: registry,
+		Policy:   policy.NewEngine(),
+		Grants:   policy.NewSessionGrants(),
+		Builders: map[string]securitycore.OperationBuilder{
+			"get_weather": func(ctx context.Context, request securitycore.OperationRequest, input securitycore.OperationBuildInput) securitycore.OperationRequest {
+				request.OperationKind = "network.weather"
+				request.Resources = []securitycore.OperationResource{{Kind: "url", Value: "https://uapis.cn/api/v1/misc/weather"}}
+				return request
+			},
+		},
+	})
+	if err != nil {
+		t.Fatalf("NewExecutionSecurityMiddleware() error = %v", err)
+	}
+
+	wrapped, err := middleware.WrapInvokableToolCall(context.Background(), func(ctx context.Context, argumentsInJSON string, opts ...tool.Option) (string, error) {
+		operation, ok := securitycore.AuthorizedOperationFromContext(ctx)
+		if !ok {
+			t.Fatal("expected authorized operation in context")
+		}
+		if operation.OperationKind != "network.weather" {
+			t.Fatalf("OperationKind = %q, want network.weather", operation.OperationKind)
+		}
+		if len(operation.Resources) == 0 {
+			t.Fatal("expected authorized resources")
+		}
+		return "ok", nil
+	}, &adk.ToolContext{Name: "get_weather", CallID: "call-1"})
+	if err != nil {
+		t.Fatalf("WrapInvokableToolCall() error = %v", err)
+	}
+
+	if _, err := wrapped(context.Background(), `{"city":"北京"}`); err != nil {
+		t.Fatalf("wrapped endpoint returned error: %v", err)
 	}
 }
 
@@ -500,7 +593,7 @@ func TestWrapInvokableToolCallReusesSessionApprovalForDifferentNetworkArgs(t *te
 		Grants:   policy.NewSessionGrants(),
 		Approver: approver,
 		Builders: map[string]securitycore.OperationBuilder{
-			"get_weather": func(ctx context.Context, request securitycore.OperationRequest, argumentsSummary string) securitycore.OperationRequest {
+			"get_weather": func(ctx context.Context, request securitycore.OperationRequest, input securitycore.OperationBuildInput) securitycore.OperationRequest {
 				request.OperationKind = "network.weather"
 				request.Resources = []securitycore.OperationResource{{Kind: "url", Value: "https://uapis.cn/api/v1/misc/weather"}}
 				return request
@@ -610,7 +703,7 @@ func TestWrapInvokableToolCallAppliesTimeout(t *testing.T) {
 		Approver:              &fakeApprover{approve: true},
 		CommandTimeoutSeconds: 1,
 		Builders: map[string]securitycore.OperationBuilder{
-			"slow_tool": func(ctx context.Context, request securitycore.OperationRequest, argumentsSummary string) securitycore.OperationRequest {
+			"slow_tool": func(ctx context.Context, request securitycore.OperationRequest, input securitycore.OperationBuildInput) securitycore.OperationRequest {
 				request.OperationKind = securitycore.OperationCommandRun
 				return request
 			},

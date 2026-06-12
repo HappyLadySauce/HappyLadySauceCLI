@@ -65,9 +65,16 @@ type OperationRequest struct {
 	SanitizedArgsSummary string
 }
 
-// OperationBuilder enriches the default operation request from sanitized tool input.
-// OperationBuilder 基于脱敏工具输入补充默认操作请求。
-type OperationBuilder func(ctx context.Context, request OperationRequest, argumentsSummary string) OperationRequest
+// OperationBuildInput carries sanitized and raw tool arguments for builders.
+// OperationBuildInput 携带供 builder 使用的脱敏与原始工具参数。
+type OperationBuildInput struct {
+	RawJSON string
+	Summary string
+}
+
+// OperationBuilder enriches the default operation request from tool input.
+// OperationBuilder 基于工具输入补充默认操作请求。
+type OperationBuilder func(ctx context.Context, request OperationRequest, input OperationBuildInput) OperationRequest
 
 // GrantKey returns the stable reusable approval key for the operation.
 // GrantKey 返回该操作对应的稳定可复用授权 key。

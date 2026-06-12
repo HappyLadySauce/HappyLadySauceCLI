@@ -8,7 +8,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
-	"net/url"
+	"strings"
 	"sync"
 	"sync/atomic"
 	"time"
@@ -22,6 +22,7 @@ import (
 	securitycore "github.com/HappyLadySauce/HappyLadySauceCLI/internal/security"
 	"github.com/HappyLadySauce/HappyLadySauceCLI/internal/security/policy"
 	"github.com/HappyLadySauce/HappyLadySauceCLI/internal/tools/toolresult"
+	"github.com/HappyLadySauce/HappyLadySauceCLI/internal/utils/urlscope"
 )
 
 // ApprovalRequest contains the information shown to a human approver.
@@ -124,15 +125,15 @@ func NewExecutionSecurityMiddleware(cfg Config) (*ExecutionSecurityMiddleware, e
 // WrapInvokableToolCall 保护标准 invokable tool 调用。
 func (m *ExecutionSecurityMiddleware) WrapInvokableToolCall(ctx context.Context, endpoint adk.InvokableToolCallEndpoint, tCtx *adk.ToolContext) (adk.InvokableToolCallEndpoint, error) {
 	return func(ctx context.Context, argumentsInJSON string, opts ...tool.Option) (string, error) {
-		auth, err := m.authorize(ctx, tCtx, securitycore.SummarizeArguments(argumentsInJSON))
+		auth, err := m.authorize(ctx, tCtx, operationBuildInput(argumentsInJSON))
 		if payload, recovered, authErr := m.finishAuthorize(ctx, auth, err); recovered {
 			return payload, nil
 		} else if authErr != nil {
 			return "", authErr
 		}
-		operation := auth.operation
 
-		ctx, cancel := m.executionContext(ctx, operation)
+		ctx = securitycore.WithAuthorizedOperation(ctx, auth.operation)
+		ctx, cancel := m.executionContext(ctx, auth.operation)
 		defer cancel()
 		start := time.Now()
 		result, err := endpoint(ctx, argumentsInJSON, opts...)
@@ -158,15 +159,15 @@ func (m *ExecutionSecurityMiddleware) WrapInvokableToolCall(ctx context.Context,
 // WrapStreamableToolCall 保护标准 streamable tool 调用。
 func (m *ExecutionSecurityMiddleware) WrapStreamableToolCall(ctx context.Context, endpoint adk.StreamableToolCallEndpoint, tCtx *adk.ToolContext) (adk.StreamableToolCallEndpoint, error) {
 	return func(ctx context.Context, argumentsInJSON string, opts ...tool.Option) (*schema.StreamReader[string], error) {
-		auth, err := m.authorize(ctx, tCtx, securitycore.SummarizeArguments(argumentsInJSON))
+		auth, err := m.authorize(ctx, tCtx, operationBuildInput(argumentsInJSON))
 		if payload, recovered, authErr := m.finishAuthorize(ctx, auth, err); recovered {
 			return schema.StreamReaderFromArray([]string{payload}), nil
 		} else if authErr != nil {
 			return nil, authErr
 		}
-		operation := auth.operation
 
-		ctx, cancel := m.executionContext(ctx, operation)
+		ctx = securitycore.WithAuthorizedOperation(ctx, auth.operation)
+		ctx, cancel := m.executionContext(ctx, auth.operation)
 		start := time.Now()
 		result, err := endpoint(ctx, argumentsInJSON, opts...)
 		if err != nil {
@@ -220,15 +221,15 @@ func (m *ExecutionSecurityMiddleware) WrapStreamableToolCall(ctx context.Context
 // WrapEnhancedInvokableToolCall 保护 enhanced invokable tool 调用。
 func (m *ExecutionSecurityMiddleware) WrapEnhancedInvokableToolCall(ctx context.Context, endpoint adk.EnhancedInvokableToolCallEndpoint, tCtx *adk.ToolContext) (adk.EnhancedInvokableToolCallEndpoint, error) {
 	return func(ctx context.Context, toolArgument *schema.ToolArgument, opts ...tool.Option) (*schema.ToolResult, error) {
-		auth, err := m.authorize(ctx, tCtx, toolArgumentSummary(toolArgument))
+		auth, err := m.authorize(ctx, tCtx, toolArgumentBuildInput(toolArgument))
 		if payload, recovered, authErr := m.finishAuthorize(ctx, auth, err); recovered {
 			return textToolResult(payload), nil
 		} else if authErr != nil {
 			return nil, authErr
 		}
-		operation := auth.operation
 
-		ctx, cancel := m.executionContext(ctx, operation)
+		ctx = securitycore.WithAuthorizedOperation(ctx, auth.operation)
+		ctx, cancel := m.executionContext(ctx, auth.operation)
 		defer cancel()
 		start := time.Now()
 		result, err := endpoint(ctx, toolArgument, opts...)
@@ -254,15 +255,15 @@ func (m *ExecutionSecurityMiddleware) WrapEnhancedInvokableToolCall(ctx context.
 // WrapEnhancedStreamableToolCall 保护 enhanced streamable tool 调用。
 func (m *ExecutionSecurityMiddleware) WrapEnhancedStreamableToolCall(ctx context.Context, endpoint adk.EnhancedStreamableToolCallEndpoint, tCtx *adk.ToolContext) (adk.EnhancedStreamableToolCallEndpoint, error) {
 	return func(ctx context.Context, toolArgument *schema.ToolArgument, opts ...tool.Option) (*schema.StreamReader[*schema.ToolResult], error) {
-		auth, err := m.authorize(ctx, tCtx, toolArgumentSummary(toolArgument))
+		auth, err := m.authorize(ctx, tCtx, toolArgumentBuildInput(toolArgument))
 		if payload, recovered, authErr := m.finishAuthorize(ctx, auth, err); recovered {
 			return schema.StreamReaderFromArray([]*schema.ToolResult{textToolResult(payload)}), nil
 		} else if authErr != nil {
 			return nil, authErr
 		}
-		operation := auth.operation
 
-		ctx, cancel := m.executionContext(ctx, operation)
+		ctx = securitycore.WithAuthorizedOperation(ctx, auth.operation)
+		ctx, cancel := m.executionContext(ctx, auth.operation)
 		start := time.Now()
 		result, err := endpoint(ctx, toolArgument, opts...)
 		if err != nil {
@@ -312,8 +313,8 @@ func (m *ExecutionSecurityMiddleware) WrapEnhancedStreamableToolCall(ctx context
 	}, nil
 }
 
-func (m *ExecutionSecurityMiddleware) authorize(ctx context.Context, tCtx *adk.ToolContext, argsSummary string) (authorization, error) {
-	operation, err := m.operationForTool(ctx, tCtx, argsSummary)
+func (m *ExecutionSecurityMiddleware) authorize(ctx context.Context, tCtx *adk.ToolContext, input securitycore.OperationBuildInput) (authorization, error) {
+	operation, err := m.operationForTool(ctx, tCtx, input)
 	if err != nil {
 		return authorization{operation: operation}, err
 	}
@@ -412,7 +413,7 @@ func (m *ExecutionSecurityMiddleware) descriptorForTool(tCtx *adk.ToolContext) (
 	return capability.UnknownDescriptor(name), false
 }
 
-func (m *ExecutionSecurityMiddleware) operationForTool(ctx context.Context, tCtx *adk.ToolContext, argsSummary string) (securitycore.OperationRequest, error) {
+func (m *ExecutionSecurityMiddleware) operationForTool(ctx context.Context, tCtx *adk.ToolContext, input securitycore.OperationBuildInput) (securitycore.OperationRequest, error) {
 	descriptor, registered := m.descriptorForTool(tCtx)
 	operation := securitycore.OperationRequest{
 		ToolName:             toolName(tCtx),
@@ -421,13 +422,13 @@ func (m *ExecutionSecurityMiddleware) operationForTool(ctx context.Context, tCtx
 		Registered:           registered,
 		OperationKind:        securitycore.OperationNativeTool,
 		Risk:                 descriptor.Risk,
-		SanitizedArgsSummary: argsSummary,
+		SanitizedArgsSummary: input.Summary,
 	}
 	for _, resource := range descriptor.Resources {
 		operation.Resources = append(operation.Resources, securitycore.OperationResource{Kind: "declared", Value: resource})
 	}
 	if builder := m.builders[operation.ToolName]; builder != nil {
-		operation = builder(ctx, operation, argsSummary)
+		operation = builder(ctx, operation, input)
 	}
 	if operation.Risk == "" {
 		operation.Risk = operation.Capability.Risk
@@ -467,17 +468,39 @@ func (m *ExecutionSecurityMiddleware) normalizeOperationResources(resources []se
 }
 
 func (m *ExecutionSecurityMiddleware) validateOperationScopes(operation securitycore.OperationRequest) error {
-	if hasScopePrefix(operation.Capability.Scopes, "network:") {
-		for _, resource := range operation.Resources {
-			if resource.Kind != "url" {
-				continue
-			}
-			if !resourceURLAllowed(resource.Value, operation.Capability.Resources) {
-				return fmt.Errorf("network resource is outside descriptor resources: %s", resource.Value)
-			}
+	if !requiresNetworkResourceValidation(operation) {
+		return nil
+	}
+
+	hasURL := false
+	for _, resource := range operation.Resources {
+		if resource.Kind != "url" {
+			continue
+		}
+		hasURL = true
+		if !urlscope.Allowed(resource.Value, operation.Capability.Resources) {
+			return fmt.Errorf("network resource is outside descriptor resources: %s", resource.Value)
 		}
 	}
+	if hasURL && len(operation.Capability.Resources) == 0 {
+		return fmt.Errorf("network resource requires descriptor resources allowlist")
+	}
 	return nil
+}
+
+func requiresNetworkResourceValidation(operation securitycore.OperationRequest) bool {
+	if hasScopePrefix(operation.Capability.Scopes, "network:") {
+		return true
+	}
+	if strings.HasPrefix(operation.OperationKind, "network.") {
+		return true
+	}
+	for _, resource := range operation.Resources {
+		if resource.Kind == "url" {
+			return true
+		}
+	}
+	return false
 }
 
 func (m *ExecutionSecurityMiddleware) finishAuthorize(ctx context.Context, auth authorization, err error) (string, bool, error) {
@@ -671,26 +694,18 @@ func hasScopePrefix(scopes []string, prefix string) bool {
 	return false
 }
 
-func resourceURLAllowed(resource string, allowed []string) bool {
-	normalizedResource, ok := normalizeURLForScope(resource)
-	if !ok {
-		return false
+func operationBuildInput(rawJSON string) securitycore.OperationBuildInput {
+	return securitycore.OperationBuildInput{
+		RawJSON: rawJSON,
+		Summary: securitycore.SummarizeArguments(rawJSON),
 	}
-	for _, candidate := range allowed {
-		normalizedCandidate, ok := normalizeURLForScope(candidate)
-		if ok && normalizedResource == normalizedCandidate {
-			return true
-		}
-	}
-	return false
 }
 
-func normalizeURLForScope(value string) (string, bool) {
-	parsed, err := url.Parse(value)
-	if err != nil || parsed.Scheme == "" || parsed.Host == "" {
-		return "", false
+func toolArgumentBuildInput(argument *schema.ToolArgument) securitycore.OperationBuildInput {
+	if argument == nil {
+		return securitycore.OperationBuildInput{}
 	}
-	return parsed.String(), true
+	return operationBuildInput(argument.Text)
 }
 
 func toolName(tCtx *adk.ToolContext) string {
@@ -705,11 +720,4 @@ func toolCallID(tCtx *adk.ToolContext) string {
 		return ""
 	}
 	return tCtx.CallID
-}
-
-func toolArgumentSummary(argument *schema.ToolArgument) string {
-	if argument == nil {
-		return ""
-	}
-	return securitycore.SummarizeArguments(argument.Text)
 }

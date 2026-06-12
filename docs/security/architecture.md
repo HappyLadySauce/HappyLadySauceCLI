@@ -32,6 +32,9 @@
 | `internal/capability/registry.go` | 线程安全的 Capability 注册表 |
 | `internal/security/operation.go` | OperationRequest、AuditRecord、GrantKey 生成 |
 | `internal/security/sanitizer.go` | 正则 + JSON 结构化密钥脱敏引擎 |
+| `internal/security/authcontext.go` | 已授权 OperationRequest 的 context 传递 |
+| `internal/utils/urlscope/` | URL 白名单规范化与比较（跨模块复用） |
+| `internal/tools/execguard/` | tool endpoint 与已授权 URL 资源对齐 helper |
 | `internal/security/workspace.go` | 路径遍历与符号链接保护 |
 | `internal/security/policy/engine.go` | 策略决策矩阵 |
 | `internal/security/policy/grants.go` | 会话级审批授权缓存 |
@@ -176,11 +179,18 @@ type OperationRequest struct {
 
 ### 4.3 OperationBuilder
 
-每个工具可以注册一个 `OperationBuilder` 函数，在中间件拦截时被调用，用于从原始工具参数中提取 `OperationKind`、`Resources` 等字段：
+每个工具可以注册一个 `OperationBuilder` 函数，在中间件拦截时被调用，用于从原始与脱敏工具参数中提取 `OperationKind`、`Resources` 等字段：
 
 ```go
-type OperationBuilder func(ctx context.Context, request OperationRequest, argumentsSummary string) OperationRequest
+type OperationBuildInput struct {
+    RawJSON string // 原始 argumentsInJSON
+    Summary string // SummarizeArguments(RawJSON)
+}
+
+type OperationBuilder func(ctx context.Context, request OperationRequest, input OperationBuildInput) OperationRequest
 ```
+
+`RawJSON` 供 builder 解析完整参数（避免 240 字符摘要截断）；`Summary` 供审批提示与审计摘要使用。
 
 ### 4.4 GrantKey 与 SessionGrantKey
 
@@ -342,7 +352,7 @@ authorize()                          ← 策略评估 + 审批
   │   ├── OperationBuilder 补充信息
   │   ├── SanitizeText 脱敏参数
   │   ├── NormalizePath 校验路径资源
-  │   └── validateOperationScopes 校验 scope/resource allowlist
+  │   └── validateOperationScopes 校验 network/url allowlist（见下）
   ├── policy.Evaluate()              ← 策略矩阵决策
   │
   ├── ActionAllow → 直接放行
@@ -354,10 +364,11 @@ authorize()                          ← 策略评估 + 审批
       ├── approver.Approve() 展示审批提示
       └── 审批通过 + scope=session → grants.Allow()
 
+WithAuthorizedOperation(ctx)         ← 将已授权 OperationRequest 注入 context
 executionContext()                   ← 对 command.run 应用超时控制
   └── context.WithTimeout(ctx, timeout)
 
-endpoint() 调用实际工具              ← 执行
+endpoint() 调用实际工具              ← 执行；endpoint 不得作用于与 AuthorizedOperation.Resources 不一致的目标
 
 ensureToolOutputWithinLimit()        ← 输出大小检验
 
@@ -375,6 +386,16 @@ auditExecution() / auditStreamOpened()  ← 审计日志
 | 工具执行/网络/参数/输出超限 | soft-fail JSON | 是 | 继续 |
 
 用户/策略拒绝以 `status=denial_returned recovered=true` 审计；工具 endpoint 执行失败以 `status=tool_error_returned recovered=true` 审计后回传给模型，ReAct 循环可继续。
+
+**validateOperationScopes 触发条件**（满足任一即校验 `url` 资源）：
+
+- descriptor `Scopes` 含 `network:` 前缀
+- `OperationKind` 以 `network.` 开头
+- `Resources` 中存在 `Kind == "url"` 的项
+
+存在 `url` 资源但 descriptor `Resources` 白名单为空时 hard-fail。URL 比较使用 `internal/utils/urlscope` 的 `CanonicalURLForAllowlist`（scheme/host 小写、剥离默认端口、规范化 path、拒绝 userinfo、剥离 fragment）。
+
+**Endpoint TOCTOU 约束**：授权基于 builder 产出的 `OperationRequest`；endpoint 应通过 `security.AuthorizedOperationFromContext(ctx)` 读取已授权资源，并使用 `execguard.MatchAuthorizedURL` / `WorkspaceGuard` 验证实际执行目标与授权一致，不得从 raw JSON 解析出不同的 path/URL 后静默执行。
 
 ### 9.4 流式输出的特殊处理
 
