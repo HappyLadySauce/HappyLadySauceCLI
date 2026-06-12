@@ -14,6 +14,7 @@ import (
 	contextmodel "github.com/HappyLadySauce/HappyLadySauceCLI/internal/context/model"
 	contextstatus "github.com/HappyLadySauce/HappyLadySauceCLI/internal/context/status"
 	contexttracker "github.com/HappyLadySauce/HappyLadySauceCLI/internal/context/tracker"
+	"github.com/HappyLadySauce/HappyLadySauceCLI/internal/logger"
 	"github.com/HappyLadySauce/HappyLadySauceCLI/migrations"
 	storagesqlite "github.com/HappyLadySauce/HappyLadySauceCLI/pkg/storage/sqlite"
 )
@@ -52,21 +53,38 @@ func Open(ctx context.Context) (*Service, error) {
 	}
 
 	committed = true
-	return &Service{
+	service := &Service{
 		db:      db,
 		store:   contextstore.New(db),
 		tracker: contexttracker.New(),
-	}, nil
+	}
+	logger.PhaseInfo(ctx, 1, "session_open", "session_id", service.tracker.Session().ID)
+	return service, nil
 }
 
 // BeginTurn starts context tracking for one user interaction and returns the tracking context.
 // BeginTurn 为一次用户交互启动 context tracking，并返回带 tracking 的 context。
-func (s *Service) BeginTurn(ctx context.Context) context.Context {
+func (s *Service) BeginTurn(ctx context.Context, userPrompt string) context.Context {
 	if s == nil || s.tracker == nil {
 		return ctx
 	}
-	s.tracker.BeginConversation()
-	return contexttracker.WithTracker(ctx, s.tracker)
+	conversation := s.tracker.BeginConversation()
+	ctx = contexttracker.WithTracker(ctx, s.tracker)
+	session := s.tracker.Session()
+	return logger.AttachTurn(ctx, session.ID, conversation.ID, conversation.Sequence)
+}
+
+// CurrentTurnCount returns the number of model-call turns in the active conversation.
+// CurrentTurnCount 返回当前活跃 conversation 中的模型调用 turn 数。
+func (s *Service) CurrentTurnCount() int {
+	if s == nil || s.tracker == nil {
+		return 0
+	}
+	conversation := s.tracker.CurrentConversation()
+	if conversation == nil {
+		return 0
+	}
+	return len(conversation.Turns)
 }
 
 // FinishTurn finalizes tracking, persists snapshots, and returns a stable render status.
@@ -79,16 +97,6 @@ func (s *Service) FinishTurn(ctx context.Context, messages []*schema.Message, ru
 	conversation := s.tracker.FinishConversation(runErr)
 	contextTokens := s.tracker.TotalTokens()
 	s.status = statusFromConversation(conversation, contextTokens)
-	klog.V(1).Infof(
-		"context turn finished prompt=%d completion=%d total=%d content=%d elapsed_ms=%d messages=%d error=%t",
-		s.status.Prompt,
-		s.status.Completion,
-		s.status.Total,
-		s.status.ContextTokens,
-		s.status.Elapsed.Milliseconds(),
-		len(messages),
-		runErr != nil,
-	)
 	if err := s.persist(ctx, conversation); err != nil {
 		klog.Errorf("save context turn failed: %v", err)
 		return s.status, err
@@ -124,6 +132,15 @@ func (s *Service) persist(ctx context.Context, conversation *contextmodel.Conver
 	if err := s.store.SaveConversation(ctx, conversation); err != nil {
 		return err
 	}
+	savedTurns := 0
+	savedMessages := 0
+	if conversation != nil {
+		savedTurns = len(conversation.Turns)
+		savedMessages = len(conversation.Messages)
+	}
+	logger.PhaseInfo(ctx, 2, "persistence",
+		"saved_turns", savedTurns,
+		"saved_messages", savedMessages)
 	return nil
 }
 

@@ -3,16 +3,17 @@ package usage
 import (
 	"context"
 	"io"
+	"strings"
 	"sync"
 	"time"
 
 	"github.com/cloudwego/eino/adk"
 	einomodel "github.com/cloudwego/eino/components/model"
 	"github.com/cloudwego/eino/schema"
-	"k8s.io/klog/v2"
 
 	contexttracker "github.com/HappyLadySauce/HappyLadySauceCLI/internal/context/tracker"
 	contextusage "github.com/HappyLadySauce/HappyLadySauceCLI/internal/context/usage"
+	"github.com/HappyLadySauce/HappyLadySauceCLI/internal/logger"
 )
 
 // usageMiddleware records provider usage around each Eino ChatModel call.
@@ -96,25 +97,61 @@ func (m *trackingModel) Stream(ctx context.Context, input []*schema.Message, opt
 func recordModelUsage(ctx context.Context, elapsed time.Duration, msg *schema.Message, callErr error) {
 	tracker := contexttracker.FromContext(ctx)
 	if tracker == nil {
-		klog.V(2).Infof("model usage skipped tracker_present=false elapsed_ms=%d error=%t", elapsed.Milliseconds(), callErr != nil)
+		logger.PhaseInfo(ctx, 2, "model_call_end",
+			"reason", "tracker_missing",
+			"elapsed_ms", elapsed.Milliseconds(),
+			"error", callErr != nil)
 		return
 	}
 	turn := contextusage.TurnFromMessage(elapsed, msg, callErr)
 	if turn.Prompt == 0 && turn.Completion == 0 && turn.Total == 0 && callErr == nil {
-		klog.V(2).Infof("model usage missing provider_usage=false elapsed_ms=%d", elapsed.Milliseconds())
+		logger.PhaseInfo(ctx, 2, "model_call_end",
+			"reason", "missing_provider_usage",
+			"elapsed_ms", elapsed.Milliseconds())
 	}
 	recorded := tracker.AddTurn(turn)
 	if recorded == nil {
-		klog.V(2).Infof("model usage skipped active_conversation=false elapsed_ms=%d error=%t", elapsed.Milliseconds(), callErr != nil)
+		logger.PhaseInfo(ctx, 2, "model_call_end",
+			"reason", "active_conversation_missing",
+			"elapsed_ms", elapsed.Milliseconds(),
+			"error", callErr != nil)
 		return
 	}
-	klog.V(1).Infof(
-		"model usage recorded prompt=%d completion=%d total=%d elapsed_ms=%d status=%s error=%t",
-		recorded.Prompt,
-		recorded.Completion,
-		recorded.Total,
-		recorded.Elapsed.Milliseconds(),
-		recorded.Status,
-		callErr != nil,
-	)
+	logger.PhaseInfo(ctx, 1, "model_call_end",
+		"turn_id", recorded.ID,
+		"turn_seq", recorded.Sequence,
+		"prompt", recorded.Prompt,
+		"completion", recorded.Completion,
+		"total", recorded.Total,
+		"elapsed_ms", recorded.Elapsed.Milliseconds(),
+		"status", recorded.Status,
+		"error", callErr != nil,
+		"tool_calls", formatToolCalls(toolCallNames(msg)))
+}
+
+func formatToolCalls(names []string) string {
+	if len(names) == 0 {
+		return "[]"
+	}
+	return "[" + strings.Join(names, ",") + "]"
+}
+
+func toolCallNames(msg *schema.Message) []string {
+	if msg == nil || len(msg.ToolCalls) == 0 {
+		return nil
+	}
+	seen := make(map[string]struct{}, len(msg.ToolCalls))
+	names := make([]string, 0, len(msg.ToolCalls))
+	for _, call := range msg.ToolCalls {
+		name := strings.TrimSpace(call.Function.Name)
+		if name == "" {
+			continue
+		}
+		if _, ok := seen[name]; ok {
+			continue
+		}
+		seen[name] = struct{}{}
+		names = append(names, name)
+	}
+	return names
 }

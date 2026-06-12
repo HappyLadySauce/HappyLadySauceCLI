@@ -44,12 +44,11 @@ make build
 启用诊断日志详细级别：
 
 ```bash
-make run V=1   # 输出 klog.V(1)
-make run V=2   # 输出 klog.V(1) 和 klog.V(2)
-make run APP_HOME=.HAPPLADYSAUCECLI V=1
+make run V=1   # 输出 klog.V(1) 因果主链日志
+make run V=2   # 输出 klog.V(1) 和 klog.V(2) 详细决策日志
 ```
 
-程序内建默认 home 为 `~/.HAPPLADYSAUCECLI`；当前仓库的 `settings.json` 已将 `home` 设置为 `.HAPPLADYSAUCECLI`，因此开发运行会把数据和诊断日志放到当前工作目录下。也可以通过 `APP_HOME=.HAPPLADYSAUCECLI` 或 `HAPPLADYSAUCECLI_HOME` 覆盖。
+程序内建默认 home 为 `~/.HAPPLADYSAUCECLI`；仓库 `settings.json` 通过 `${HAPPLADYSAUCECLI_HOME}` 注入，Makefile 默认导出 `HAPPLADYSAUCECLI_HOME=.HAPPLADYSAUCECLI`，因此开发运行会把数据和诊断日志放到当前工作目录下。
 
 ## 配置
 
@@ -84,7 +83,7 @@ Makefile 会通过 `-include .env` 自动加载 `.env` 并导出变量。
 
 ```json
 {
-    "home": ".HAPPLADYSAUCECLI",
+    "home": "${HAPPLADYSAUCECLI_HOME}",
     "model": {
         "HAPPLADYSAUCECLI_API_KEY": "${HAPPLADYSAUCECLI_API_KEY}",
         "HAPPLADYSAUCECLI_BASE_URL": "${HAPPLADYSAUCECLI_BASE_URL}",
@@ -168,7 +167,31 @@ klog 诊断日志默认写入：
 <home>/logs/happyladysaucecli.log
 ```
 
-程序内建默认 `<home>` 为 `~/.HAPPLADYSAUCECLI`；当前仓库 `settings.json` 已设置为 `.HAPPLADYSAUCECLI`。开发时也可设置 `home` / `HAPPLADYSAUCECLI_HOME` / `APP_HOME` 为其他目录。终端只保留交互对话、工具输出和 `[Stats: ...]` 状态行。使用 `make run V=1` 或 `make run V=2` 可以打开更详细的 token、context 和 compaction 诊断日志。
+终端只保留交互对话、工具输出和 `[Stats: ...]` 状态行；详细诊断写入日志文件。使用 `make run V=1` 打开因果主链，`make run V=2` 额外打开 model call 输入、compaction 检查、工具事件与持久化细节。
+
+日志行统一带 `phase=` 字段，并尽量附带 `conversation_id` 与 `model_call`，便于 grep 串联一次用户交互：
+
+| phase | 级别 | 含义 |
+|-------|------|------|
+| `session_open` | V=1 | CLI 启动，context session 创建 |
+| `user_turn_begin` | V=1 | 收到用户输入，含截断后的 `user_prompt` |
+| `model_call_end` | V=1 | 单次 model call 完成，含 token 与 `tool_calls` |
+| `user_turn_end` | V=1 | 用户回合结束汇总（含 `turn_messages` / `history_messages`） |
+| `model_call_begin` | V=2 | 每次 model call 前的输入消息 roster |
+| `compaction_check` | V=2 | 压缩判定或未触发原因 |
+| `agent_event` | V=2 | 工具结果、错误、退出等 agent 事件 |
+| `persistence` | V=2 | context 快照写入 SQLite |
+| `compaction_done` | Info | 实际发生压缩时 |
+
+示例（天气查询回合，V=2）：
+
+```text
+phase=user_turn_begin conversation_id=conversation_abc user_turn_seq=2 user_prompt="重庆天气怎么样？" history_messages=3
+phase=model_call_begin conversation_id=conversation_abc model_call=1 input_messages=4 message_roster="roles=user:1,assistant:1 ..."
+phase=model_call_end conversation_id=conversation_abc model_call=1 turn_seq=1 prompt=341 completion=95 total=436 tool_calls=[get_weather]
+phase=agent_event conversation_id=conversation_abc kind=tool_message tool_name=get_weather content_len=156
+phase=user_turn_end conversation_id=conversation_abc model_calls=2 turn_messages=4 history_messages=7 content=617 elapsed_ms=2820
+```
 
 ### 上下文压缩
 

@@ -2,6 +2,7 @@ package agents
 
 import (
 	"bytes"
+	"context"
 	"errors"
 	"strings"
 	"testing"
@@ -32,7 +33,7 @@ func TestConsumeAgentEvents_StreamingAssistant(t *testing.T) {
 	var out bytes.Buffer
 	stream := terminal.NewRenderer(&out, &bytes.Buffer{})
 
-	turnMessages, exited, err := ConsumeAgentEvents(iter, stream)
+	turnMessages, exited, err := ConsumeAgentEvents(context.Background(), iter, stream)
 	if err != nil {
 		t.Fatalf("ConsumeAgentEvents returned error: %v", err)
 	}
@@ -72,7 +73,7 @@ func TestConsumeAgentEvents_StreamingAssistantWithReasoning(t *testing.T) {
 	var out bytes.Buffer
 	stream := terminal.NewRenderer(&out, &bytes.Buffer{})
 
-	turnMessages, exited, err := ConsumeAgentEvents(iter, stream)
+	turnMessages, exited, err := ConsumeAgentEvents(context.Background(), iter, stream)
 	if err != nil {
 		t.Fatalf("ConsumeAgentEvents returned error: %v", err)
 	}
@@ -107,7 +108,7 @@ func TestConsumeAgentEvents_NonStreamingAssistant(t *testing.T) {
 	var out bytes.Buffer
 	stream := terminal.NewRenderer(&out, &bytes.Buffer{})
 
-	turnMessages, exited, err := ConsumeAgentEvents(iter, stream)
+	turnMessages, exited, err := ConsumeAgentEvents(context.Background(), iter, stream)
 	if err != nil {
 		t.Fatalf("ConsumeAgentEvents returned error: %v", err)
 	}
@@ -138,7 +139,7 @@ func TestConsumeAgentEvents_ToolMessageAppendedToHistory(t *testing.T) {
 	var out bytes.Buffer
 	stream := terminal.NewRenderer(&out, &bytes.Buffer{})
 
-	turnMessages, exited, err := ConsumeAgentEvents(iter, stream)
+	turnMessages, exited, err := ConsumeAgentEvents(context.Background(), iter, stream)
 	if err != nil {
 		t.Fatalf("ConsumeAgentEvents returned error: %v", err)
 	}
@@ -197,7 +198,7 @@ func TestConsumeAgentEvents_ReActTurnPreservesToolTrace(t *testing.T) {
 	gen.Close()
 
 	stream := terminal.NewRenderer(&bytes.Buffer{}, &bytes.Buffer{})
-	turnMessages, exited, err := ConsumeAgentEvents(iter, stream)
+	turnMessages, exited, err := ConsumeAgentEvents(context.Background(), iter, stream)
 	if err != nil {
 		t.Fatalf("ConsumeAgentEvents returned error: %v", err)
 	}
@@ -226,7 +227,7 @@ func TestConsumeAgentEvents_Error(t *testing.T) {
 	var errOut bytes.Buffer
 	stream := terminal.NewRenderer(&bytes.Buffer{}, &errOut)
 
-	turnMessages, exited, err := ConsumeAgentEvents(iter, stream)
+	turnMessages, exited, err := ConsumeAgentEvents(context.Background(), iter, stream)
 	if err == nil {
 		t.Fatal("expected error")
 	}
@@ -252,7 +253,7 @@ func TestConsumeAgentEvents_Exit(t *testing.T) {
 	var out bytes.Buffer
 	stream := terminal.NewRenderer(&out, &bytes.Buffer{})
 
-	turnMessages, exited, err := ConsumeAgentEvents(iter, stream)
+	turnMessages, exited, err := ConsumeAgentEvents(context.Background(), iter, stream)
 	if err != nil {
 		t.Fatalf("ConsumeAgentEvents returned error: %v", err)
 	}

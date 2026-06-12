@@ -1,6 +1,4 @@
-// Package logging configures application diagnostic logs.
-// Package logging 配置应用诊断日志。
-package logging
+package logger
 
 import (
 	"fmt"
@@ -15,10 +13,10 @@ import (
 
 const defaultLogFilename = "happyladysaucecli.log"
 
-// ConfigureDefaultFile redirects klog output to ~/.HAPPLADYSAUCECLI/logs.
+// ConfigureDefaultFile redirects klog output to <home>/logs/happyladysaucecli.log.
 // The returned closer must be closed after klog has been flushed.
 //
-// ConfigureDefaultFile 将 klog 输出重定向到 ~/.HAPPLADYSAUCECLI/logs。
+// ConfigureDefaultFile 将 klog 输出重定向到 <home>/logs/happyladysaucecli.log。
 // 调用方必须在 flush klog 后关闭返回的 closer。
 func ConfigureDefaultFile() (io.Closer, string, error) {
 	logDir, err := appdirs.LogsDir()

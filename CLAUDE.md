@@ -7,9 +7,8 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 ```bash
 make build          # Build binary to bin/HAPPLADYSAUCECLI.exe
 make run            # Run with go run (needs HAPPLADYSAUCECLI_BASE_URL + HAPPLADYSAUCECLI_MODEL env vars)
-make run V=1        # Run with klog.V(1) diagnostics written to ~/.HAPPLADYSAUCECLI/logs/
-make run V=2        # Run with klog.V(1) and klog.V(2) diagnostics
-make run APP_HOME=.HAPPLADYSAUCECLI V=1  # Keep dev data and logs under the repo working directory
+make run V=1        # Run with klog.V(1) phase trace logs written to <home>/logs/
+make run V=2        # Run with klog.V(1) and klog.V(2) diagnostics (model_call_begin, compaction_check, agent_event)
 make test           # Run all tests
 make test-v         # Run all tests verbose
 make test-cover     # Run tests with coverage
@@ -87,9 +86,22 @@ The post-turn stats line separates token meanings:
 
 `total↑↓` is the aggregate provider total across all model turns in the current user interaction. `content` is the latest provider context total from `tracker.TotalTokens()` and is the value used for context-window percentage and compaction pressure.
 
-### Diagnostic Logging
+### Logging System (`internal/logger/`)
 
-klog diagnostics are redirected to `<home>/logs/happyladysaucecli.log` during app startup. The built-in default home is `~/.HAPPLADYSAUCECLI`; the repo `settings.json` sets `home` to `.HAPPLADYSAUCECLI` for local development. `--home`, `HAPPLADYSAUCECLI_HOME`, config `home`, or Makefile `APP_HOME` can override it. Interactive conversation output and `[Stats: ...]` stay on the terminal. Use `make run V=1` for per-turn usage summaries and `make run V=2` for high-frequency compaction and missing-usage diagnostics.
+The project uses a dual-channel logging system:
+
+| Channel | Path | Format | Content |
+|---------|------|--------|---------|
+| Diagnostic log | `<home>/logs/happyladysaucecli.log` | text `key=value` | Lightweight phase tracking with trace correlation |
+| Conversation detail | `<home>/logs/session/<session_id>.jsonl` | JSONL | Full prompt, tool results, agent events (one file per session) |
+
+**Trace**: Correlation IDs (`session_id`, `conversation_id`, `user_turn_seq`, `model_call`) are propagated via `logger.AttachTurn()` / `logger.FromContext()`. All `PhaseInfo` calls auto-inject trace fields and `detail_log` pointer.
+
+**Phase API**: `logger.PhaseInfo(ctx, v, phase, kvs...)` for verbosity-gated lines, `logger.PhaseWarn(ctx, phase, kvs...)` / `logger.PhaseError(ctx, phase, kvs...)` for always-visible warnings/errors. V=1 covers `session_open`, `user_turn_begin`, `model_call_end`, `user_turn_end`; V=2 adds `model_call_begin`, `compaction_check`, `agent_event`, `persistence`.
+
+**klog setup**: `logger.ConfigureDefaultFile()` redirects klog output during app startup (called from `cmd/app/app.go`). The built-in default home is `~/.HAPPLADYSAUCECLI`; the repo `settings.json` uses `${HAPPLADYSAUCECLI_HOME}` and Makefile defaults `HAPPLADYSAUCECLI_HOME=.HAPPLADYSAUCECLI` for local development.
+
+**Conversation log**: `conversationlog.Manager` manages per-session JSONL files. `OpenSession()` creates the file then cleans old sessions (create-before-cleanup for safety). Only the most recent session's JSONL is retained.
 
 ### Terminal Rendering (`internal/terminal/renderer.go`)
 

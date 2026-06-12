@@ -3,8 +3,6 @@ package terminal
 import (
 	"fmt"
 
-	"k8s.io/klog/v2"
-
 	contextstatus "github.com/HappyLadySauce/HappyLadySauceCLI/internal/context/status"
 	terminalbudget "github.com/HappyLadySauce/HappyLadySauceCLI/internal/terminal/budget"
 )
@@ -16,16 +14,6 @@ func (r *Renderer) WriteConversationStatus(status contextstatus.Status, maxConte
 	if line == "" {
 		return
 	}
-	klog.V(1).Infof(
-		"conversation status rendered prompt=%d completion=%d total=%d content=%d context_percent=%.2f max_context=%d elapsed_ms=%d",
-		status.Prompt,
-		status.Completion,
-		status.Total,
-		status.ContextTokens,
-		contextPercent(status.ContextTokens, maxContext),
-		maxContext,
-		status.Elapsed.Milliseconds(),
-	)
 	r.mu.Lock()
 	defer r.mu.Unlock()
 	_, _ = fmt.Fprintln(r.errOut, line)

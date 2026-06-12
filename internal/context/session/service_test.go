@@ -31,7 +31,7 @@ func TestFinishTurnSeparatesAggregateTotalFromContextTokens(t *testing.T) {
 	t.Parallel()
 
 	service := &Service{tracker: contexttracker.New()}
-	runCtx := service.BeginTurn(context.Background())
+	runCtx := service.BeginTurn(context.Background(), "hello")
 	tracker := contexttracker.FromContext(runCtx)
 	tracker.AddTurn(&contextmodel.Turn{Prompt: 10, Completion: 5, Total: 15})
 	tracker.AddTurn(&contextmodel.Turn{Prompt: 20, Completion: 10, Total: 30})

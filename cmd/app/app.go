@@ -13,7 +13,7 @@ import (
 
 	"github.com/HappyLadySauce/HappyLadySauceCLI/cmd/app/options"
 	"github.com/HappyLadySauce/HappyLadySauceCLI/internal/agents"
-	"github.com/HappyLadySauce/HappyLadySauceCLI/internal/logging"
+	"github.com/HappyLadySauce/HappyLadySauceCLI/internal/logger"
 	"github.com/HappyLadySauce/HappyLadySauceCLI/pkg/appdirs"
 	"github.com/HappyLadySauce/HappyLadySauceCLI/pkg/config"
 	pkgoptions "github.com/HappyLadySauce/HappyLadySauceCLI/pkg/options"
@@ -49,7 +49,7 @@ func NewAPICommand(ctx context.Context, basename string) *cobra.Command {
 			// Initialize logging after flags are parsed and configuration is loaded.
 			// 在解析完标志并加载配置后初始化日志。
 			logs.InitLogs()
-			logCloser, logPath, err := logging.ConfigureDefaultFile()
+			logCloser, logPath, err := logger.ConfigureDefaultFile()
 			if err != nil {
 				logs.FlushLogs()
 				return fmt.Errorf("configure logging: %w", err)

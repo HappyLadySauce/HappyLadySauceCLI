@@ -11,6 +11,7 @@ import (
 	"k8s.io/klog/v2"
 
 	contextsession "github.com/HappyLadySauce/HappyLadySauceCLI/internal/context/session"
+	"github.com/HappyLadySauce/HappyLadySauceCLI/internal/logger"
 	"github.com/HappyLadySauce/HappyLadySauceCLI/internal/input"
 	"github.com/HappyLadySauce/HappyLadySauceCLI/internal/terminal"
 )
@@ -85,16 +86,26 @@ func (r *interactiveRuntime) runPrompt(ctx context.Context, prompt string) (bool
 	userMessage := schema.UserMessage(prompt)
 	r.history = append(r.history, userMessage)
 
-	runCtx := r.contextSession.BeginTurn(ctx)
+	runCtx := r.contextSession.BeginTurn(ctx, prompt)
+	logger.PhaseInfo(runCtx, 1, "user_turn_begin",
+		"user_prompt_len", len(prompt),
+		"history_messages", len(r.history))
 	iter := r.runner.Run(runCtx, r.history)
-	turnMessages, exited, err := ConsumeAgentEvents(iter, r.renderer)
+	turnMessages, exited, err := ConsumeAgentEvents(runCtx, iter, r.renderer)
 	if err != nil {
-		_, persistErr := r.contextSession.FinishTurn(ctx, []*schema.Message{userMessage}, err)
+		modelCalls := r.contextSession.CurrentTurnCount()
+		_, persistErr := r.contextSession.FinishTurn(runCtx, []*schema.Message{userMessage}, err)
+		logger.PhaseInfo(runCtx, 1, "user_turn_end",
+			"model_calls", modelCalls,
+			"turn_messages", 1,
+			"history_messages", len(r.history),
+			"error", true)
 		return false, errors.Join(err, persistErr)
 	}
 
 	conversationMessages := append([]*schema.Message{userMessage}, turnMessages...)
-	status, err := r.contextSession.FinishTurn(ctx, conversationMessages, nil)
+	modelCalls := r.contextSession.CurrentTurnCount()
+	status, err := r.contextSession.FinishTurn(runCtx, conversationMessages, nil)
 	if err != nil {
 		return false, fmt.Errorf("save context conversation: %w", err)
 	}
@@ -102,6 +113,16 @@ func (r *interactiveRuntime) runPrompt(ctx context.Context, prompt string) (bool
 		r.history = append(r.history, turnMessages...)
 	}
 
+	logger.PhaseInfo(runCtx, 1, "user_turn_end",
+		"model_calls", modelCalls,
+		"turn_messages", len(conversationMessages),
+		"history_messages", len(r.history),
+		"prompt_agg", status.Prompt,
+		"completion_agg", status.Completion,
+		"total_agg", status.Total,
+		"content", status.ContextTokens,
+		"elapsed_ms", status.Elapsed.Milliseconds(),
+		"error", false)
 	r.renderer.WriteConversationStatus(status, r.maxModelContext)
 	r.renderer.FinishTurn()
 	return exited, nil

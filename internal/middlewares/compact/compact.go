@@ -8,6 +8,7 @@ import (
 	"k8s.io/klog/v2"
 
 	contexttracker "github.com/HappyLadySauce/HappyLadySauceCLI/internal/context/tracker"
+	"github.com/HappyLadySauce/HappyLadySauceCLI/internal/logger"
 	"github.com/HappyLadySauce/HappyLadySauceCLI/pkg/context/compact"
 )
 
@@ -37,23 +38,45 @@ func (m *compactMiddleware) BeforeModelRewriteState(ctx context.Context, state *
 		return ctx, state, nil
 	}
 
+	modelCall := logger.NextModelCall(ctx)
 	sessionTotal := 0
 	if tracker := contexttracker.FromContext(ctx); tracker != nil {
 		sessionTotal = tracker.TotalTokens()
 	} else {
-		klog.V(2).Infof("context compaction tracker missing messages=%d", len(state.Messages))
+		logger.PhaseInfo(ctx, 2, "compaction_check",
+			"reason", "tracker_missing",
+			"input_messages", len(state.Messages))
 	}
 
+	logger.PhaseInfo(ctx, 2, "model_call_begin",
+		"input_messages", len(state.Messages),
+		"content", sessionTotal)
+
+	beforeCount := len(state.Messages)
 	messages, changed, err := m.compactor.CompactIfNeeded(ctx, state.Messages, sessionTotal)
 	if err != nil {
-		klog.Warningf("context compaction skipped content=%d messages=%d error=%v", sessionTotal, len(state.Messages), err)
+		klog.Warningf("phase=compaction_check conversation_id=%s model_call=%d reason=error content=%d input_messages=%d error=%v",
+			conversationID(ctx), modelCall, sessionTotal, beforeCount, err)
 		return ctx, state, nil
 	}
 	if !changed {
 		return ctx, state, nil
 	}
 
+	logger.PhaseInfo(ctx, 2, "compaction_check",
+		"reason", "applied",
+		"before_messages", beforeCount,
+		"after_messages", len(messages))
+
 	next := *state
 	next.Messages = messages
 	return ctx, &next, nil
+}
+
+func conversationID(ctx context.Context) string {
+	trace := logger.FromContext(ctx)
+	if trace == nil {
+		return ""
+	}
+	return trace.ConversationID
 }

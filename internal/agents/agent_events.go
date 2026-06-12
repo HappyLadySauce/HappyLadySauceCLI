@@ -18,6 +18,7 @@
 package agents
 
 import (
+	"context"
 	"errors"
 	"fmt"
 	"io"
@@ -26,6 +27,8 @@ import (
 	"github.com/cloudwego/eino/adk"
 	"github.com/cloudwego/eino/schema"
 	"k8s.io/klog/v2"
+
+	"github.com/HappyLadySauce/HappyLadySauceCLI/internal/logger"
 )
 
 const (
@@ -95,7 +98,7 @@ type AgentEventStream interface {
 //   - 消息输出：经 renderMessageOutput 渲染；assistant 与 tool 消息会进入历史收集列表。
 //
 // 返回值依次为：供历史追加的本轮消息列表、agent 是否请求退出、致命消费错误。
-func ConsumeAgentEvents(iter *adk.AsyncIterator[*adk.AgentEvent], stream AgentEventStream) ([]*schema.Message, bool, error) {
+func ConsumeAgentEvents(ctx context.Context, iter *adk.AsyncIterator[*adk.AgentEvent], stream AgentEventStream) ([]*schema.Message, bool, error) {
 	var turnMessages []*schema.Message
 
 	for {
@@ -107,10 +110,12 @@ func ConsumeAgentEvents(iter *adk.AsyncIterator[*adk.AgentEvent], stream AgentEv
 		}
 		if event.Err != nil {
 			klog.Errorf("agent loop error: %v", event.Err)
+			logAgentEvent(ctx, AgentStreamEventError, event.AgentName, "", "", event.Err)
 			stream.EmitAgentEvent(AgentStreamEventError, event.AgentName, "", "", event.Err)
 			return nil, false, fmt.Errorf("agent loop error: %w", event.Err)
 		}
 		if event.Action != nil && event.Action.Exit {
+			logAgentEvent(ctx, AgentStreamEventExit, event.AgentName, "", "", nil)
 			stream.EmitAgentEvent(AgentStreamEventExit, event.AgentName, "", "", nil)
 			return turnMessages, true, nil
 		}
@@ -120,14 +125,35 @@ func ConsumeAgentEvents(iter *adk.AsyncIterator[*adk.AgentEvent], stream AgentEv
 			continue
 		}
 
-		msg, err := renderMessageOutput(event, stream)
+		msg, err := renderMessageOutput(ctx, event, stream)
 		if err != nil {
 			return nil, false, fmt.Errorf("read agent message: %w", err)
+		}
+		if msg != nil && msg.Role == schema.Tool {
+			toolName := msg.ToolName
+			if toolName == "" && event.Output.MessageOutput != nil {
+				toolName = event.Output.MessageOutput.ToolName
+			}
+			logAgentEvent(ctx, AgentStreamEventToolMessage, event.AgentName, toolName, msg.Content, nil)
 		}
 		if shouldAppendToHistory(msg) {
 			turnMessages = append(turnMessages, cloneMessageForHistory(msg))
 		}
 	}
+}
+
+func logAgentEvent(ctx context.Context, kind, agentName, toolName, content string, eventErr error) {
+	kvs := []any{"kind", kind, "agent_name", agentName}
+	if toolName != "" {
+		kvs = append(kvs, "tool_name", toolName)
+	}
+	if content != "" {
+		kvs = append(kvs, "content_len", len(content))
+	}
+	if eventErr != nil {
+		kvs = append(kvs, "error", eventErr.Error())
+	}
+	logger.PhaseInfo(ctx, 2, "agent_event", kvs...)
 }
 
 // shouldAppendToHistory reports whether a message should persist across runner turns.
@@ -168,10 +194,10 @@ func cloneMessageForHistory(msg *schema.Message) *schema.Message {
 //
 // renderMessageOutput 将单个 AgentEvent 的消息输出分发到对应渲染器。
 // 流式走增量 chunk 处理；非流式一次性输出完整消息。
-func renderMessageOutput(event *adk.AgentEvent, stream AgentEventStream) (*schema.Message, error) {
+func renderMessageOutput(ctx context.Context, event *adk.AgentEvent, stream AgentEventStream) (*schema.Message, error) {
 	output := event.Output.MessageOutput
 	if output.IsStreaming {
-		return renderStreamingMessage(event, stream)
+		return renderStreamingMessage(ctx, event, stream)
 	}
 
 	msg := output.Message
@@ -206,7 +232,7 @@ func renderMessageOutput(event *adk.AgentEvent, stream AgentEventStream) (*schem
 //  6. thinking_stopped — 流结束时通过 defer 清理 spinner。
 //
 // 各 chunk 会合并为一条 schema.Message 供历史记录；若无增量内容（空流边界情况），回退到 renderCompleteMessage。
-func renderStreamingMessage(event *adk.AgentEvent, stream AgentEventStream) (*schema.Message, error) {
+func renderStreamingMessage(ctx context.Context, event *adk.AgentEvent, stream AgentEventStream) (*schema.Message, error) {
 	output := event.Output.MessageOutput
 	if output.MessageStream == nil {
 		return nil, nil
