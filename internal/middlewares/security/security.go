@@ -8,6 +8,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"net/url"
 	"sync"
 	"sync/atomic"
 	"time"
@@ -79,6 +80,12 @@ type approvalLockEntry struct {
 	refs int
 }
 
+type authorization struct {
+	operation     securitycore.OperationRequest
+	decision      policy.Decision
+	approvalScope string
+}
+
 // NewExecutionSecurityMiddleware creates an execution security middleware.
 // NewExecutionSecurityMiddleware 创建执行安全 middleware。
 func NewExecutionSecurityMiddleware(cfg Config) (*ExecutionSecurityMiddleware, error) {
@@ -116,22 +123,25 @@ func NewExecutionSecurityMiddleware(cfg Config) (*ExecutionSecurityMiddleware, e
 // WrapInvokableToolCall 保护标准 invokable tool 调用。
 func (m *ExecutionSecurityMiddleware) WrapInvokableToolCall(ctx context.Context, endpoint adk.InvokableToolCallEndpoint, tCtx *adk.ToolContext) (adk.InvokableToolCallEndpoint, error) {
 	return func(ctx context.Context, argumentsInJSON string, opts ...tool.Option) (string, error) {
-		operation, err := m.authorize(ctx, tCtx, securitycore.SummarizeArguments(argumentsInJSON))
+		auth, err := m.authorize(ctx, tCtx, securitycore.SummarizeArguments(argumentsInJSON))
 		if err != nil {
 			return "", err
 		}
+		operation := auth.operation
 
-		ctx, cancel := m.executionContext(ctx)
+		ctx, cancel := m.executionContext(ctx, operation)
 		defer cancel()
 		start := time.Now()
 		result, err := endpoint(ctx, argumentsInJSON, opts...)
+		outputBytes := toolOutputSize(result)
 		if err == nil {
-			if limitErr := m.ensureToolOutputWithinLimit(result); limitErr != nil {
+			if limitErr := m.ensureToolOutputWithinLimit(outputBytes); limitErr != nil {
 				err = limitErr
 				result = ""
+				outputBytes = 0
 			}
 		}
-		m.auditExecution(ctx, operation, start, err)
+		m.auditExecution(ctx, auth, start, err, outputBytes)
 		return result, err
 	}, nil
 }
@@ -140,20 +150,21 @@ func (m *ExecutionSecurityMiddleware) WrapInvokableToolCall(ctx context.Context,
 // WrapStreamableToolCall 保护标准 streamable tool 调用。
 func (m *ExecutionSecurityMiddleware) WrapStreamableToolCall(ctx context.Context, endpoint adk.StreamableToolCallEndpoint, tCtx *adk.ToolContext) (adk.StreamableToolCallEndpoint, error) {
 	return func(ctx context.Context, argumentsInJSON string, opts ...tool.Option) (*schema.StreamReader[string], error) {
-		operation, err := m.authorize(ctx, tCtx, securitycore.SummarizeArguments(argumentsInJSON))
+		auth, err := m.authorize(ctx, tCtx, securitycore.SummarizeArguments(argumentsInJSON))
 		if err != nil {
 			return nil, err
 		}
+		operation := auth.operation
 
-		ctx, cancel := m.executionContext(ctx)
+		ctx, cancel := m.executionContext(ctx, operation)
 		start := time.Now()
 		result, err := endpoint(ctx, argumentsInJSON, opts...)
 		if err != nil {
 			cancel()
-			m.auditExecution(ctx, operation, start, err)
+			m.auditExecution(ctx, auth, start, err, 0)
 			return nil, err
 		}
-		m.auditStreamOpened(ctx, operation, start)
+		m.auditStreamOpened(ctx, auth, start)
 
 		// Wrap the stream so audit fires on actual stream completion (EOF) rather
 		// than at stream setup time. This gives accurate elapsed time.
@@ -163,7 +174,7 @@ func (m *ExecutionSecurityMiddleware) WrapStreamableToolCall(ctx context.Context
 		doAudit := func(streamErr error) {
 			if audited.CompareAndSwap(false, true) {
 				cancel()
-				m.auditExecution(ctx, operation, start, streamErr)
+				m.auditExecution(ctx, auth, start, streamErr, int(outputBudget.Used()))
 			}
 		}
 		return schema.StreamReaderWithConvert(result,
@@ -190,22 +201,25 @@ func (m *ExecutionSecurityMiddleware) WrapStreamableToolCall(ctx context.Context
 // WrapEnhancedInvokableToolCall 保护 enhanced invokable tool 调用。
 func (m *ExecutionSecurityMiddleware) WrapEnhancedInvokableToolCall(ctx context.Context, endpoint adk.EnhancedInvokableToolCallEndpoint, tCtx *adk.ToolContext) (adk.EnhancedInvokableToolCallEndpoint, error) {
 	return func(ctx context.Context, toolArgument *schema.ToolArgument, opts ...tool.Option) (*schema.ToolResult, error) {
-		operation, err := m.authorize(ctx, tCtx, toolArgumentSummary(toolArgument))
+		auth, err := m.authorize(ctx, tCtx, toolArgumentSummary(toolArgument))
 		if err != nil {
 			return nil, err
 		}
+		operation := auth.operation
 
-		ctx, cancel := m.executionContext(ctx)
+		ctx, cancel := m.executionContext(ctx, operation)
 		defer cancel()
 		start := time.Now()
 		result, err := endpoint(ctx, toolArgument, opts...)
+		outputBytes := toolOutputSize(result)
 		if err == nil {
-			if limitErr := m.ensureToolOutputWithinLimit(result); limitErr != nil {
+			if limitErr := m.ensureToolOutputWithinLimit(outputBytes); limitErr != nil {
 				err = limitErr
 				result = nil
+				outputBytes = 0
 			}
 		}
-		m.auditExecution(ctx, operation, start, err)
+		m.auditExecution(ctx, auth, start, err, outputBytes)
 		return result, err
 	}, nil
 }
@@ -214,20 +228,21 @@ func (m *ExecutionSecurityMiddleware) WrapEnhancedInvokableToolCall(ctx context.
 // WrapEnhancedStreamableToolCall 保护 enhanced streamable tool 调用。
 func (m *ExecutionSecurityMiddleware) WrapEnhancedStreamableToolCall(ctx context.Context, endpoint adk.EnhancedStreamableToolCallEndpoint, tCtx *adk.ToolContext) (adk.EnhancedStreamableToolCallEndpoint, error) {
 	return func(ctx context.Context, toolArgument *schema.ToolArgument, opts ...tool.Option) (*schema.StreamReader[*schema.ToolResult], error) {
-		operation, err := m.authorize(ctx, tCtx, toolArgumentSummary(toolArgument))
+		auth, err := m.authorize(ctx, tCtx, toolArgumentSummary(toolArgument))
 		if err != nil {
 			return nil, err
 		}
+		operation := auth.operation
 
-		ctx, cancel := m.executionContext(ctx)
+		ctx, cancel := m.executionContext(ctx, operation)
 		start := time.Now()
 		result, err := endpoint(ctx, toolArgument, opts...)
 		if err != nil {
 			cancel()
-			m.auditExecution(ctx, operation, start, err)
+			m.auditExecution(ctx, auth, start, err, 0)
 			return nil, err
 		}
-		m.auditStreamOpened(ctx, operation, start)
+		m.auditStreamOpened(ctx, auth, start)
 
 		// Wrap the stream so audit fires on actual stream completion (EOF) rather
 		// than at stream setup time. This gives accurate elapsed time.
@@ -237,7 +252,7 @@ func (m *ExecutionSecurityMiddleware) WrapEnhancedStreamableToolCall(ctx context
 		doAudit := func(streamErr error) {
 			if audited.CompareAndSwap(false, true) {
 				cancel()
-				m.auditExecution(ctx, operation, start, streamErr)
+				m.auditExecution(ctx, auth, start, streamErr, int(outputBudget.Used()))
 			}
 		}
 		return schema.StreamReaderWithConvert(result,
@@ -260,34 +275,41 @@ func (m *ExecutionSecurityMiddleware) WrapEnhancedStreamableToolCall(ctx context
 	}, nil
 }
 
-func (m *ExecutionSecurityMiddleware) authorize(ctx context.Context, tCtx *adk.ToolContext, argsSummary string) (securitycore.OperationRequest, error) {
+func (m *ExecutionSecurityMiddleware) authorize(ctx context.Context, tCtx *adk.ToolContext, argsSummary string) (authorization, error) {
 	operation, err := m.operationForTool(ctx, tCtx, argsSummary)
 	if err != nil {
-		return operation, err
+		return authorization{operation: operation}, err
 	}
 	decision := m.policy.Evaluate(operation)
+	auth := authorization{
+		operation:     operation,
+		decision:      decision,
+		approvalScope: securitycore.ApprovalScopeNone,
+	}
 
 	switch decision.Action {
 	case policy.ActionAllow:
 		m.auditDecision(ctx, operation, decision, securitycore.ApprovalScopeNone, "allowed")
-		return operation, nil
+		return auth, nil
 	case policy.ActionDeny:
 		m.auditDecision(ctx, operation, decision, securitycore.ApprovalScopeNone, "denied")
-		return operation, fmt.Errorf("capability denied by policy: %s", toolName(tCtx))
+		return auth, fmt.Errorf("capability denied by policy: %s", toolName(tCtx))
 	case policy.ActionReview:
 		if m.grants.IsAllowed(operation) {
-			m.auditDecision(ctx, operation, decision, securitycore.ApprovalScopeSession, "allowed")
-			return operation, nil
+			auth.approvalScope = securitycore.ApprovalScopeSession
+			m.auditDecision(ctx, operation, decision, auth.approvalScope, "allowed")
+			return auth, nil
 		}
 		unlock := m.lockApproval(operation.GrantKey())
 		defer unlock()
 		if m.grants.IsAllowed(operation) {
-			m.auditDecision(ctx, operation, decision, securitycore.ApprovalScopeSession, "allowed")
-			return operation, nil
+			auth.approvalScope = securitycore.ApprovalScopeSession
+			m.auditDecision(ctx, operation, decision, auth.approvalScope, "allowed")
+			return auth, nil
 		}
 		if m.approver == nil {
 			m.auditDecision(ctx, operation, decision, securitycore.ApprovalScopeNone, "denied")
-			return operation, fmt.Errorf("capability approval required: %s", toolName(tCtx))
+			return auth, fmt.Errorf("capability approval required: %s", toolName(tCtx))
 		}
 		approval, err := m.approver.Approve(ctx, ApprovalRequest{
 			ToolName:   toolName(tCtx),
@@ -298,23 +320,24 @@ func (m *ExecutionSecurityMiddleware) authorize(ctx context.Context, tCtx *adk.T
 		})
 		if err != nil {
 			m.auditDecision(ctx, operation, decision, securitycore.ApprovalScopeNone, "denied")
-			return operation, fmt.Errorf("approve capability: %w", err)
+			return auth, fmt.Errorf("approve capability: %w", err)
 		}
 		if !approval.Approved {
 			m.auditDecision(ctx, operation, decision, securitycore.ApprovalScopeNone, "denied")
-			return operation, fmt.Errorf("capability denied by user: %s", toolName(tCtx))
+			return auth, fmt.Errorf("capability denied by user: %s", toolName(tCtx))
 		}
 		approvalScope := approval.ApprovalScope
 		if approvalScope == "" {
 			approvalScope = securitycore.ApprovalScopeOnce
 		}
+		auth.approvalScope = approvalScope
 		if approvalScope == securitycore.ApprovalScopeSession {
 			m.grants.Allow(operation)
 		}
 		m.auditDecision(ctx, operation, decision, approvalScope, "approved")
-		return operation, nil
+		return auth, nil
 	default:
-		return operation, fmt.Errorf("unknown policy action: %s", decision.Action)
+		return auth, fmt.Errorf("unknown policy action: %s", decision.Action)
 	}
 }
 
@@ -381,6 +404,9 @@ func (m *ExecutionSecurityMiddleware) operationForTool(ctx context.Context, tCtx
 		return operation, err
 	}
 	operation.Resources = normalized
+	if err := m.validateOperationScopes(operation); err != nil {
+		return operation, err
+	}
 	return operation, nil
 }
 
@@ -401,6 +427,20 @@ func (m *ExecutionSecurityMiddleware) normalizeOperationResources(resources []se
 		next = append(next, resource)
 	}
 	return next, nil
+}
+
+func (m *ExecutionSecurityMiddleware) validateOperationScopes(operation securitycore.OperationRequest) error {
+	if hasScopePrefix(operation.Capability.Scopes, "network:") {
+		for _, resource := range operation.Resources {
+			if resource.Kind != "url" {
+				continue
+			}
+			if !resourceURLAllowed(resource.Value, operation.Capability.Resources) {
+				return fmt.Errorf("network resource is outside descriptor resources: %s", resource.Value)
+			}
+		}
+	}
+	return nil
 }
 
 func (m *ExecutionSecurityMiddleware) auditDecision(ctx context.Context, operation securitycore.OperationRequest, decision policy.Decision, approvalScope, status string) {
@@ -425,7 +465,8 @@ func (m *ExecutionSecurityMiddleware) auditDecision(ctx context.Context, operati
 		"status", record.Status)
 }
 
-func (m *ExecutionSecurityMiddleware) auditExecution(ctx context.Context, operation securitycore.OperationRequest, start time.Time, err error) {
+func (m *ExecutionSecurityMiddleware) auditExecution(ctx context.Context, auth authorization, start time.Time, err error, outputBytes int) {
+	operation := auth.operation
 	record := securitycore.NewAuditRecord(operation)
 	record.ElapsedMS = time.Since(start).Milliseconds()
 	kvs := []any{
@@ -438,6 +479,10 @@ func (m *ExecutionSecurityMiddleware) auditExecution(ctx context.Context, operat
 		"resources", record.Resources,
 		"args_summary_sha", record.ArgsSummarySHA,
 		"risk", record.Risk,
+		"decision", string(auth.decision.Action),
+		"decision_reason", auth.decision.Reason,
+		"approval_scope", auth.approvalScope,
+		"output_bytes", outputBytes,
 		"elapsed_ms", record.ElapsedMS,
 	}
 	if err != nil {
@@ -447,7 +492,8 @@ func (m *ExecutionSecurityMiddleware) auditExecution(ctx context.Context, operat
 	logger.Info(ctx, 1, "Capability execution completed", append(kvs, "status", "success")...)
 }
 
-func (m *ExecutionSecurityMiddleware) auditStreamOpened(ctx context.Context, operation securitycore.OperationRequest, start time.Time) {
+func (m *ExecutionSecurityMiddleware) auditStreamOpened(ctx context.Context, auth authorization, start time.Time) {
+	operation := auth.operation
 	record := securitycore.NewAuditRecord(operation)
 	record.ElapsedMS = time.Since(start).Milliseconds()
 	logger.Info(ctx, 1, "Capability stream opened",
@@ -460,22 +506,25 @@ func (m *ExecutionSecurityMiddleware) auditStreamOpened(ctx context.Context, ope
 		"resources", record.Resources,
 		"args_summary_sha", record.ArgsSummarySHA,
 		"risk", record.Risk,
+		"decision", string(auth.decision.Action),
+		"decision_reason", auth.decision.Reason,
+		"approval_scope", auth.approvalScope,
+		"output_bytes", 0,
 		"elapsed_ms", record.ElapsedMS,
 		"status", "stream_opened")
 }
 
-func (m *ExecutionSecurityMiddleware) executionContext(ctx context.Context) (context.Context, context.CancelFunc) {
-	if m.commandTimeoutSeconds <= 0 {
+func (m *ExecutionSecurityMiddleware) executionContext(ctx context.Context, operation securitycore.OperationRequest) (context.Context, context.CancelFunc) {
+	if m.commandTimeoutSeconds <= 0 || operation.OperationKind != securitycore.OperationCommandRun {
 		return ctx, func() {}
 	}
 	return context.WithTimeout(ctx, time.Duration(m.commandTimeoutSeconds)*time.Second)
 }
 
-func (m *ExecutionSecurityMiddleware) ensureToolOutputWithinLimit(value any) error {
+func (m *ExecutionSecurityMiddleware) ensureToolOutputWithinLimit(size int) error {
 	if m.maxToolOutputBytes <= 0 {
 		return nil
 	}
-	size := toolOutputSize(value)
 	if size > m.maxToolOutputBytes {
 		return fmt.Errorf("tool output exceeds security.max_tool_output_bytes: %d > %d", size, m.maxToolOutputBytes)
 	}
@@ -502,6 +551,13 @@ func (b *toolOutputBudget) Add(value any) error {
 	return nil
 }
 
+func (b *toolOutputBudget) Used() int64 {
+	if b == nil {
+		return 0
+	}
+	return b.used.Load()
+}
+
 func toolOutputSize(value any) int {
 	switch typed := value.(type) {
 	case nil:
@@ -515,6 +571,37 @@ func toolOutputSize(value any) int {
 		}
 	}
 	return len(fmt.Sprint(value))
+}
+
+func hasScopePrefix(scopes []string, prefix string) bool {
+	for _, scope := range scopes {
+		if len(scope) >= len(prefix) && scope[:len(prefix)] == prefix {
+			return true
+		}
+	}
+	return false
+}
+
+func resourceURLAllowed(resource string, allowed []string) bool {
+	normalizedResource, ok := normalizeURLForScope(resource)
+	if !ok {
+		return false
+	}
+	for _, candidate := range allowed {
+		normalizedCandidate, ok := normalizeURLForScope(candidate)
+		if ok && normalizedResource == normalizedCandidate {
+			return true
+		}
+	}
+	return false
+}
+
+func normalizeURLForScope(value string) (string, bool) {
+	parsed, err := url.Parse(value)
+	if err != nil || parsed.Scheme == "" || parsed.Host == "" {
+		return "", false
+	}
+	return parsed.String(), true
 }
 
 func toolName(tCtx *adk.ToolContext) string {

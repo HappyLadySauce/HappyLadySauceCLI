@@ -60,6 +60,18 @@ func TestSummarizeArgumentsIsDeterministicAndSanitized(t *testing.T) {
 	}
 }
 
+func TestSummarizeArgumentsDoesNotRedactTokenCount(t *testing.T) {
+	t.Parallel()
+
+	got := SummarizeArguments(`{"token_count":42,"access_token":"secret"}`)
+	if !strings.Contains(got, "token_count=42") {
+		t.Fatalf("SummarizeArguments() over-redacted token_count: %q", got)
+	}
+	if strings.Contains(got, "secret") {
+		t.Fatalf("SummarizeArguments() leaked access token: %q", got)
+	}
+}
+
 func TestTruncatePreservesUTF8(t *testing.T) {
 	t.Parallel()
 

@@ -49,7 +49,7 @@ func NewChatModelAgentMiddlewares(cfg ChatModelAgentMiddlewareConfig) ([]adk.Cha
 
 	securityMiddleware, err := securitymiddleware.NewExecutionSecurityMiddleware(securitymiddleware.Config{
 		Registry:              cfg.CapabilityRegistry,
-		Policy:                policy.NewEngine(),
+		Policy:                policy.NewEngine(policy.Config{ApprovalDefault: securityApprovalDefault(cfg.Security)}),
 		Grants:                policy.NewSessionGrants(),
 		Approver:              cfg.Approver,
 		Builders:              cfg.OperationBuilders,
@@ -87,6 +87,13 @@ func securityCommandTimeout(opts *options.SecurityOptions) int {
 		return options.NewSecurityOptions().CommandTimeoutSeconds
 	}
 	return opts.CommandTimeoutSeconds
+}
+
+func securityApprovalDefault(opts *options.SecurityOptions) string {
+	if opts == nil {
+		return options.NewSecurityOptions().ApprovalDefault
+	}
+	return opts.ApprovalDefault
 }
 
 func securityMaxToolOutputBytes(opts *options.SecurityOptions) int {

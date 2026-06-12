@@ -111,8 +111,8 @@ func summarizeValue(value any) string {
 
 func isSensitiveKey(key string) bool {
 	normalized := strings.ToLower(strings.ReplaceAll(strings.ReplaceAll(key, "-", "_"), " ", "_"))
-	for _, marker := range []string{"api_key", "apikey", "token", "secret", "password", "passwd", "pwd", "authorization"} {
-		if strings.Contains(normalized, marker) {
+	for _, marker := range []string{"api_key", "apikey", "auth_token", "access_token", "bearer_token", "token", "secret", "password", "passwd", "pwd", "authorization"} {
+		if normalized == marker || strings.HasSuffix(normalized, "_"+marker) {
 			return true
 		}
 	}

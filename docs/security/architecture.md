@@ -50,7 +50,7 @@ type SecurityOptions struct {
     WorkspaceRoots        []string  // 允许的工作区根目录
     ApprovalDefault       string    // 默认审批模式（目前仅支持 "review"）
     PersistContent        string    // 持久化模式："sanitized" | "metadata_only"
-    CommandTimeoutSeconds int       // 命令执行超时（秒）
+    CommandTimeoutSeconds int       // command.run 执行超时（秒）
     MaxToolOutputBytes    int       // 工具输出最大字节数
 }
 ```
@@ -62,7 +62,7 @@ type SecurityOptions struct {
 | `WorkspaceRoots` | `[当前工作目录]` | 文件操作的允许根目录 |
 | `ApprovalDefault` | `"review"` | 需要审批的操作默认要求交互确认 |
 | `PersistContent` | `"sanitized"` | 持久化内容经过脱敏处理 |
-| `CommandTimeoutSeconds` | `30` | 命令默认 30 秒超时 |
+| `CommandTimeoutSeconds` | `30` | `command.run` 默认 30 秒超时 |
 | `MaxToolOutputBytes` | `1048576` (1 MiB) | 工具输出上限 |
 
 ### 2.3 CLI 参数
@@ -100,7 +100,7 @@ type Descriptor struct {
     Source        string          // 来源标识（"builtin" 或 MCP server 名称）
     Risk          RiskLevel       // 风险等级
     DefaultPolicy DefaultPolicy   // 默认策略
-    Scopes        []string        // 资源范围（预留）
+    Scopes        []string        // 资源范围（如 network:weather）
     Resources     []string        // 涉及资源路径
 }
 ```
@@ -176,7 +176,7 @@ type OperationBuilder func(ctx context.Context, request OperationRequest, argume
 
 ### 4.4 GrantKey 生成
 
-`GrantKey()` 方法从操作属性中生成一个稳定的、确定性的标识符，用于会话级授权缓存。key 的组成部分包括 capability type、source、name、operation kind、risk 和排序后的资源列表。分隔符 `\`、`|`、`=` 会被转义以防止碰撞攻击。
+`GrantKey()` 方法从操作属性中生成一个稳定的、确定性的标识符，用于会话级授权缓存。key 的组成部分包括 capability type、source、name、operation kind、risk 和排序后的资源列表。分隔符 `\`、`|`、`=` 会被转义以防止碰撞攻击。高风险、`command.run` 与 `network.*` 操作还会纳入脱敏参数摘要的 SHA，避免 session 授权过粗。
 
 ---
 
@@ -190,8 +190,9 @@ type OperationBuilder func(ctx context.Context, request OperationRequest, argume
 | 2 | `DefaultPolicy == deny` | `ActionDeny` | `default_policy_deny` |
 | 3 | `Risk == high` | `ActionReview` | `high_risk` |
 | 4 | `OperationKind == "command.run"` | `ActionReview` | `command_run` |
-| 5 | `DefaultPolicy == review` | `ActionReview` | `default_policy_review` |
-| 6 | 其他情况 | `ActionAllow` | `default_policy_allow` |
+| 5 | `OperationKind` 前缀为 `network.` 或 scope 前缀为 `network:` | `ActionReview` | `network_operation` |
+| 6 | `DefaultPolicy == review` | `ActionReview` | `default_policy_review` |
+| 7 | 其他情况 | `ActionAllow` | `default_policy_allow` |
 
 ### 5.2 关键设计决策
 
@@ -248,7 +249,7 @@ type SessionGrants struct {
 ### 7.2 结构化 JSON 脱敏（SanitizeJSON）
 
 - 解析 JSON → 递归遍历 → 脱敏敏感 key → 重新序列化
-- 敏感 key 匹配规则：包含 `api_key`, `token`, `secret`, `password`, `authorization` 等子串（不区分大小写）
+- 敏感 key 匹配规则：精确匹配或以下划线后缀匹配 `api_key`, `token`, `secret`, `password`, `authorization` 等字段，避免误伤 `token_count` 等统计字段
 - JSON 解析失败时回退到文本正则脱敏
 
 ### 7.3 参数摘要（SummarizeArguments）
@@ -330,7 +331,8 @@ authorize()                          ← 策略评估 + 审批
   ├── operationForTool()             ← 构建 OperationRequest
   │   ├── OperationBuilder 补充信息
   │   ├── SanitizeText 脱敏参数
-  │   └── NormalizePath 校验路径资源
+  │   ├── NormalizePath 校验路径资源
+  │   └── validateOperationScopes 校验 scope/resource allowlist
   ├── policy.Evaluate()              ← 策略矩阵决策
   │
   ├── ActionAllow → 直接放行
@@ -342,7 +344,7 @@ authorize()                          ← 策略评估 + 审批
       ├── approver.Approve() 展示审批提示
       └── 审批通过 + scope=session → grants.Allow()
 
-executionContext()                   ← 应用超时控制
+executionContext()                   ← 对 command.run 应用超时控制
   └── context.WithTimeout(ctx, timeout)
 
 endpoint() 调用实际工具              ← 执行
@@ -486,10 +488,9 @@ type AuditRecord struct {
 每次工具调用产生两条审计日志：
 
 1. **决策时**（`phase=capability_policy`）：记录策略评估结果、是否触发了审批
-2. **执行后**（`phase=capability_call`）：记录执行耗时、成功/失败状态
+2. **执行后**（`phase=capability_call`）：记录策略决策、审批范围、输出字节数、执行耗时、成功/失败状态
 
 流式工具调用额外产生 `status=stream_opened` 的中间态日志。
-```
 
 ---
 

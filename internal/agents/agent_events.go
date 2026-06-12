@@ -152,6 +152,10 @@ func logAgentEvent(ctx context.Context, kind, agentName, toolName, content strin
 		logger.Error(ctx, eventErr, "Agent event failed", kvs...)
 		return
 	}
+	if toolName != "" || content != "" {
+		logger.Info(ctx, 1, "Agent event emitted", kvs...)
+		return
+	}
 	logger.Info(ctx, 2, "Agent event emitted", kvs...)
 }
 

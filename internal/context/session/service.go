@@ -120,7 +120,22 @@ func (s *Service) Close() error {
 	if s == nil || s.db == nil {
 		return nil
 	}
-	return s.db.Close()
+	sessionID := ""
+	if s.tracker != nil && s.tracker.Session() != nil {
+		sessionID = s.tracker.Session().ID
+	}
+	err := s.db.Close()
+	s.db = nil
+	if err != nil {
+		logger.Error(context.Background(), err, "Could not close context session",
+			"phase", "session_close",
+			"session_id", sessionID)
+		return err
+	}
+	logger.Info(context.Background(), 1, "Context session closed",
+		"phase", "session_close",
+		"session_id", sessionID)
+	return nil
 }
 
 func (s *Service) persist(ctx context.Context, conversation *contextmodel.Conversation) error {

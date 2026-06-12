@@ -61,3 +61,28 @@ func TestOperationGrantKeyEscapesSeparators(t *testing.T) {
 		t.Fatalf("GrantKey() did not escape separators: %q", left.GrantKey())
 	}
 }
+
+func TestOperationGrantKeyIncludesArgsForNetworkOperations(t *testing.T) {
+	t.Parallel()
+
+	base := OperationRequest{
+		Capability: capability.Descriptor{
+			Name:   "get_weather",
+			Type:   capability.TypeNativeTool,
+			Source: capability.SourceBuiltin,
+		},
+		OperationKind:        "network.weather",
+		Risk:                 capability.RiskLow,
+		Resources:            []OperationResource{{Kind: "url", Value: "https://uapis.cn/api/v1/misc/weather"}},
+		SanitizedArgsSummary: "{city=北京}",
+	}
+	other := base
+	other.SanitizedArgsSummary = "{city=上海}"
+
+	if base.GrantKey() == other.GrantKey() {
+		t.Fatalf("GrantKey() should include args hash for network operations: %q", base.GrantKey())
+	}
+	if !strings.Contains(base.GrantKey(), "args_sha=") {
+		t.Fatalf("GrantKey() missing args hash: %q", base.GrantKey())
+	}
+}

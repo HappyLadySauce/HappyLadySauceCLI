@@ -112,20 +112,20 @@ The post-turn stats line separates token meanings:
 
 ### Logging System (`internal/logger/`)
 
-The project uses a dual-channel logging system:
+The project uses a single diagnostic log plus sanitized SQLite context persistence:
 
 | Channel | Path | Format | Content |
 |---------|------|--------|---------|
 | Diagnostic log | `<home>/logs/happyladysaucecli.log` | text `key=value` | Lightweight phase tracking with trace correlation |
-| Conversation detail | `<home>/logs/session/<session_id>.jsonl` | JSONL | Full prompt, tool results, agent events (one file per session) |
+| Context replay | `<home>/context.sqlite` | SQLite | Sanitized or metadata-only conversation snapshots |
 
 **Trace**: Correlation IDs (`session_id`, `conversation_id`, `user_turn_seq`, `model_call`) are propagated via `logger.AttachTurn()` / `logger.FromContext()`. `logger.Info()` and `logger.Error()` auto-inject trace fields into structured klog entries.
 
-**Structured diagnostic API**: `logger.Info(ctx, v, msg, kvs...)` for verbosity-gated structured lines and `logger.Error(ctx, err, msg, kvs...)` for error lines. Callers pass `phase` as a structured field. V=1 covers `session_open`, `user_turn_begin`, `model_call_end`, `user_turn_end`; V=2 adds `model_call_begin`, `compaction_check`, `agent_event`, `persistence`.
+**Structured diagnostic API**: `logger.Info(ctx, v, msg, kvs...)` for verbosity-gated structured lines and `logger.Error(ctx, err, msg, kvs...)` for error lines. Callers pass `phase` as a structured field. V=1 covers `session_open`, `session_close`, `user_turn_begin`, `model_call_end`, `capability_policy`, `capability_call`, tool `agent_event`, and `user_turn_end`; V=2 adds `model_call_begin`, `compaction_check`, non-tool `agent_event`, and `persistence`.
 
 **klog setup**: `logger.ConfigureDefaultFile()` redirects klog output during app startup (called from `cmd/app/app.go`). The built-in default home is `~/.HAPPLADYSAUCECLI`; the repo `settings.json` uses `${HAPPLADYSAUCECLI_HOME}` and Makefile defaults `HAPPLADYSAUCECLI_HOME=.HAPPLADYSAUCECLI` for local development.
 
-**Conversation log**: `conversationlog.Manager` manages per-session JSONL files. `OpenSession()` creates the file then cleans old sessions (create-before-cleanup for safety). Only the most recent session's JSONL is retained.
+**Context persistence**: conversation replay data is stored through `internal/context/session` into SQLite after sanitization. The project does not write per-session JSONL detail logs.
 
 ### Terminal Rendering (`internal/terminal/renderer.go`)
 

@@ -82,6 +82,9 @@ func (r OperationRequest) GrantKey() string {
 	for _, resource := range sortedResources(r.Resources) {
 		parts = append(parts, escapeGrantKeyComponent(resource.Kind)+"="+escapeGrantKeyComponent(resource.Value))
 	}
+	if r.includeArgsSummaryInGrantKey() {
+		parts = append(parts, "args_sha="+sha256Hex(SanitizeText(r.SanitizedArgsSummary)))
+	}
 	return strings.Join(parts, "|")
 }
 
@@ -120,6 +123,12 @@ func sortedResources(resources []OperationResource) []OperationResource {
 func escapeGrantKeyComponent(value string) string {
 	replacer := strings.NewReplacer(`\`, `\\`, `|`, `\|`, `=`, `\=`)
 	return replacer.Replace(value)
+}
+
+func (r OperationRequest) includeArgsSummaryInGrantKey() bool {
+	return r.Risk == capability.RiskHigh ||
+		r.OperationKind == OperationCommandRun ||
+		strings.HasPrefix(r.OperationKind, "network.")
 }
 
 // AuditRecord is the sanitized metadata emitted around policy and execution events.

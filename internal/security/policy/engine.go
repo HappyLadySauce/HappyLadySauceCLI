@@ -3,6 +3,8 @@
 package policy
 
 import (
+	"strings"
+
 	"github.com/HappyLadySauce/HappyLadySauceCLI/internal/capability"
 	securitycore "github.com/HappyLadySauce/HappyLadySauceCLI/internal/security"
 )
@@ -34,14 +36,28 @@ type PolicyDecision struct {
 // Decision 作为别名保留，供 middleware 与 approver 调用点使用。
 type Decision = PolicyDecision
 
-// Engine evaluates capability descriptors.
-// Engine 评估 capability descriptor。
-type Engine struct{}
+// Config controls policy defaults.
+// Config 控制策略默认值。
+type Config struct {
+	ApprovalDefault string
+}
+
+const approvalDefaultReview = "review"
+
+// Engine evaluates operation requests.
+// Engine 评估操作请求。
+type Engine struct {
+	approvalDefault string
+}
 
 // NewEngine creates a policy engine with repository defaults.
 // NewEngine 创建使用项目默认策略的 policy engine。
-func NewEngine() *Engine {
-	return &Engine{}
+func NewEngine(configs ...Config) *Engine {
+	cfg := Config{ApprovalDefault: approvalDefaultReview}
+	if len(configs) > 0 && strings.TrimSpace(configs[0].ApprovalDefault) != "" {
+		cfg.ApprovalDefault = strings.TrimSpace(configs[0].ApprovalDefault)
+	}
+	return &Engine{approvalDefault: cfg.ApprovalDefault}
 }
 
 // Evaluate returns the policy decision for one concrete operation.
@@ -53,6 +69,7 @@ func NewEngine() *Engine {
 //	DefaultPolicyDeny       → ActionDeny    (default_policy_deny)
 //	Operation RiskHigh      → ActionReview  (high_risk)          — overrides DefaultPolicyAllow
 //	command.run             → ActionReview  (command_run)
+//	network.*               → ActionReview  (network_operation)
 //	DefaultPolicyReview     → ActionReview  (default_policy_review)
 //	otherwise               → ActionAllow   (default_policy_allow)
 //
@@ -63,7 +80,7 @@ func NewEngine() *Engine {
 // 声明 Allow 的中等风险工具被信任可直接执行，声明 Review 的中等风险工具则会提示用户确认。
 func (e *Engine) Evaluate(request securitycore.OperationRequest) PolicyDecision {
 	if !request.Registered {
-		return PolicyDecision{Action: ActionReview, Reason: "descriptor_missing"}
+		return e.review("descriptor_missing")
 	}
 	descriptor := request.Capability
 	if descriptor.DefaultPolicy == capability.DefaultPolicyDeny {
@@ -74,13 +91,32 @@ func (e *Engine) Evaluate(request securitycore.OperationRequest) PolicyDecision 
 		risk = descriptor.Risk
 	}
 	if risk == capability.RiskHigh {
-		return PolicyDecision{Action: ActionReview, Reason: "high_risk"}
+		return e.review("high_risk")
 	}
 	if request.OperationKind == securitycore.OperationCommandRun {
-		return PolicyDecision{Action: ActionReview, Reason: "command_run"}
+		return e.review("command_run")
+	}
+	if strings.HasPrefix(request.OperationKind, "network.") || hasScopePrefix(descriptor.Scopes, "network:") {
+		return e.review("network_operation")
 	}
 	if descriptor.DefaultPolicy == capability.DefaultPolicyReview {
-		return PolicyDecision{Action: ActionReview, Reason: "default_policy_review"}
+		return e.review("default_policy_review")
 	}
 	return PolicyDecision{Action: ActionAllow, Reason: "default_policy_allow"}
+}
+
+func (e *Engine) review(reason string) PolicyDecision {
+	if e == nil || e.approvalDefault == approvalDefaultReview {
+		return PolicyDecision{Action: ActionReview, Reason: reason}
+	}
+	return PolicyDecision{Action: ActionDeny, Reason: "approval_default_unsupported"}
+}
+
+func hasScopePrefix(scopes []string, prefix string) bool {
+	for _, scope := range scopes {
+		if strings.HasPrefix(scope, prefix) {
+			return true
+		}
+	}
+	return false
 }

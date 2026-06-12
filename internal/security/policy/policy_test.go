@@ -86,6 +86,28 @@ func TestEngineReviewsCommandOperations(t *testing.T) {
 	}
 }
 
+func TestEngineReviewsNetworkOperations(t *testing.T) {
+	t.Parallel()
+
+	decision := NewEngine(Config{ApprovalDefault: "review"}).Evaluate(securitycore.OperationRequest{
+		Registered:    true,
+		OperationKind: "network.weather",
+		Risk:          capability.RiskLow,
+		Capability: capability.Descriptor{
+			Name:          "get_weather",
+			Type:          capability.TypeNativeTool,
+			Source:        capability.SourceBuiltin,
+			Risk:          capability.RiskLow,
+			DefaultPolicy: capability.DefaultPolicyAllow,
+			Scopes:        []string{"network:weather"},
+		},
+	})
+
+	if decision.Action != ActionReview || decision.Reason != "network_operation" {
+		t.Fatalf("decision = %#v, want network review", decision)
+	}
+}
+
 func TestEngineReviewsMissingDescriptor(t *testing.T) {
 	t.Parallel()
 
@@ -95,6 +117,19 @@ func TestEngineReviewsMissingDescriptor(t *testing.T) {
 	})
 	if decision.Action != ActionReview {
 		t.Fatalf("decision action = %s, want %s", decision.Action, ActionReview)
+	}
+}
+
+func TestEngineUsesApprovalDefaultForReviewDecisions(t *testing.T) {
+	t.Parallel()
+
+	decision := NewEngine(Config{ApprovalDefault: "deny"}).Evaluate(securitycore.OperationRequest{
+		Capability: capability.Descriptor{Name: "unregistered"},
+		Registered: false,
+	})
+
+	if decision.Action != ActionDeny || decision.Reason != "approval_default_unsupported" {
+		t.Fatalf("decision = %#v, want fail-closed approval default denial", decision)
 	}
 }
 

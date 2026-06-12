@@ -285,6 +285,51 @@ func TestWrapInvokableToolCallRejectsEscapingPathResource(t *testing.T) {
 	}
 }
 
+func TestWrapInvokableToolCallRejectsNetworkResourceOutsideScope(t *testing.T) {
+	t.Parallel()
+
+	registry := newTestRegistry(t, capability.Descriptor{
+		Name:          "network_tool",
+		Type:          capability.TypeNativeTool,
+		Source:        capability.SourceBuiltin,
+		Risk:          capability.RiskLow,
+		DefaultPolicy: capability.DefaultPolicyAllow,
+		Scopes:        []string{"network:test"},
+		Resources:     []string{"https://example.com/allowed"},
+	})
+	middleware, err := NewExecutionSecurityMiddleware(Config{
+		Registry: registry,
+		Policy:   policy.NewEngine(),
+		Grants:   policy.NewSessionGrants(),
+		Builders: map[string]securitycore.OperationBuilder{
+			"network_tool": func(ctx context.Context, request securitycore.OperationRequest, argumentsSummary string) securitycore.OperationRequest {
+				request.OperationKind = "network.test"
+				request.Resources = []securitycore.OperationResource{{Kind: "url", Value: "https://example.com/other"}}
+				return request
+			},
+		},
+	})
+	if err != nil {
+		t.Fatalf("NewExecutionSecurityMiddleware() error = %v", err)
+	}
+
+	var called atomic.Bool
+	wrapped, err := middleware.WrapInvokableToolCall(context.Background(), func(ctx context.Context, argumentsInJSON string, opts ...tool.Option) (string, error) {
+		called.Store(true)
+		return "ok", nil
+	}, &adk.ToolContext{Name: "network_tool", CallID: "call-1"})
+	if err != nil {
+		t.Fatalf("WrapInvokableToolCall() error = %v", err)
+	}
+
+	if _, err := wrapped(context.Background(), `{}`); err == nil {
+		t.Fatal("expected network scope error")
+	}
+	if called.Load() {
+		t.Fatal("endpoint should not run for disallowed network resource")
+	}
+}
+
 func TestWrapInvokableToolCallDeniesPolicyDeniedCapability(t *testing.T) {
 	t.Parallel()
 
@@ -423,7 +468,14 @@ func TestWrapInvokableToolCallAppliesTimeout(t *testing.T) {
 		Registry:              registry,
 		Policy:                policy.NewEngine(),
 		Grants:                policy.NewSessionGrants(),
+		Approver:              &fakeApprover{approve: true},
 		CommandTimeoutSeconds: 1,
+		Builders: map[string]securitycore.OperationBuilder{
+			"slow_tool": func(ctx context.Context, request securitycore.OperationRequest, argumentsSummary string) securitycore.OperationRequest {
+				request.OperationKind = securitycore.OperationCommandRun
+				return request
+			},
+		},
 	})
 	if err != nil {
 		t.Fatalf("NewExecutionSecurityMiddleware() error = %v", err)

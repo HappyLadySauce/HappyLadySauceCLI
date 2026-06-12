@@ -103,11 +103,11 @@ func (o *SecurityOptions) Validate() error {
 // AddFlags registers security options.
 // AddFlags 注册安全配置命令行参数。
 func (o *SecurityOptions) AddFlags(fs *pflag.FlagSet) {
-	fs.StringSliceVar(&o.WorkspaceRoots, "security-workspace-roots", o.WorkspaceRoots, "Allowed workspace roots for future file tools")
+	fs.StringSliceVar(&o.WorkspaceRoots, "security-workspace-roots", o.WorkspaceRoots, "Allowed workspace roots for path/file operation resources")
 	fs.StringVar(&o.ApprovalDefault, "security-approval-default", o.ApprovalDefault, "Default approval mode for reviewed operations")
 	fs.StringVar(&o.PersistContent, "security-persist-content", o.PersistContent, "Context persistence mode: sanitized or metadata_only")
-	fs.IntVar(&o.CommandTimeoutSeconds, "security-command-timeout-seconds", o.CommandTimeoutSeconds, "Default timeout reserved for future command tools")
-	fs.IntVar(&o.MaxToolOutputBytes, "security-max-tool-output-bytes", o.MaxToolOutputBytes, "Maximum tool output bytes reserved for future execution tools")
+	fs.IntVar(&o.CommandTimeoutSeconds, "security-command-timeout-seconds", o.CommandTimeoutSeconds, "Default timeout for command.run operations")
+	fs.IntVar(&o.MaxToolOutputBytes, "security-max-tool-output-bytes", o.MaxToolOutputBytes, "Maximum tool output bytes")
 }
 
 func normalizeWorkspaceRoot(root string) (string, error) {
