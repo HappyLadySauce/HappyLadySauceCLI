@@ -18,7 +18,7 @@ import (
 	"github.com/HappyLadySauce/HappyLadySauceCLI/internal/input"
 	"github.com/HappyLadySauce/HappyLadySauceCLI/internal/middlewares"
 	"github.com/HappyLadySauce/HappyLadySauceCLI/internal/prompts"
-	storagesqlite "github.com/HappyLadySauce/HappyLadySauceCLI/internal/storage/sqlite"
+	storagesqlite "github.com/HappyLadySauce/HappyLadySauceCLI/pkg/storage/sqlite"
 	"github.com/HappyLadySauce/HappyLadySauceCLI/internal/terminal"
 	"github.com/HappyLadySauce/HappyLadySauceCLI/internal/tools"
 	"github.com/HappyLadySauce/HappyLadySauceCLI/pkg/config"
