@@ -34,4 +34,7 @@ func TestAddFlagsRegistersHomeFlag(t *testing.T) {
 	if flag := fs.Lookup("home"); flag == nil {
 		t.Fatal("home flag is not registered")
 	}
+	if flag := fs.Lookup("security-persist-content"); flag == nil {
+		t.Fatal("security-persist-content flag is not registered")
+	}
 }

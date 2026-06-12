@@ -96,6 +96,11 @@ var HAPPLADYSAUCECLIEnvBindings = map[string]string{
 	"model.HAPPLADYSAUCECLI_MODEL":             "HAPPLADYSAUCECLI_MODEL",
 	"model.HAPPLADYSAUCECLI_MAX_OUTPUT_TOKENS": "HAPPLADYSAUCECLI_MAX_OUTPUT_TOKENS",
 	"model.HAPPLADYSAUCECLI_MAX_MODEL_CONTEXT": "HAPPLADYSAUCECLI_MAX_MODEL_CONTEXT",
+	"security.workspace_roots":                 "HAPPLADYSAUCECLI_SECURITY_WORKSPACE_ROOTS",
+	"security.approval_default":                "HAPPLADYSAUCECLI_SECURITY_APPROVAL_DEFAULT",
+	"security.persist_content":                 "HAPPLADYSAUCECLI_SECURITY_PERSIST_CONTENT",
+	"security.command_timeout_seconds":         "HAPPLADYSAUCECLI_SECURITY_COMMAND_TIMEOUT_SECONDS",
+	"security.max_tool_output_bytes":           "HAPPLADYSAUCECLI_SECURITY_MAX_TOOL_OUTPUT_BYTES",
 }
 
 // loadViperConfig loads configuration with priority: --config > cwd > ~/basename/.

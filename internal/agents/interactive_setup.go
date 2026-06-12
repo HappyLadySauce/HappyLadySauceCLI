@@ -61,7 +61,9 @@ func newInteractiveRuntime(ctx context.Context, cfg *config.Config, in io.Reader
 		MaxModelContext:    cfg.Model.MaxModelContext,
 		MaxOutputTokens:    cfg.Model.MaxOutputTokens,
 		CapabilityRegistry: capRegistry,
+		OperationBuilders:  tools.NewOperationBuilders(),
 		Approver:           newTerminalApprover(promptReader, renderer),
+		Security:           cfg.Security,
 	})
 	if err != nil {
 		return nil, err

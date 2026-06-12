@@ -6,6 +6,7 @@ import (
 	"github.com/cloudwego/eino/compose"
 
 	"github.com/HappyLadySauce/HappyLadySauceCLI/internal/capability"
+	securitycore "github.com/HappyLadySauce/HappyLadySauceCLI/internal/security"
 	"github.com/HappyLadySauce/HappyLadySauceCLI/internal/tools/weather"
 )
 
@@ -29,4 +30,12 @@ func NewAgentTools() (adk.ToolsConfig, error) {
 // NewCapabilityRegistry 返回 NewAgentTools 暴露工具对应的 descriptor。
 func NewCapabilityRegistry() (*capability.Registry, error) {
 	return capability.NewRegistry(weather.CapabilityDescriptor())
+}
+
+// NewOperationBuilders returns operation builders for tools exposed by NewAgentTools.
+// NewOperationBuilders 返回 NewAgentTools 暴露工具对应的 operation builder。
+func NewOperationBuilders() map[string]securitycore.OperationBuilder {
+	return map[string]securitycore.OperationBuilder{
+		"get_weather": weather.OperationBuilder(),
+	}
 }

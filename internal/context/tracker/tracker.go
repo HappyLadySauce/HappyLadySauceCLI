@@ -11,6 +11,9 @@ import (
 	"github.com/cloudwego/eino/schema"
 
 	contextmodel "github.com/HappyLadySauce/HappyLadySauceCLI/internal/context/model"
+	securitycore "github.com/HappyLadySauce/HappyLadySauceCLI/internal/security"
+	"github.com/HappyLadySauce/HappyLadySauceCLI/pkg/config"
+	"github.com/HappyLadySauce/HappyLadySauceCLI/pkg/options"
 )
 
 type contextKey struct{}
@@ -25,6 +28,7 @@ type Tracker struct {
 	session     *contextmodel.Session
 	current     *contextmodel.Conversation
 	latestTotal int
+	persistMode string
 }
 
 // New creates a tracker for one CLI process lifetime.
@@ -129,7 +133,7 @@ func (t *Tracker) SetMessages(messages []*schema.Message) {
 		if msg == nil {
 			continue
 		}
-		records = append(records, messageRecordFromSchema(t.current.ID, len(records)+1, msg))
+		records = append(records, messageRecordFromSchema(t.current.ID, len(records)+1, msg, t.securityPersistContentMode()))
 	}
 	t.current.SetMessages(records)
 }
@@ -220,20 +224,53 @@ func normalizeTurnTiming(turn *contextmodel.Turn) {
 	}
 }
 
-func messageRecordFromSchema(conversationID string, sequence int, msg *schema.Message) *contextmodel.Message {
-	raw, _ := json.Marshal(msg)
+func messageRecordFromSchema(conversationID string, sequence int, msg *schema.Message, persistMode string) *contextmodel.Message {
+	content, reasoning, rawJSON := persistenceSafeMessageFields(msg, persistMode)
 	return &contextmodel.Message{
 		ID:             newID("message"),
 		ConversationID: conversationID,
 		Sequence:       sequence,
 		Role:           string(msg.Role),
-		Content:        msg.Content,
-		Reasoning:      msg.ReasoningContent,
+		Content:        content,
+		Reasoning:      reasoning,
 		ToolName:       msg.ToolName,
 		ToolCallID:     msg.ToolCallID,
-		RawJSON:        string(raw),
+		RawJSON:        rawJSON,
 		CreatedAt:      time.Now(),
 	}
+}
+
+func persistenceSafeMessageFields(msg *schema.Message, persistMode string) (string, string, string) {
+	rawJSON := ""
+	content := msg.Content
+	reasoning := msg.ReasoningContent
+	switch persistMode {
+	case options.PersistContentMetadataOnly:
+		return "", "", ""
+	default:
+		content = securitycore.SanitizeText(content)
+		reasoning = securitycore.SanitizeText(reasoning)
+		next := *msg
+		next.Content = content
+		next.ReasoningContent = reasoning
+		raw, err := json.Marshal(&next)
+		if err != nil {
+			return content, reasoning, ""
+		}
+		rawJSON = securitycore.SanitizeJSON(string(raw))
+	}
+	return content, reasoning, rawJSON
+}
+
+func (t *Tracker) securityPersistContentMode() string {
+	if t != nil && t.persistMode != "" {
+		return t.persistMode
+	}
+	cfg := config.Current()
+	if cfg == nil || cfg.Security == nil || cfg.Security.PersistContent == "" {
+		return options.PersistContentSanitized
+	}
+	return cfg.Security.PersistContent
 }
 
 func cloneSession(in *contextmodel.Session) *contextmodel.Session {

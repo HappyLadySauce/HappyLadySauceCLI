@@ -74,11 +74,11 @@ func (t *Turn) Finish(elapsed time.Duration, prompt, completion, total int, err 
 	}
 }
 
-// Message records a replayable schema.Message snapshot for one conversation.
-// RawJSON preserves provider-specific fields that are not normalized into columns.
+// Message records a replayable, persistence-safe schema.Message snapshot for one conversation.
+// RawJSON preserves sanitized provider-specific fields when content persistence is enabled.
 //
-// Message 记录一条可用于会话重现的 schema.Message 快照。
-// RawJSON 保留未标准化到列中的 provider 特定字段。
+// Message 记录一条可用于会话重现且适合持久化的 schema.Message 快照。
+// RawJSON 在启用内容持久化时保留脱敏后的 provider 特定字段。
 type Message struct {
 	ID             string    // Stable message id. / 稳定的 message 标识。
 	ConversationID string    // Parent conversation id. / 所属 conversation 标识。
@@ -88,7 +88,7 @@ type Message struct {
 	Reasoning      string    // Reasoning content when returned by the model. / 模型返回的推理正文。
 	ToolName       string    // Tool name for tool messages. / 工具消息对应的工具名。
 	ToolCallID     string    // Tool call id for tool messages. / 工具调用标识。
-	RawJSON        string    // Full serialized message. / 完整序列化消息。
+	RawJSON        string    // Sanitized serialized message, empty in metadata-only mode. / 脱敏序列化消息，metadata-only 模式下为空。
 	CreatedAt      time.Time // Capture time. / 捕获时间。
 }
 

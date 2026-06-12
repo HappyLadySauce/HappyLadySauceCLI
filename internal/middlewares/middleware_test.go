@@ -8,6 +8,7 @@ import (
 	"github.com/cloudwego/eino/schema"
 
 	"github.com/HappyLadySauce/HappyLadySauceCLI/internal/tools"
+	"github.com/HappyLadySauce/HappyLadySauceCLI/pkg/options"
 )
 
 type fakeChatModel struct{}
@@ -40,5 +41,30 @@ func TestNewChatModelAgentMiddlewaresRegistersDefaultChain(t *testing.T) {
 	}
 	if len(handlers) != 3 || handlers[0] == nil || handlers[1] == nil || handlers[2] == nil {
 		t.Fatalf("handlers = %#v, want security, compact, and usage handlers", handlers)
+	}
+}
+
+func TestNewChatModelAgentMiddlewaresRejectsInvalidWorkspaceRoot(t *testing.T) {
+	t.Parallel()
+
+	capRegistry, err := tools.NewCapabilityRegistry()
+	if err != nil {
+		t.Fatalf("NewCapabilityRegistry() error = %v", err)
+	}
+
+	_, err = NewChatModelAgentMiddlewares(ChatModelAgentMiddlewareConfig{
+		Model:              &fakeChatModel{},
+		ModelName:          "unknown-local-model",
+		MaxModelContext:    180,
+		MaxOutputTokens:    20,
+		CapabilityRegistry: capRegistry,
+		Security: &options.SecurityOptions{
+			WorkspaceRoots:        []string{""},
+			CommandTimeoutSeconds: 30,
+			MaxToolOutputBytes:    1024,
+		},
+	})
+	if err == nil {
+		t.Fatal("expected invalid workspace root error")
 	}
 }

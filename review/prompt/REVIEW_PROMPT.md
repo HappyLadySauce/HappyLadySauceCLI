@@ -61,6 +61,12 @@
 |---|--------|-----------|------|------|----------|
 | 1 | 🔴 HIGH | `pkg/foo.go:42` | 安全 | ... | ... |
 
+审计完成后, 在文档最后增加一段话
+
+```text
+审核修复处理完成后, 务必将review文档归档至review\archives目录
+```
+
 ## 特别关注
 - Go 语言特定：nil pointer dereference、goroutine leak、channel deadlock、slice 扩容
 - 库使用：Eino ADK middleware 的正确实现、tool call 生命周期

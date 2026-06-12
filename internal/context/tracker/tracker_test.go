@@ -3,12 +3,14 @@ package tracker
 import (
 	"context"
 	"errors"
+	"strings"
 	"testing"
 	"time"
 
 	"github.com/cloudwego/eino/schema"
 
 	contextmodel "github.com/HappyLadySauce/HappyLadySauceCLI/internal/context/model"
+	"github.com/HappyLadySauce/HappyLadySauceCLI/pkg/options"
 )
 
 func TestTrackerRecordsConversationTurnsAndMessages(t *testing.T) {
@@ -87,5 +89,47 @@ func TestWithTrackerRoundTrip(t *testing.T) {
 	ctx := WithTracker(context.Background(), tracker)
 	if got := FromContext(ctx); got != tracker {
 		t.Fatal("FromContext() did not return attached tracker")
+	}
+}
+
+func TestTrackerSanitizesPersistedMessagesByDefault(t *testing.T) {
+	tracker := New()
+	tracker.BeginConversation()
+	tracker.SetMessages([]*schema.Message{
+		schema.UserMessage("api_key=secret password=hunter2"),
+	})
+
+	conversation := tracker.FinishConversation(nil)
+	if len(conversation.Messages) != 1 {
+		t.Fatalf("messages = %d, want 1", len(conversation.Messages))
+	}
+	message := conversation.Messages[0]
+	for _, leaked := range []string{"secret", "hunter2"} {
+		if strings.Contains(message.Content, leaked) || strings.Contains(message.RawJSON, leaked) {
+			t.Fatalf("message leaked %q: %#v", leaked, message)
+		}
+	}
+}
+
+func TestTrackerMetadataOnlyPersistenceDropsMessageBodies(t *testing.T) {
+	tracker := New()
+	tracker.persistMode = options.PersistContentMetadataOnly
+	tracker.BeginConversation()
+	tracker.SetMessages([]*schema.Message{
+		schema.UserMessage("sensitive prompt"),
+		schema.ToolMessage("sensitive tool result", "call-1", schema.WithToolName("tool")),
+	})
+
+	conversation := tracker.FinishConversation(nil)
+	if len(conversation.Messages) != 2 {
+		t.Fatalf("messages = %d, want 2", len(conversation.Messages))
+	}
+	for _, message := range conversation.Messages {
+		if message.Content != "" || message.Reasoning != "" || message.RawJSON != "" {
+			t.Fatalf("metadata-only message retained body: %#v", message)
+		}
+	}
+	if conversation.Messages[1].ToolName != "tool" || conversation.Messages[1].ToolCallID != "call-1" {
+		t.Fatalf("metadata-only message lost tool metadata: %#v", conversation.Messages[1])
 	}
 }

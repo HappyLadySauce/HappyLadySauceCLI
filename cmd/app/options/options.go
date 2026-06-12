@@ -14,8 +14,9 @@ import (
 type Options struct {
 	basename   string
 	configPath string
-	Home       string                `mapstructure:"home"`
-	Model      *options.ModelOptions `mapstructure:"model"`
+	Home       string                   `mapstructure:"home"`
+	Model      *options.ModelOptions    `mapstructure:"model"`
+	Security   *options.SecurityOptions `mapstructure:"security"`
 }
 
 // ConfigPath returns the absolute path of the loaded configuration file.
@@ -51,6 +52,7 @@ func NewOptions(basename string) *Options {
 	return &Options{
 		basename: basename,
 		Model:    options.NewModelOptions(),
+		Security: options.NewSecurityOptions(),
 	}
 }
 
@@ -69,6 +71,11 @@ func (o *Options) AddFlags(fs *pflag.FlagSet) *flag.NamedFlagSets {
 	// 将模型标志注册到模型标志集中。
 	modelFS := nfs.FlagSet("Model")
 	o.Model.AddFlags(modelFS)
+
+	// Register security flags into the security flag set.
+	// 将安全标志注册到安全标志集中。
+	securityFS := nfs.FlagSet("Security")
+	o.Security.AddFlags(securityFS)
 
 	// Merge all named flag sets into the root command FlagSet.
 	// 将所有命名标志集合并到根命令的 FlagSet。

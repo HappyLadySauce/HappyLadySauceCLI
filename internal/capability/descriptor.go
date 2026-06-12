@@ -5,7 +5,6 @@ package capability
 import (
 	"errors"
 	"fmt"
-	"sort"
 	"strings"
 )
 
@@ -104,19 +103,6 @@ func (d Descriptor) Validate() error {
 	return errors.Join(errs...)
 }
 
-// GrantKey returns the stable session-approval key for this descriptor.
-// GrantKey 返回 descriptor 对应的稳定会话授权 key。
-func (d Descriptor) GrantKey() string {
-	parts := []string{
-		string(d.Type),
-		d.Source,
-		d.Name,
-		strings.Join(sortedCopy(d.Scopes), ","),
-		strings.Join(sortedCopy(d.Resources), ","),
-	}
-	return strings.Join(parts, "|")
-}
-
 // UnknownDescriptor returns a review-only descriptor for unregistered capabilities.
 // UnknownDescriptor 为未注册能力返回仅用于确认的安全 descriptor。
 func UnknownDescriptor(name string) Descriptor {
@@ -154,13 +140,4 @@ func validDefaultPolicy(value DefaultPolicy) bool {
 	default:
 		return false
 	}
-}
-
-func sortedCopy(values []string) []string {
-	if len(values) == 0 {
-		return nil
-	}
-	next := append([]string(nil), values...)
-	sort.Strings(next)
-	return next
 }

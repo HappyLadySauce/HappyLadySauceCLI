@@ -361,6 +361,10 @@ func TestAddConfigFlagHAPPLADYSAUCECLIModelEnvDoesNotFlattenModelSection(t *test
 	if got, want := viper.GetString("home"), ".HAPPLADYSAUCECLI"; got != want {
 		t.Errorf("viper.GetString(home) = %q, want %q", got, want)
 	}
+	t.Setenv("HAPPLADYSAUCECLI_SECURITY_PERSIST_CONTENT", "metadata_only")
+	if got, want := viper.GetString("security.persist_content"), "metadata_only"; got != want {
+		t.Errorf("viper.GetString(security.persist_content) = %q, want %q", got, want)
+	}
 }
 
 // TestAddConfigFlagBindsEnvWithBasenamePrefix checks env prefix and key replacer for hyphenated basenames.

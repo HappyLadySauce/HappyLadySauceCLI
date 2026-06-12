@@ -9,6 +9,7 @@ import (
 
 	"github.com/HappyLadySauce/HappyLadySauceCLI/internal/input"
 	securitymiddleware "github.com/HappyLadySauce/HappyLadySauceCLI/internal/middlewares/security"
+	securitycore "github.com/HappyLadySauce/HappyLadySauceCLI/internal/security"
 	"github.com/HappyLadySauce/HappyLadySauceCLI/internal/terminal"
 )
 
@@ -33,11 +34,23 @@ func (a *terminalApprover) Approve(ctx context.Context, req securitymiddleware.A
 	a.mu.Lock()
 	defer a.mu.Unlock()
 
+	argsSummary := req.Operation.SanitizedArgsSummary
+	if argsSummary == "" {
+		argsSummary = "none"
+	}
+	argsSHA := securitycore.NewAuditRecord(req.Operation).ArgsSummarySHA
+	if argsSHA == "" {
+		argsSHA = "none"
+	}
 	a.renderer.ApprovalPrompt(fmt.Sprintf(
-		"Approve capability %s (risk=%s reason=%s)? [y/N]: ",
+		"Approve capability %s (operation=%s risk=%s reason=%s resources=%s args_sha=%s args_len=%d)? [y=once/s=session/N]: ",
 		req.ToolName,
+		req.Operation.OperationKind,
 		req.Capability.Risk,
 		req.Decision.Reason,
+		req.Operation.ResourceSummary(),
+		argsSHA,
+		len(argsSummary),
 	))
 	result, ok := a.promptReader.Receive(ctx)
 	if !ok {
@@ -48,5 +61,12 @@ func (a *terminalApprover) Approve(ctx context.Context, req securitymiddleware.A
 	}
 
 	answer := strings.ToLower(strings.TrimSpace(result.Text))
-	return securitymiddleware.ApprovalDecision{Approved: answer == "y" || answer == "yes"}, nil
+	switch answer {
+	case "y", "yes":
+		return securitymiddleware.ApprovalDecision{Approved: true, ApprovalScope: securitycore.ApprovalScopeOnce}, nil
+	case "s", "session":
+		return securitymiddleware.ApprovalDecision{Approved: true, ApprovalScope: securitycore.ApprovalScopeSession}, nil
+	default:
+		return securitymiddleware.ApprovalDecision{}, nil
+	}
 }

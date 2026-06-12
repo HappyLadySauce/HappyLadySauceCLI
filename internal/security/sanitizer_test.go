@@ -1,0 +1,60 @@
+package security
+
+import (
+	"strings"
+	"testing"
+)
+
+func TestSanitizeTextRedactsCommonSecrets(t *testing.T) {
+	t.Parallel()
+
+	input := "Authorization: Bearer abc.def api_key=secret password: hunter2"
+	got := SanitizeText(input)
+	for _, leaked := range []string{"abc.def", "secret", "hunter2"} {
+		if strings.Contains(got, leaked) {
+			t.Fatalf("SanitizeText leaked %q in %q", leaked, got)
+		}
+	}
+}
+
+func TestSanitizeJSONRedactsNestedSecrets(t *testing.T) {
+	t.Parallel()
+
+	got := SanitizeJSON(`{"api_key":"secret","nested":{"password":"hunter2","ok":"value"}}`)
+	for _, leaked := range []string{"secret", "hunter2"} {
+		if strings.Contains(got, leaked) {
+			t.Fatalf("SanitizeJSON leaked %q in %q", leaked, got)
+		}
+	}
+	if !strings.Contains(got, "value") {
+		t.Fatalf("SanitizeJSON removed non-sensitive value: %q", got)
+	}
+}
+
+func TestSanitizeTextRedactsKnownTokenPrefixesWithoutSensitiveKey(t *testing.T) {
+	t.Parallel()
+
+	got := SanitizeText("city=sk-live_1234567890abcd tokenless=ghp_1234567890abcdef")
+	for _, leaked := range []string{"sk-live_1234567890abcd", "ghp_1234567890abcdef"} {
+		if strings.Contains(got, leaked) {
+			t.Fatalf("SanitizeText leaked prefixed token %q in %q", leaked, got)
+		}
+	}
+}
+
+func TestSummarizeArgumentsIsDeterministicAndSanitized(t *testing.T) {
+	t.Parallel()
+
+	input := `{"z":"last","api_key":"secret","a":{"password":"hunter2","ok":"value"}}`
+	first := SummarizeArguments(input)
+	second := SummarizeArguments(input)
+	if first != second {
+		t.Fatalf("SummarizeArguments() is nondeterministic: %q vs %q", first, second)
+	}
+	if strings.Contains(first, "secret") || strings.Contains(first, "hunter2") {
+		t.Fatalf("SummarizeArguments() leaked secret: %q", first)
+	}
+	if strings.Index(first, "a=") > strings.Index(first, "api_key=") || strings.Index(first, "api_key=") > strings.Index(first, "z=") {
+		t.Fatalf("SummarizeArguments() keys are not sorted: %q", first)
+	}
+}

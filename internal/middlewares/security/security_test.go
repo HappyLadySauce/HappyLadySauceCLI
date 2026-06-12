@@ -3,6 +3,8 @@ package security
 import (
 	"context"
 	"errors"
+	"io"
+	"path/filepath"
 	"sync"
 	"sync/atomic"
 	"testing"
@@ -10,19 +12,123 @@ import (
 
 	"github.com/cloudwego/eino/adk"
 	"github.com/cloudwego/eino/components/tool"
+	"github.com/cloudwego/eino/schema"
 
 	"github.com/HappyLadySauce/HappyLadySauceCLI/internal/capability"
+	securitycore "github.com/HappyLadySauce/HappyLadySauceCLI/internal/security"
 	"github.com/HappyLadySauce/HappyLadySauceCLI/internal/security/policy"
 )
 
 type fakeApprover struct {
 	approve bool
+	scope   string
 	calls   atomic.Int32
+	last    ApprovalRequest
+}
+
+func TestWrapEnhancedToolCallsAuthorizeBeforeExecution(t *testing.T) {
+	t.Parallel()
+
+	registry := newTestRegistry(t, capability.Descriptor{
+		Name:          "danger",
+		Type:          capability.TypeNativeTool,
+		Source:        capability.SourceBuiltin,
+		Risk:          capability.RiskHigh,
+		DefaultPolicy: capability.DefaultPolicyDeny,
+	})
+	middleware := newTestMiddleware(t, registry, nil)
+
+	var invokableCalled atomic.Bool
+	wrappedInvokable, err := middleware.WrapEnhancedInvokableToolCall(context.Background(), func(ctx context.Context, toolArgument *schema.ToolArgument, opts ...tool.Option) (*schema.ToolResult, error) {
+		invokableCalled.Store(true)
+		return &schema.ToolResult{}, nil
+	}, &adk.ToolContext{Name: "danger", CallID: "call-1"})
+	if err != nil {
+		t.Fatalf("WrapEnhancedInvokableToolCall() error = %v", err)
+	}
+	if _, err := wrappedInvokable(context.Background(), &schema.ToolArgument{Text: `{}`}); err == nil {
+		t.Fatal("expected enhanced invokable denial")
+	}
+	if invokableCalled.Load() {
+		t.Fatal("denied enhanced invokable endpoint should not be called")
+	}
+
+	var streamableCalled atomic.Bool
+	wrappedStreamable, err := middleware.WrapEnhancedStreamableToolCall(context.Background(), func(ctx context.Context, toolArgument *schema.ToolArgument, opts ...tool.Option) (*schema.StreamReader[*schema.ToolResult], error) {
+		streamableCalled.Store(true)
+		return schema.StreamReaderFromArray([]*schema.ToolResult{{}}), nil
+	}, &adk.ToolContext{Name: "danger", CallID: "call-2"})
+	if err != nil {
+		t.Fatalf("WrapEnhancedStreamableToolCall() error = %v", err)
+	}
+	if _, err := wrappedStreamable(context.Background(), &schema.ToolArgument{Text: `{}`}); err == nil {
+		t.Fatal("expected enhanced streamable denial")
+	}
+	if streamableCalled.Load() {
+		t.Fatal("denied enhanced streamable endpoint should not be called")
+	}
+}
+
+func TestWrapStreamableToolCallAuditsOnEOF(t *testing.T) {
+	t.Parallel()
+
+	registry := newTestRegistry(t, capability.Descriptor{
+		Name:          "stream_tool",
+		Type:          capability.TypeNativeTool,
+		Source:        capability.SourceBuiltin,
+		Risk:          capability.RiskLow,
+		DefaultPolicy: capability.DefaultPolicyAllow,
+	})
+	middleware := newTestMiddleware(t, registry, nil)
+
+	wrapped, err := middleware.WrapStreamableToolCall(context.Background(), func(ctx context.Context, argumentsInJSON string, opts ...tool.Option) (*schema.StreamReader[string], error) {
+		return schema.StreamReaderFromArray([]string{"ok"}), nil
+	}, &adk.ToolContext{Name: "stream_tool", CallID: "call-1"})
+	if err != nil {
+		t.Fatalf("WrapStreamableToolCall() error = %v", err)
+	}
+	reader, err := wrapped(context.Background(), `{}`)
+	if err != nil {
+		t.Fatalf("wrapped streamable returned error: %v", err)
+	}
+	defer reader.Close()
+	if got, err := reader.Recv(); err != nil || got != "ok" {
+		t.Fatalf("Recv() = %q, %v; want ok, nil", got, err)
+	}
+	if _, err := reader.Recv(); !errors.Is(err, io.EOF) {
+		t.Fatalf("Recv() EOF error = %v, want io.EOF", err)
+	}
+}
+
+func TestWrapStreamableToolCallCanBeClosedWithoutConsumption(t *testing.T) {
+	t.Parallel()
+
+	registry := newTestRegistry(t, capability.Descriptor{
+		Name:          "stream_tool",
+		Type:          capability.TypeNativeTool,
+		Source:        capability.SourceBuiltin,
+		Risk:          capability.RiskLow,
+		DefaultPolicy: capability.DefaultPolicyAllow,
+	})
+	middleware := newTestMiddleware(t, registry, nil)
+
+	wrapped, err := middleware.WrapStreamableToolCall(context.Background(), func(ctx context.Context, argumentsInJSON string, opts ...tool.Option) (*schema.StreamReader[string], error) {
+		return schema.StreamReaderFromArray([]string{"ok"}), nil
+	}, &adk.ToolContext{Name: "stream_tool", CallID: "call-1"})
+	if err != nil {
+		t.Fatalf("WrapStreamableToolCall() error = %v", err)
+	}
+	reader, err := wrapped(context.Background(), `{}`)
+	if err != nil {
+		t.Fatalf("wrapped streamable returned error: %v", err)
+	}
+	reader.Close()
 }
 
 func (a *fakeApprover) Approve(ctx context.Context, req ApprovalRequest) (ApprovalDecision, error) {
 	a.calls.Add(1)
-	return ApprovalDecision{Approved: a.approve}, nil
+	a.last = req
+	return ApprovalDecision{Approved: a.approve, ApprovalScope: a.scope}, nil
 }
 
 func TestWrapInvokableToolCallAllowsPolicyAllowedCapability(t *testing.T) {
@@ -53,6 +159,56 @@ func TestWrapInvokableToolCallAllowsPolicyAllowedCapability(t *testing.T) {
 	}
 	if got != "sunny" || !called.Load() {
 		t.Fatalf("wrapped endpoint result = %q called=%v", got, called.Load())
+	}
+}
+
+func TestWrapInvokableToolCallRejectsEscapingPathResource(t *testing.T) {
+	t.Parallel()
+
+	root := t.TempDir()
+	outside := t.TempDir()
+	registry := newTestRegistry(t, capability.Descriptor{
+		Name:          "read_file",
+		Type:          capability.TypeNativeTool,
+		Source:        capability.SourceBuiltin,
+		Risk:          capability.RiskLow,
+		DefaultPolicy: capability.DefaultPolicyAllow,
+	})
+	guard, err := securitycore.NewWorkspaceGuard([]string{root})
+	if err != nil {
+		t.Fatalf("NewWorkspaceGuard() error = %v", err)
+	}
+	middleware, err := NewExecutionSecurityMiddleware(Config{
+		Registry:       registry,
+		Policy:         policy.NewEngine(),
+		Grants:         policy.NewSessionGrants(),
+		WorkspaceGuard: guard,
+		Builders: map[string]securitycore.OperationBuilder{
+			"read_file": func(ctx context.Context, request securitycore.OperationRequest, argumentsSummary string) securitycore.OperationRequest {
+				request.OperationKind = securitycore.OperationFileRead
+				request.Resources = []securitycore.OperationResource{{Kind: "path", Value: filepath.Join(outside, "secret.txt")}}
+				return request
+			},
+		},
+	})
+	if err != nil {
+		t.Fatalf("NewExecutionSecurityMiddleware() error = %v", err)
+	}
+
+	var called atomic.Bool
+	wrapped, err := middleware.WrapInvokableToolCall(context.Background(), func(ctx context.Context, argumentsInJSON string, opts ...tool.Option) (string, error) {
+		called.Store(true)
+		return "", nil
+	}, &adk.ToolContext{Name: "read_file", CallID: "call-1"})
+	if err != nil {
+		t.Fatalf("WrapInvokableToolCall() error = %v", err)
+	}
+
+	if _, err := wrapped(context.Background(), `{}`); err == nil {
+		t.Fatal("expected path containment error")
+	}
+	if called.Load() {
+		t.Fatal("endpoint should not run for escaping path resource")
 	}
 }
 
@@ -96,7 +252,7 @@ func TestWrapInvokableToolCallCachesSessionApproval(t *testing.T) {
 		Risk:          capability.RiskHigh,
 		DefaultPolicy: capability.DefaultPolicyReview,
 	})
-	approver := &fakeApprover{approve: true}
+	approver := &fakeApprover{approve: true, scope: "session"}
 	middleware := newTestMiddleware(t, registry, approver)
 
 	var called atomic.Int32
@@ -118,6 +274,64 @@ func TestWrapInvokableToolCallCachesSessionApproval(t *testing.T) {
 	}
 	if called.Load() != 2 {
 		t.Fatalf("endpoint calls = %d, want 2", called.Load())
+	}
+}
+
+func TestWrapInvokableToolCallApprovalDefaultsToOneOperation(t *testing.T) {
+	t.Parallel()
+
+	registry := newTestRegistry(t, capability.Descriptor{
+		Name:          "high_risk",
+		Type:          capability.TypeNativeTool,
+		Source:        capability.SourceBuiltin,
+		Risk:          capability.RiskHigh,
+		DefaultPolicy: capability.DefaultPolicyReview,
+	})
+	approver := &fakeApprover{approve: true}
+	middleware := newTestMiddleware(t, registry, approver)
+
+	wrapped, err := middleware.WrapInvokableToolCall(context.Background(), func(ctx context.Context, argumentsInJSON string, opts ...tool.Option) (string, error) {
+		return "ok", nil
+	}, &adk.ToolContext{Name: "high_risk", CallID: "call-1"})
+	if err != nil {
+		t.Fatalf("WrapInvokableToolCall() error = %v", err)
+	}
+
+	for i := 0; i < 2; i++ {
+		if _, err := wrapped(context.Background(), `{}`); err != nil {
+			t.Fatalf("wrapped endpoint call %d returned error: %v", i+1, err)
+		}
+	}
+	if approver.calls.Load() != 2 {
+		t.Fatalf("approver calls = %d, want 2", approver.calls.Load())
+	}
+}
+
+func TestWrapInvokableToolCallReviewsUnknownCapability(t *testing.T) {
+	t.Parallel()
+
+	registry := newTestRegistry(t)
+	approver := &fakeApprover{approve: true}
+	middleware := newTestMiddleware(t, registry, approver)
+
+	wrapped, err := middleware.WrapInvokableToolCall(context.Background(), func(ctx context.Context, argumentsInJSON string, opts ...tool.Option) (string, error) {
+		return "ok", nil
+	}, &adk.ToolContext{Name: "unknown_tool", CallID: "call-1"})
+	if err != nil {
+		t.Fatalf("WrapInvokableToolCall() error = %v", err)
+	}
+
+	if _, err := wrapped(context.Background(), `{"api_key":"secret"}`); err != nil {
+		t.Fatalf("wrapped endpoint returned error: %v", err)
+	}
+	if approver.calls.Load() != 1 {
+		t.Fatalf("approver calls = %d, want 1", approver.calls.Load())
+	}
+	if approver.last.Operation.Registered {
+		t.Fatal("expected unknown capability to be unregistered")
+	}
+	if approver.last.Operation.SanitizedArgsSummary == "" || approver.last.Operation.SanitizedArgsSummary == `{"api_key":"secret"}` {
+		t.Fatalf("arguments were not summarized safely: %q", approver.last.Operation.SanitizedArgsSummary)
 	}
 }
 
@@ -156,7 +370,7 @@ func TestWrapInvokableToolCallSerializesConcurrentApproval(t *testing.T) {
 		Risk:          capability.RiskHigh,
 		DefaultPolicy: capability.DefaultPolicyReview,
 	})
-	approver := &slowApprover{approve: true}
+	approver := &slowApprover{approve: true, scope: "session"}
 	middleware := newTestMiddleware(t, registry, approver)
 
 	wrapped, err := middleware.WrapInvokableToolCall(context.Background(), func(ctx context.Context, argumentsInJSON string, opts ...tool.Option) (string, error) {
@@ -307,6 +521,7 @@ func newTestMiddleware(t *testing.T, registry *capability.Registry, approver App
 
 type slowApprover struct {
 	approve   bool
+	scope     string
 	calls     atomic.Int32
 	active    atomic.Int32
 	maxActive atomic.Int32
@@ -323,5 +538,5 @@ func (a *slowApprover) Approve(ctx context.Context, req ApprovalRequest) (Approv
 	}
 	time.Sleep(10 * time.Millisecond)
 	a.active.Add(-1)
-	return ApprovalDecision{Approved: a.approve}, nil
+	return ApprovalDecision{Approved: a.approve, ApprovalScope: a.scope}, nil
 }

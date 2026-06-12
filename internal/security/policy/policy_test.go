@@ -4,18 +4,22 @@ import (
 	"testing"
 
 	"github.com/HappyLadySauce/HappyLadySauceCLI/internal/capability"
+	securitycore "github.com/HappyLadySauce/HappyLadySauceCLI/internal/security"
 )
 
 func TestEngineAllowsLowRiskAllowCapability(t *testing.T) {
 	t.Parallel()
 
-	decision := NewEngine().Evaluate(capability.Descriptor{
-		Name:          "get_weather",
-		Type:          capability.TypeNativeTool,
-		Source:        capability.SourceBuiltin,
-		Risk:          capability.RiskLow,
-		DefaultPolicy: capability.DefaultPolicyAllow,
-	}, true)
+	decision := NewEngine().Evaluate(securitycore.OperationRequest{
+		Registered: true,
+		Capability: capability.Descriptor{
+			Name:          "get_weather",
+			Type:          capability.TypeNativeTool,
+			Source:        capability.SourceBuiltin,
+			Risk:          capability.RiskLow,
+			DefaultPolicy: capability.DefaultPolicyAllow,
+		},
+	})
 
 	if decision.Action != ActionAllow {
 		t.Fatalf("decision action = %s, want %s", decision.Action, ActionAllow)
@@ -25,23 +29,70 @@ func TestEngineAllowsLowRiskAllowCapability(t *testing.T) {
 func TestEngineReviewsHighRiskCapabilityEvenWhenDefaultAllow(t *testing.T) {
 	t.Parallel()
 
-	decision := NewEngine().Evaluate(capability.Descriptor{
-		Name:          "run_shell",
-		Type:          capability.TypeNativeTool,
-		Source:        capability.SourceBuiltin,
-		Risk:          capability.RiskHigh,
-		DefaultPolicy: capability.DefaultPolicyAllow,
-	}, true)
+	decision := NewEngine().Evaluate(securitycore.OperationRequest{
+		Registered: true,
+		Capability: capability.Descriptor{
+			Name:          "run_shell",
+			Type:          capability.TypeNativeTool,
+			Source:        capability.SourceBuiltin,
+			Risk:          capability.RiskHigh,
+			DefaultPolicy: capability.DefaultPolicyAllow,
+		},
+	})
 
 	if decision.Action != ActionReview {
 		t.Fatalf("decision action = %s, want %s", decision.Action, ActionReview)
 	}
 }
 
+func TestEngineReviewsOperationRiskEvenWhenDescriptorAllows(t *testing.T) {
+	t.Parallel()
+
+	decision := NewEngine().Evaluate(securitycore.OperationRequest{
+		Registered: true,
+		Risk:       capability.RiskHigh,
+		Capability: capability.Descriptor{
+			Name:          "future_write",
+			Type:          capability.TypeNativeTool,
+			Source:        capability.SourceBuiltin,
+			Risk:          capability.RiskLow,
+			DefaultPolicy: capability.DefaultPolicyAllow,
+		},
+	})
+
+	if decision.Action != ActionReview || decision.Reason != "high_risk" {
+		t.Fatalf("decision = %#v, want high-risk review", decision)
+	}
+}
+
+func TestEngineReviewsCommandOperations(t *testing.T) {
+	t.Parallel()
+
+	decision := NewEngine().Evaluate(securitycore.OperationRequest{
+		Registered:    true,
+		OperationKind: securitycore.OperationCommandRun,
+		Risk:          capability.RiskLow,
+		Capability: capability.Descriptor{
+			Name:          "run_command",
+			Type:          capability.TypeNativeTool,
+			Source:        capability.SourceBuiltin,
+			Risk:          capability.RiskLow,
+			DefaultPolicy: capability.DefaultPolicyAllow,
+		},
+	})
+
+	if decision.Action != ActionReview || decision.Reason != "command_run" {
+		t.Fatalf("decision = %#v, want command review", decision)
+	}
+}
+
 func TestEngineReviewsMissingDescriptor(t *testing.T) {
 	t.Parallel()
 
-	decision := NewEngine().Evaluate(capability.Descriptor{Name: "unregistered"}, false)
+	decision := NewEngine().Evaluate(securitycore.OperationRequest{
+		Capability: capability.Descriptor{Name: "unregistered"},
+		Registered: false,
+	})
 	if decision.Action != ActionReview {
 		t.Fatalf("decision action = %s, want %s", decision.Action, ActionReview)
 	}
@@ -62,11 +113,21 @@ func TestSessionGrantsAreScopedToDescriptorKey(t *testing.T) {
 	otherFile := readFile
 	otherFile.Resources = []string{"D:/Code/project/b.txt"}
 
-	grants.Allow(readFile)
-	if !grants.IsAllowed(readFile) {
+	readOperation := securitycore.OperationRequest{
+		Capability:    readFile,
+		OperationKind: securitycore.OperationFileRead,
+		Risk:          readFile.Risk,
+		Resources:     []securitycore.OperationResource{{Kind: "path", Value: "D:/Code/project/a.txt"}},
+	}
+	otherOperation := readOperation
+	otherOperation.Capability = otherFile
+	otherOperation.Resources = []securitycore.OperationResource{{Kind: "path", Value: "D:/Code/project/b.txt"}}
+
+	grants.Allow(readOperation)
+	if !grants.IsAllowed(readOperation) {
 		t.Fatal("expected same descriptor to be allowed")
 	}
-	if grants.IsAllowed(otherFile) {
+	if grants.IsAllowed(otherOperation) {
 		t.Fatal("session grant leaked to a different resource")
 	}
 }

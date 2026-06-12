@@ -14,6 +14,7 @@ import (
 	"github.com/cloudwego/eino/components/tool/utils"
 
 	"github.com/HappyLadySauce/HappyLadySauceCLI/internal/capability"
+	securitycore "github.com/HappyLadySauce/HappyLadySauceCLI/internal/security"
 )
 
 // https://uapis.cn/docs/api-reference/get-misc-weather
@@ -131,5 +132,18 @@ func CapabilityDescriptor() capability.Descriptor {
 		DefaultPolicy: capability.DefaultPolicyAllow,
 		Scopes:        []string{"network:weather"},
 		Resources:     []string{"https://uapis.cn/api/v1/misc/weather"},
+	}
+}
+
+// OperationBuilder returns the operation metadata builder for get_weather calls.
+// OperationBuilder 返回 get_weather 调用的操作元数据构建器。
+func OperationBuilder() securitycore.OperationBuilder {
+	return func(ctx context.Context, request securitycore.OperationRequest, argumentsSummary string) securitycore.OperationRequest {
+		request.OperationKind = "network.weather"
+		request.Resources = []securitycore.OperationResource{
+			{Kind: "url", Value: weatherAPIURL},
+		}
+		request.SanitizedArgsSummary = argumentsSummary
+		return request
 	}
 }

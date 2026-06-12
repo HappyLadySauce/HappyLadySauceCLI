@@ -3,7 +3,7 @@ package policy
 import (
 	"sync"
 
-	"github.com/HappyLadySauce/HappyLadySauceCLI/internal/capability"
+	securitycore "github.com/HappyLadySauce/HappyLadySauceCLI/internal/security"
 )
 
 // SessionGrants stores approvals that are valid only for the current process session.
@@ -19,25 +19,25 @@ func NewSessionGrants() *SessionGrants {
 	return &SessionGrants{grants: map[string]struct{}{}}
 }
 
-// Allow records a session-scoped approval for descriptor.
-// Allow 记录 descriptor 的会话级授权。
-func (g *SessionGrants) Allow(descriptor capability.Descriptor) {
+// Allow records a session-scoped approval for operation.
+// Allow 记录 operation 的会话级授权。
+func (g *SessionGrants) Allow(operation securitycore.OperationRequest) {
 	if g == nil {
 		return
 	}
 	g.mu.Lock()
 	defer g.mu.Unlock()
-	g.grants[descriptor.GrantKey()] = struct{}{}
+	g.grants[operation.GrantKey()] = struct{}{}
 }
 
-// IsAllowed reports whether descriptor has a session-scoped approval.
-// IsAllowed 判断 descriptor 是否已有会话级授权。
-func (g *SessionGrants) IsAllowed(descriptor capability.Descriptor) bool {
+// IsAllowed reports whether operation has a session-scoped approval.
+// IsAllowed 判断 operation 是否已有会话级授权。
+func (g *SessionGrants) IsAllowed(operation securitycore.OperationRequest) bool {
 	if g == nil {
 		return false
 	}
 	g.mu.RLock()
 	defer g.mu.RUnlock()
-	_, ok := g.grants[descriptor.GrantKey()]
+	_, ok := g.grants[operation.GrantKey()]
 	return ok
 }

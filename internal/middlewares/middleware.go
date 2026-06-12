@@ -10,8 +10,10 @@ import (
 	compactmiddleware "github.com/HappyLadySauce/HappyLadySauceCLI/internal/middlewares/compact"
 	securitymiddleware "github.com/HappyLadySauce/HappyLadySauceCLI/internal/middlewares/security"
 	usagemiddleware "github.com/HappyLadySauce/HappyLadySauceCLI/internal/middlewares/usage"
+	securitycore "github.com/HappyLadySauce/HappyLadySauceCLI/internal/security"
 	"github.com/HappyLadySauce/HappyLadySauceCLI/internal/security/policy"
 	"github.com/HappyLadySauce/HappyLadySauceCLI/pkg/context/compact"
+	"github.com/HappyLadySauce/HappyLadySauceCLI/pkg/options"
 )
 
 // ChatModelAgentMiddlewareConfig groups dependencies for the default agent middleware chain.
@@ -22,7 +24,9 @@ type ChatModelAgentMiddlewareConfig struct {
 	MaxModelContext    int
 	MaxOutputTokens    int
 	CapabilityRegistry *capability.Registry
+	OperationBuilders  map[string]securitycore.OperationBuilder
 	Approver           securitymiddleware.Approver
+	Security           *options.SecurityOptions
 }
 
 // NewChatModelAgentMiddlewares builds the default ChatModelAgent middleware chain.
@@ -38,11 +42,20 @@ func NewChatModelAgentMiddlewares(cfg ChatModelAgentMiddlewareConfig) ([]adk.Cha
 		return nil, fmt.Errorf("new context compactor: %w", err)
 	}
 
+	workspaceGuard, err := newWorkspaceGuard(cfg.Security)
+	if err != nil {
+		return nil, err
+	}
+
 	securityMiddleware, err := securitymiddleware.NewExecutionSecurityMiddleware(securitymiddleware.Config{
-		Registry: cfg.CapabilityRegistry,
-		Policy:   policy.NewEngine(),
-		Grants:   policy.NewSessionGrants(),
-		Approver: cfg.Approver,
+		Registry:              cfg.CapabilityRegistry,
+		Policy:                policy.NewEngine(),
+		Grants:                policy.NewSessionGrants(),
+		Approver:              cfg.Approver,
+		Builders:              cfg.OperationBuilders,
+		WorkspaceGuard:        workspaceGuard,
+		CommandTimeoutSeconds: securityCommandTimeout(cfg.Security),
+		MaxToolOutputBytes:    securityMaxToolOutputBytes(cfg.Security),
 	})
 	if err != nil {
 		return nil, fmt.Errorf("new execution security middleware: %w", err)
@@ -55,4 +68,30 @@ func NewChatModelAgentMiddlewares(cfg ChatModelAgentMiddlewareConfig) ([]adk.Cha
 	usageMiddleware := usagemiddleware.NewUsageMiddleware()
 
 	return []adk.ChatModelAgentMiddleware{securityMiddleware, compactMiddleware, usageMiddleware}, nil
+}
+
+func newWorkspaceGuard(opts *options.SecurityOptions) (*securitycore.WorkspaceGuard, error) {
+	var roots []string
+	if opts != nil {
+		roots = opts.WorkspaceRoots
+	}
+	guard, err := securitycore.NewWorkspaceGuard(roots)
+	if err != nil {
+		return nil, fmt.Errorf("new workspace guard: %w", err)
+	}
+	return guard, nil
+}
+
+func securityCommandTimeout(opts *options.SecurityOptions) int {
+	if opts == nil {
+		return options.NewSecurityOptions().CommandTimeoutSeconds
+	}
+	return opts.CommandTimeoutSeconds
+}
+
+func securityMaxToolOutputBytes(opts *options.SecurityOptions) int {
+	if opts == nil {
+		return options.NewSecurityOptions().MaxToolOutputBytes
+	}
+	return opts.MaxToolOutputBytes
 }
