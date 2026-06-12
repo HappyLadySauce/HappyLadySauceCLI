@@ -72,16 +72,14 @@ fmt:
 vet:
 	$(GO) vet ./...
 
-## lint: Run golangci-lint (skipped with warning if not installed)
+## lint: Run golangci-lint (auto-installs via go install if not in PATH)
 lint:
 ifeq ($(IS_WINDOWS),1)
-	@where golangci-lint >nul 2>&1 && golangci-lint run ./... || echo warning: golangci-lint not found in PATH; skipping lint
+	@where golangci-lint >nul 2>&1 || $(GO) install github.com/golangci/golangci-lint/cmd/golangci-lint@latest
+	golangci-lint run ./...
 else
-	@if command -v golangci-lint >/dev/null 2>&1; then \
-		golangci-lint run ./...; \
-	else \
-		echo "warning: golangci-lint not found in PATH; skipping lint"; \
-	fi
+	@command -v golangci-lint >/dev/null 2>&1 || $(GO) install github.com/golangci/golangci-lint/cmd/golangci-lint@latest
+	golangci-lint run ./...
 endif
 
 ## check: fmt, vet, lint, and tidy (mutates files — use before commit)

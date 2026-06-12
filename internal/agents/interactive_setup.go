@@ -46,12 +46,17 @@ func newInteractiveRuntime(ctx context.Context, cfg *config.Config, in io.Reader
 		}
 	}()
 
+	capRegistry, err := tools.NewCapabilityRegistry()
+	if err != nil {
+		return nil, fmt.Errorf("new capability registry: %w", err)
+	}
+
 	handlers, err := middlewares.NewChatModelAgentMiddlewares(middlewares.ChatModelAgentMiddlewareConfig{
 		Model:              chatModel,
 		ModelName:          cfg.Model.Model,
 		MaxModelContext:    cfg.Model.MaxModelContext,
 		MaxOutputTokens:    cfg.Model.MaxOutputTokens,
-		CapabilityRegistry: tools.NewCapabilityRegistry(),
+		CapabilityRegistry: capRegistry,
 		Approver:           newTerminalApprover(promptReader, renderer),
 	})
 	if err != nil {

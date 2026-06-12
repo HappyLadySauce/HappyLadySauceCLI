@@ -6,6 +6,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"io"
 	"sync"
 	"time"
 
@@ -105,8 +106,32 @@ func (m *ExecutionSecurityMiddleware) WrapStreamableToolCall(ctx context.Context
 
 		start := time.Now()
 		result, err := endpoint(ctx, argumentsInJSON, opts...)
-		m.auditExecution(ctx, tCtx, start, err)
-		return result, err
+		if err != nil {
+			m.auditExecution(ctx, tCtx, start, err)
+			return nil, err
+		}
+
+		// Wrap the stream so audit fires on actual stream completion (EOF) rather
+		// than at stream setup time. This gives accurate elapsed time.
+		// 包装 stream 使审计在流实际消费完（EOF）时触发，而非在 stream 建立时，以获取准确的耗时。
+		var audited bool
+		doAudit := func(streamErr error) {
+			if !audited {
+				audited = true
+				m.auditExecution(ctx, tCtx, start, streamErr)
+			}
+		}
+		return schema.StreamReaderWithConvert(result,
+			func(s string) (string, error) { return s, nil },
+			schema.WithOnEOF(func() (any, error) {
+				doAudit(nil)
+				return nil, io.EOF
+			}),
+			schema.WithErrWrapper(func(err error) error {
+				doAudit(err)
+				return err
+			}),
+		), nil
 	}, nil
 }
 
@@ -135,8 +160,32 @@ func (m *ExecutionSecurityMiddleware) WrapEnhancedStreamableToolCall(ctx context
 
 		start := time.Now()
 		result, err := endpoint(ctx, toolArgument, opts...)
-		m.auditExecution(ctx, tCtx, start, err)
-		return result, err
+		if err != nil {
+			m.auditExecution(ctx, tCtx, start, err)
+			return nil, err
+		}
+
+		// Wrap the stream so audit fires on actual stream completion (EOF) rather
+		// than at stream setup time. This gives accurate elapsed time.
+		// 包装 stream 使审计在流实际消费完（EOF）时触发，而非在 stream 建立时，以获取准确的耗时。
+		var audited bool
+		doAudit := func(streamErr error) {
+			if !audited {
+				audited = true
+				m.auditExecution(ctx, tCtx, start, streamErr)
+			}
+		}
+		return schema.StreamReaderWithConvert(result,
+			func(tr *schema.ToolResult) (*schema.ToolResult, error) { return tr, nil },
+			schema.WithOnEOF(func() (any, error) {
+				doAudit(nil)
+				return nil, io.EOF
+			}),
+			schema.WithErrWrapper(func(err error) error {
+				doAudit(err)
+				return err
+			}),
+		), nil
 	}, nil
 }
 

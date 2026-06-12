@@ -39,6 +39,20 @@ func NewEngine() *Engine {
 
 // Evaluate returns the policy decision for a descriptor.
 // Evaluate 返回 descriptor 对应的策略决策。
+//
+// Decision matrix (first match wins) — 决策矩阵（优先匹配）：
+//
+//	unregistered            → ActionReview  (descriptor_missing)
+//	DefaultPolicyDeny       → ActionDeny    (default_policy_deny)
+//	RiskHigh                → ActionReview  (high_risk)          — overrides DefaultPolicyAllow
+//	DefaultPolicyReview     → ActionReview  (default_policy_review)
+//	otherwise               → ActionAllow   (default_policy_allow)
+//
+// Note: RiskMedium + DefaultPolicyAllow results in ActionAllow. This is deliberate:
+// medium-risk tools that declare Allow are trusted to run without approval, while
+// medium-risk tools that declare Review will prompt the user.
+// 注意：RiskMedium + DefaultPolicyAllow 的组合结果为 ActionAllow。这是刻意设计——
+// 声明 Allow 的中等风险工具被信任可直接执行，声明 Review 的中等风险工具则会提示用户确认。
 func (e *Engine) Evaluate(descriptor capability.Descriptor, registered bool) Decision {
 	if !registered {
 		return Decision{Action: ActionReview, Reason: "descriptor_missing"}

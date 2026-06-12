@@ -23,12 +23,17 @@ func (m *fakeChatModel) Stream(ctx context.Context, input []*schema.Message, opt
 func TestNewChatModelAgentMiddlewaresRegistersDefaultChain(t *testing.T) {
 	t.Parallel()
 
+	capRegistry, err := tools.NewCapabilityRegistry()
+	if err != nil {
+		t.Fatalf("NewCapabilityRegistry() error = %v", err)
+	}
+
 	handlers, err := NewChatModelAgentMiddlewares(ChatModelAgentMiddlewareConfig{
 		Model:              &fakeChatModel{},
 		ModelName:          "unknown-local-model",
 		MaxModelContext:    180,
 		MaxOutputTokens:    20,
-		CapabilityRegistry: tools.NewCapabilityRegistry(),
+		CapabilityRegistry: capRegistry,
 	})
 	if err != nil {
 		t.Fatalf("NewChatModelAgentMiddlewares() error = %v", err)

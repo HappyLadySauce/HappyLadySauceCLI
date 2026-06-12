@@ -27,7 +27,10 @@ func TestNewAgentToolsExposesWeatherTool(t *testing.T) {
 func TestNewCapabilityRegistryRegistersWeatherAsAllowedBuiltin(t *testing.T) {
 	t.Parallel()
 
-	registry := NewCapabilityRegistry()
+	registry, err := NewCapabilityRegistry()
+	if err != nil {
+		t.Fatalf("NewCapabilityRegistry() error = %v", err)
+	}
 	desc, ok := registry.Get("get_weather")
 	if !ok {
 		t.Fatal("expected get_weather capability")

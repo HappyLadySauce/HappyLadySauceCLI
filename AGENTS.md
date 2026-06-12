@@ -23,6 +23,30 @@ make clean          # Remove bin/, coverage files
 
 Requires `HAPPLADYSAUCECLI_BASE_URL` and `HAPPLADYSAUCECLI_MODEL` environment variables (or a `settings.json` config file). Copy `.env.example` → `.env` and fill in values.
 
+## Editing Workflow
+
+**After every code change, run quality checks through make targets — never use raw `go build`/`go fmt`/`go test` directly.**
+
+```bash
+make check && make test    # Full cycle: fmt + vet + lint + tidy, then run all tests
+```
+
+`make check` runs `fmt → vet → lint → tidy` in one pass. If any step fails, fix the issues before proceeding.
+
+For a read-only check that does not mutate files:
+
+```bash
+make verify               # vet + lint only (no fmt, no tidy)
+```
+
+To run a single failing test with verbose output:
+
+```bash
+go test ./internal/context/... -run TestCompactIfNeeded -v
+```
+
+`make lint` auto-installs `golangci-lint` via `go install` if not already in PATH — no manual setup needed.
+
 ## Architecture
 
 This is an **interactive AI agent CLI** written in Go, built on the [Eino ADK](https://github.com/cloudwego/eino) framework. It connects to any OpenAI-compatible chat model, streams responses to the terminal, and maintains conversation history with automatic context compaction.
