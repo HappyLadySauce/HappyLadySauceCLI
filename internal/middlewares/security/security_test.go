@@ -47,8 +47,12 @@ func TestWrapEnhancedToolCallsAuthorizeBeforeExecution(t *testing.T) {
 	if err != nil {
 		t.Fatalf("WrapEnhancedInvokableToolCall() error = %v", err)
 	}
-	if _, err := wrappedInvokable(context.Background(), &schema.ToolArgument{Text: `{}`}); err == nil {
-		t.Fatal("expected enhanced invokable denial")
+	result, err := wrappedInvokable(context.Background(), &schema.ToolArgument{Text: `{}`})
+	if err != nil {
+		t.Fatalf("enhanced invokable returned error: %v", err)
+	}
+	if !toolresult.IsDeniedPayload(result.Parts[0].Text) {
+		t.Fatalf("expected enhanced invokable denial payload, got %#v", result)
 	}
 	if invokableCalled.Load() {
 		t.Fatal("denied enhanced invokable endpoint should not be called")
@@ -62,8 +66,16 @@ func TestWrapEnhancedToolCallsAuthorizeBeforeExecution(t *testing.T) {
 	if err != nil {
 		t.Fatalf("WrapEnhancedStreamableToolCall() error = %v", err)
 	}
-	if _, err := wrappedStreamable(context.Background(), &schema.ToolArgument{Text: `{}`}); err == nil {
-		t.Fatal("expected enhanced streamable denial")
+	stream, err := wrappedStreamable(context.Background(), &schema.ToolArgument{Text: `{}`})
+	if err != nil {
+		t.Fatalf("enhanced streamable returned error: %v", err)
+	}
+	first, err := stream.Recv()
+	if err != nil {
+		t.Fatalf("enhanced streamable Recv() error = %v", err)
+	}
+	if !toolresult.IsDeniedPayload(first.Parts[0].Text) {
+		t.Fatalf("expected enhanced streamable denial payload, got %#v", first)
 	}
 	if streamableCalled.Load() {
 		t.Fatal("denied enhanced streamable endpoint should not be called")
@@ -417,9 +429,15 @@ func TestWrapInvokableToolCallDeniesPolicyDeniedCapability(t *testing.T) {
 		t.Fatalf("WrapInvokableToolCall() error = %v", err)
 	}
 
-	_, err = wrapped(context.Background(), `{}`)
-	if err == nil {
-		t.Fatal("expected denial error")
+	got, err := wrapped(context.Background(), `{}`)
+	if err != nil {
+		t.Fatalf("wrapped endpoint returned error: %v", err)
+	}
+	if !toolresult.IsDeniedPayload(got) {
+		t.Fatalf("expected denial payload, got %q", got)
+	}
+	if toolresult.DenialReason(got) != toolresult.ReasonPolicyDenied {
+		t.Fatalf("DenialReason() = %q, want %q", toolresult.DenialReason(got), toolresult.ReasonPolicyDenied)
 	}
 	if called.Load() {
 		t.Fatal("denied endpoint should not be called")
@@ -656,16 +674,27 @@ func TestWrapInvokableToolCallStopsWhenReviewDenied(t *testing.T) {
 	})
 	middleware := newTestMiddleware(t, registry, &fakeApprover{approve: false})
 
+	var called atomic.Bool
 	wrapped, err := middleware.WrapInvokableToolCall(context.Background(), func(ctx context.Context, argumentsInJSON string, opts ...tool.Option) (string, error) {
+		called.Store(true)
 		return "", errors.New("endpoint should not run")
 	}, &adk.ToolContext{Name: "review_tool", CallID: "call-1"})
 	if err != nil {
 		t.Fatalf("WrapInvokableToolCall() error = %v", err)
 	}
 
-	_, err = wrapped(context.Background(), `{}`)
-	if err == nil {
-		t.Fatal("expected review denial error")
+	got, err := wrapped(context.Background(), `{}`)
+	if err != nil {
+		t.Fatalf("wrapped endpoint returned error: %v", err)
+	}
+	if called.Load() {
+		t.Fatal("endpoint should not run when review is denied")
+	}
+	if !toolresult.IsDeniedPayload(got) {
+		t.Fatalf("expected denial payload, got %q", got)
+	}
+	if toolresult.DenialReason(got) != toolresult.ReasonUserDenied {
+		t.Fatalf("DenialReason() = %q, want %q", toolresult.DenialReason(got), toolresult.ReasonUserDenied)
 	}
 }
 

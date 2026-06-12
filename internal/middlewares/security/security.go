@@ -218,8 +218,10 @@ func (m *ExecutionSecurityMiddleware) WrapStreamableToolCall(ctx context.Context
 func (m *ExecutionSecurityMiddleware) WrapEnhancedInvokableToolCall(ctx context.Context, endpoint adk.EnhancedInvokableToolCallEndpoint, tCtx *adk.ToolContext) (adk.EnhancedInvokableToolCallEndpoint, error) {
 	return func(ctx context.Context, toolArgument *schema.ToolArgument, opts ...tool.Option) (*schema.ToolResult, error) {
 		auth, err := m.authorize(ctx, tCtx, toolArgumentSummary(toolArgument))
-		if err != nil {
-			return nil, err
+		if payload, recovered, authErr := m.finishAuthorize(ctx, auth, err); recovered {
+			return textToolResult(payload), nil
+		} else if authErr != nil {
+			return nil, authErr
 		}
 		operation := auth.operation
 
@@ -250,8 +252,10 @@ func (m *ExecutionSecurityMiddleware) WrapEnhancedInvokableToolCall(ctx context.
 func (m *ExecutionSecurityMiddleware) WrapEnhancedStreamableToolCall(ctx context.Context, endpoint adk.EnhancedStreamableToolCallEndpoint, tCtx *adk.ToolContext) (adk.EnhancedStreamableToolCallEndpoint, error) {
 	return func(ctx context.Context, toolArgument *schema.ToolArgument, opts ...tool.Option) (*schema.StreamReader[*schema.ToolResult], error) {
 		auth, err := m.authorize(ctx, tCtx, toolArgumentSummary(toolArgument))
-		if err != nil {
-			return nil, err
+		if payload, recovered, authErr := m.finishAuthorize(ctx, auth, err); recovered {
+			return schema.StreamReaderFromArray([]*schema.ToolResult{textToolResult(payload)}), nil
+		} else if authErr != nil {
+			return nil, authErr
 		}
 		operation := auth.operation
 
@@ -320,7 +324,7 @@ func (m *ExecutionSecurityMiddleware) authorize(ctx context.Context, tCtx *adk.T
 		return auth, nil
 	case policy.ActionDeny:
 		m.auditDecision(ctx, operation, decision, securitycore.ApprovalScopeNone, "denied")
-		return auth, fmt.Errorf("capability denied by policy: %s", toolName(tCtx))
+		return auth, securitycore.CapabilityDeniedByPolicyError(toolName(tCtx))
 	case policy.ActionReview:
 		if m.grants.IsAllowed(operation) {
 			auth.approvalScope = securitycore.ApprovalScopeSession
@@ -351,7 +355,7 @@ func (m *ExecutionSecurityMiddleware) authorize(ctx context.Context, tCtx *adk.T
 		}
 		if !approval.Approved {
 			m.auditDecision(ctx, operation, decision, securitycore.ApprovalScopeNone, "denied")
-			return auth, fmt.Errorf("capability denied by user: %s", toolName(tCtx))
+			return auth, securitycore.CapabilityDeniedByUserError(toolName(tCtx))
 		}
 		approvalScope := approval.ApprovalScope
 		if approvalScope == "" {
@@ -470,6 +474,41 @@ func (m *ExecutionSecurityMiddleware) validateOperationScopes(operation security
 	return nil
 }
 
+func (m *ExecutionSecurityMiddleware) finishAuthorize(ctx context.Context, auth authorization, err error) (string, bool, error) {
+	if err == nil {
+		return "", false, nil
+	}
+	if !securitycore.IsRecoverableAuthorizationDenial(err) {
+		return "", false, err
+	}
+	reason := securitycore.DenialReasonFor(err)
+	payload := toolresult.FormatFailure(err, reason)
+	m.auditAuthorizationRecovered(ctx, auth, err, len(payload), reason)
+	return payload, true, nil
+}
+
+func (m *ExecutionSecurityMiddleware) auditAuthorizationRecovered(ctx context.Context, auth authorization, err error, outputBytes int, reason string) {
+	operation := auth.operation
+	record := securitycore.NewAuditRecord(operation)
+	kvs := []any{
+		"phase", "capability_call",
+		"tool_name", record.ToolName,
+		"tool_call_id", record.ToolCallID,
+		"capability_type", string(operation.Capability.Type),
+		"capability_source", operation.Capability.Source,
+		"operation_kind", record.OperationKind,
+		"resources", record.Resources,
+		"args_summary_sha", record.ArgsSummarySHA,
+		"risk", record.Risk,
+		"decision", string(auth.decision.Action),
+		"decision_reason", auth.decision.Reason,
+		"approval_scope", auth.approvalScope,
+		"output_bytes", outputBytes,
+		"denial_reason", reason,
+	}
+	logger.Error(ctx, err, "Capability authorization recovered", append(kvs, "status", "denial_returned", "recovered", true)...)
+}
+
 func (m *ExecutionSecurityMiddleware) auditDecision(ctx context.Context, operation securitycore.OperationRequest, decision policy.Decision, approvalScope, status string) {
 	record := securitycore.NewAuditRecord(operation)
 	record.Decision = string(decision.Action)
@@ -524,10 +563,14 @@ func (m *ExecutionSecurityMiddleware) auditExecution(ctx context.Context, auth a
 }
 
 func errorToolResult(err error) *schema.ToolResult {
+	return textToolResult(toolresult.FormatError(err))
+}
+
+func textToolResult(text string) *schema.ToolResult {
 	return &schema.ToolResult{
 		Parts: []schema.ToolOutputPart{{
 			Type: schema.ToolPartTypeText,
-			Text: toolresult.FormatError(err),
+			Text: text,
 		}},
 	}
 }

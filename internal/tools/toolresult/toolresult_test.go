@@ -32,6 +32,21 @@ func TestFormatErrorUnwrapsWrappedMessage(t *testing.T) {
 	}
 }
 
+func TestFormatFailureIncludesReason(t *testing.T) {
+	t.Parallel()
+
+	got := FormatFailure(errors.New("capability denied by user: get_weather"), ReasonUserDenied)
+	if !strings.Contains(got, `"reason":"user_denied"`) {
+		t.Fatalf("FormatFailure() = %q, want user_denied reason", got)
+	}
+	if !IsDeniedPayload(got) {
+		t.Fatal("expected denied payload")
+	}
+	if DenialReason(got) != ReasonUserDenied {
+		t.Fatalf("DenialReason() = %q, want %q", DenialReason(got), ReasonUserDenied)
+	}
+}
+
 func TestIsErrorPayload(t *testing.T) {
 	t.Parallel()
 

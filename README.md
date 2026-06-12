@@ -259,13 +259,14 @@ pkg/
 - 基于 Eino ADK `ChatModelAgent`，启用流式输出
 - 中间件在每次模型调用前重写 `state.Messages`，不修改原始 state
 - 工具调用结果会渲染但不写入 assistant history（仅保留最后一条 assistant 消息）
-- 工具执行/网络/参数错误以 JSON payload 回传给模型，ReAct 可继续；策略拒绝与 LLM API 失败不会退出进程，REPL 仍可用
+- 工具执行/网络/参数错误以 JSON payload 回传给模型，ReAct 可继续；用户/策略拒绝同样 soft-fail 回传模型；LLM API 失败不会退出进程，REPL 仍可用
 
 ## 错误处理
 
 | 场景 | 行为 |
 |------|------|
-| 策略/审批拒绝 | 工具不执行，终端提示原因，REPL 继续 |
+| 用户审批拒绝 / 策略 Deny | 返回 `{"ok":false,"error":"...","reason":"user_denied\|policy_denied"}` 给模型，ReAct 继续 |
+| 路径/scope 校验失败、无 Approver、审批 I/O 失败 | hard-fail，工具不执行，当前回合中断 |
 | 工具执行/网络/参数/输出超限 | 返回 `{"ok":false,"error":"..."}` 给模型，ReAct 继续 |
 | LLM API 失败 | 终端打印错误，当前回合结束，REPL 继续 |
 

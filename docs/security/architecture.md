@@ -355,7 +355,17 @@ ensureToolOutputWithinLimit()        ← 输出大小检验
 auditExecution() / auditStreamOpened()  ← 审计日志
 ```
 
-**执行错误软失败：** 策略/审批/路径校验失败仍返回 Go error（阻断执行）。工具 endpoint 执行失败、网络失败或输出超限会被格式化为 `{"ok":false,"error":"..."}` 并以 `status=tool_error_returned recovered=true` 审计后回传给模型，ReAct 循环可继续。
+**软失败矩阵：**
+
+| 错误类型 | 处理 | 回传模型 | ReAct |
+|---------|------|---------|-------|
+| 用户审批拒绝 | soft-fail JSON，`reason=user_denied` | 是 | 继续 |
+| 策略 Deny | soft-fail JSON，`reason=policy_denied` | 是 | 继续 |
+| 路径/scope 校验失败 | hard-fail Go error | 否 | 中断 |
+| 无 Approver / 审批 I/O 失败 | hard-fail Go error | 否 | 中断 |
+| 工具执行/网络/参数/输出超限 | soft-fail JSON | 是 | 继续 |
+
+用户/策略拒绝以 `status=denial_returned recovered=true` 审计；工具 endpoint 执行失败以 `status=tool_error_returned recovered=true` 审计后回传给模型，ReAct 循环可继续。
 
 ### 9.4 流式输出的特殊处理
 
