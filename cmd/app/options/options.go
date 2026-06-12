@@ -2,16 +2,19 @@ package options
 
 import (
 	"encoding/json"
+	"fmt"
 
 	"github.com/spf13/pflag"
 	"k8s.io/component-base/cli/flag"
 
+	"github.com/HappyLadySauce/HappyLadySauceCLI/pkg/appdirs"
 	"github.com/HappyLadySauce/HappyLadySauceCLI/pkg/options"
 )
 
 type Options struct {
 	basename   string
 	configPath string
+	Home       string                `mapstructure:"home"`
 	Model      *options.ModelOptions `mapstructure:"model"`
 }
 
@@ -25,6 +28,23 @@ func (o *Options) ConfigPath() string {
 // SetConfigPath 记录已加载配置文件的绝对路径。
 func (o *Options) SetConfigPath(path string) {
 	o.configPath = path
+}
+
+// NormalizeHome resolves and stores the application home directory.
+// Empty input resolves to the default ~/.HAPPLADYSAUCECLI directory.
+//
+// NormalizeHome 解析并保存应用 home 目录。
+// 空输入会解析为默认 ~/.HAPPLADYSAUCECLI 目录。
+func (o *Options) NormalizeHome() error {
+	if o == nil {
+		return nil
+	}
+	home, err := appdirs.ResolveHomeDir(o.Home)
+	if err != nil {
+		return fmt.Errorf("resolve home directory: %w", err)
+	}
+	o.Home = home
+	return nil
 }
 
 func NewOptions(basename string) *Options {
@@ -43,6 +63,7 @@ func (o *Options) AddFlags(fs *pflag.FlagSet) *flag.NamedFlagSets {
 	// 将各组标志注册到对应的 NamedFlagSet。
 	configFS := nfs.FlagSet("Config")
 	options.AddConfigFlag(configFS, o.basename)
+	configFS.StringVar(&o.Home, "home", "", "Program home directory for data and logs")
 
 	// Register model flags into the model flag set.
 	// 将模型标志注册到模型标志集中。

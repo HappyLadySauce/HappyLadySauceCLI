@@ -7,7 +7,7 @@
 - **交互式 REPL** — 终端内持续对话，支持流式输出与思考过程展示
 - **OpenAI 兼容** — 支持 OpenAI、LM Studio、Ollama 等兼容端点
 - **自动上下文压缩** — 当 prompt 接近预算上限时，以语义摘要压缩中间历史，保留首尾关键消息
-- **上下文预算状态行** — 每轮对话后显示 token 占用与分段估算（对话、工具、系统提示等）
+- **上下文预算状态行** — 每轮对话后显示本次 token 用量与上下文窗口占用
 - **Provider 用量回写** — 从模型响应元数据读取实际 prompt / completion token，校准预算显示
 - **模型元数据探测** — 启动时自动查询 provider 的上下文长度，未显式配置时自动采用
 - **多行输入** — 支持 `\` 续行与 `"""` 多行块
@@ -41,6 +41,16 @@ make build
 # 输出: bin/HAPPLADYSAUCECLI.exe (Windows) 或 bin/HAPPLADYSAUCECLI (Unix)
 ```
 
+启用诊断日志详细级别：
+
+```bash
+make run V=1   # 输出 klog.V(1)
+make run V=2   # 输出 klog.V(1) 和 klog.V(2)
+make run APP_HOME=.HAPPLADYSAUCECLI V=1
+```
+
+程序内建默认 home 为 `~/.HAPPLADYSAUCECLI`；当前仓库的 `settings.json` 已将 `home` 设置为 `.HAPPLADYSAUCECLI`，因此开发运行会把数据和诊断日志放到当前工作目录下。也可以通过 `APP_HOME=.HAPPLADYSAUCECLI` 或 `HAPPLADYSAUCECLI_HOME` 覆盖。
+
 ## 配置
 
 配置优先级（高 → 低）：
@@ -56,6 +66,7 @@ make build
 | `HAPPLADYSAUCECLI_API_KEY` | 视 provider 而定 | API 密钥 | — |
 | `HAPPLADYSAUCECLI_BASE_URL` | 是 | 模型 API 基址 | — |
 | `HAPPLADYSAUCECLI_MODEL` | 是 | 模型名称 | — |
+| `HAPPLADYSAUCECLI_HOME` | 否 | 程序 home 目录，保存 context 数据库和诊断日志；相对路径基于启动工作目录解析 | `~/.HAPPLADYSAUCECLI` |
 | `HAPPLADYSAUCECLI_MAX_OUTPUT_TOKENS` | 否 | 单次最大输出 token | `32000` |
 | `HAPPLADYSAUCECLI_MAX_MODEL_CONTEXT` | 否 | 模型上下文窗口 | `128000`（可被 provider 元数据覆盖） |
 
@@ -73,6 +84,7 @@ Makefile 会通过 `-include .env` 自动加载 `.env` 并导出变量。
 
 ```json
 {
+    "home": ".HAPPLADYSAUCECLI",
     "model": {
         "HAPPLADYSAUCECLI_API_KEY": "${HAPPLADYSAUCECLI_API_KEY}",
         "HAPPLADYSAUCECLI_BASE_URL": "${HAPPLADYSAUCECLI_BASE_URL}",
@@ -124,8 +136,6 @@ HAPPLADYSAUCECLI_BASE_URL=http://localhost:1234/v1
 HAPPLADYSAUCECLI_MODEL=<loaded-model-id>
 ```
 
-更多 LM Studio API 说明见 [`docs/LM-Studio-API/README.md`](docs/LM-Studio-API/README.md)。
-
 ## 使用
 
 启动后进入交互循环，输入 prompt 并回车发送。空行会被忽略。
@@ -142,12 +152,23 @@ HAPPLADYSAUCECLI_MODEL=<loaded-model-id>
 每轮助手回复结束后，终端会输出一行紧凑的上下文预算信息，例如：
 
 ```
-[context 42% 128k | actual prompt 54.2k | out 1.2k | est 55.4k]
+[Stats: elapsed=1.30s prompt↑=548 completion↓=86 total↑↓=634 content=634 0.50%(128K)]
 ```
 
-- **actual prompt / out** — 来自 provider 响应的本轮输入与输出 token 用量（若 provider 返回）
-- **total** — ChatModel 层记录的 provider 会话上下文窗口占用
-- 无 provider 用量时，`total` 保持为 0，压缩不会基于本地估算触发
+- **prompt↑ / completion↓** — 来自 provider 响应的本轮输入与输出 token 用量（若 provider 返回）
+- **total↑↓** — 当前用户交互内所有 model turn 的 provider total 聚合值
+- **content** — ChatModel 层记录的最新 provider 上下文窗口占用，百分比也基于该值计算
+- 无 provider 用量时，`content` 保持为 0，压缩不会基于本地估算触发
+
+### 诊断日志
+
+klog 诊断日志默认写入：
+
+```text
+<home>/logs/happyladysaucecli.log
+```
+
+程序内建默认 `<home>` 为 `~/.HAPPLADYSAUCECLI`；当前仓库 `settings.json` 已设置为 `.HAPPLADYSAUCECLI`。开发时也可设置 `home` / `HAPPLADYSAUCECLI_HOME` / `APP_HOME` 为其他目录。终端只保留交互对话、工具输出和 `[Stats: ...]` 状态行。使用 `make run V=1` 或 `make run V=2` 可以打开更详细的 token、context 和 compaction 诊断日志。
 
 ### 上下文压缩
 
@@ -157,7 +178,7 @@ HAPPLADYSAUCECLI_MODEL=<loaded-model-id>
 - 中间部分生成结构化摘要（目标、约束、进展、决策、相关文件、下一步）
 - 摘要失败时静默跳过，不中断对话
 
-详细设计见 [`docs/context/`](docs/context/)。
+详细设计见 [`pkg/context/compact/README.md`](pkg/context/compact/README.md)。
 
 ## 开发
 
@@ -198,10 +219,6 @@ internal/
 pkg/
   options/             # 配置选项与 Viper 绑定
   config/              # 运行时配置单例
-docs/
-  context/             # 上下文处理设计文档
-  eino/                # Eino 中间件指南
-  LM-Studio-API/       # LM Studio 接入参考
 ```
 
 ## 架构概览
@@ -223,10 +240,8 @@ docs/
 
 | 文档 | 内容 |
 |------|------|
-| [`docs/context/README.md`](docs/context/README.md) | 上下文处理 v1 设计总览 |
-| [`docs/context/compression.md`](docs/context/compression.md) | 压缩机制与包边界 |
-| [`docs/context/configuration.md`](docs/context/configuration.md) | 用户可见配置说明 |
-| [`docs/eino/middleware-guide.md`](docs/eino/middleware-guide.md) | Eino 中间件 API |
+| [`pkg/context/compact/README.md`](pkg/context/compact/README.md) | 压缩机制与包边界 |
+| [`internal/terminal/budget/README.md`](internal/terminal/budget/README.md) | 终端统计行格式 |
 | [`CLAUDE.md`](CLAUDE.md) | 面向 AI 辅助开发的仓库指南 |
 
 ## 技术栈

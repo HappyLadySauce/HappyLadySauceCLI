@@ -9,9 +9,12 @@ import (
 	"github.com/spf13/viper"
 	"k8s.io/component-base/cli/flag"
 	"k8s.io/component-base/logs"
+	"k8s.io/klog/v2"
 
 	"github.com/HappyLadySauce/HappyLadySauceCLI/cmd/app/options"
 	"github.com/HappyLadySauce/HappyLadySauceCLI/internal/agents"
+	"github.com/HappyLadySauce/HappyLadySauceCLI/internal/logging"
+	"github.com/HappyLadySauce/HappyLadySauceCLI/pkg/appdirs"
 	"github.com/HappyLadySauce/HappyLadySauceCLI/pkg/config"
 	pkgoptions "github.com/HappyLadySauce/HappyLadySauceCLI/pkg/options"
 )
@@ -36,10 +39,26 @@ func NewAPICommand(ctx context.Context, basename string) *cobra.Command {
 			// 保留已加载配置文件路径，供后续面向用户的校验报错使用。
 			opts.SetConfigPath(pkgoptions.LoadedConfigPath())
 
+			if err := opts.NormalizeHome(); err != nil {
+				return err
+			}
+			if err := appdirs.SetHomeDir(opts.Home); err != nil {
+				return fmt.Errorf("configure home directory: %w", err)
+			}
+
 			// Initialize logging after flags are parsed and configuration is loaded.
 			// 在解析完标志并加载配置后初始化日志。
 			logs.InitLogs()
-			defer logs.FlushLogs()
+			logCloser, logPath, err := logging.ConfigureDefaultFile()
+			if err != nil {
+				logs.FlushLogs()
+				return fmt.Errorf("configure logging: %w", err)
+			}
+			defer func() {
+				logs.FlushLogs()
+				_ = logCloser.Close()
+			}()
+			klog.Infof("logging initialized path=%s", logPath)
 
 			// Validate options after flags and configuration are fully populated.
 			// 在标志与配置全部就绪后校验选项。
@@ -60,6 +79,7 @@ func NewAPICommand(ctx context.Context, basename string) *cobra.Command {
 
 func run(ctx context.Context, opts *options.Options) error {
 	cfg := &config.Config{
+		Home:  opts.Home,
 		Model: opts.Model,
 	}
 	config.Init(cfg)

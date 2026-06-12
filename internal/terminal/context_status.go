@@ -3,6 +3,8 @@ package terminal
 import (
 	"fmt"
 
+	"k8s.io/klog/v2"
+
 	contextstatus "github.com/HappyLadySauce/HappyLadySauceCLI/internal/context/status"
 	terminalbudget "github.com/HappyLadySauce/HappyLadySauceCLI/internal/terminal/budget"
 )
@@ -14,6 +16,16 @@ func (r *Renderer) WriteConversationStatus(status contextstatus.Status, maxConte
 	if line == "" {
 		return
 	}
+	klog.V(1).Infof(
+		"conversation status rendered prompt=%d completion=%d total=%d content=%d context_percent=%.2f max_context=%d elapsed_ms=%d",
+		status.Prompt,
+		status.Completion,
+		status.Total,
+		status.ContextTokens,
+		contextPercent(status.ContextTokens, maxContext),
+		maxContext,
+		status.Elapsed.Milliseconds(),
+	)
 	r.mu.Lock()
 	defer r.mu.Unlock()
 	_, _ = fmt.Fprintln(r.errOut, line)
@@ -29,12 +41,20 @@ func (r *Renderer) formatConversationStatusLine(status contextstatus.Status, max
 	elapsed := r.colorize(colorStatsElapsed, fmt.Sprintf("elapsed=%s ", terminalbudget.FormatElapsed(status.Elapsed.Milliseconds())))
 	prompt := r.colorize(colorStatsPrompt, fmt.Sprintf("prompt↑=%d ", status.Prompt))
 	completion := r.colorize(colorStatsCompletion, fmt.Sprintf("completion↓=%d ", status.Completion))
-	content := r.colorize(colorStatsContent, fmt.Sprintf("content↑↓=%d", status.Total))
+	total := r.colorize(colorStatsContent, fmt.Sprintf("total↑↓=%d ", status.Total))
+	content := r.colorize(colorStatsContent, fmt.Sprintf("content=%d", status.ContextTokens))
 
-	line := prefix + elapsed + prompt + completion + content
-	if maxContext > 0 && status.Total > 0 {
-		contextPart := " " + terminalbudget.FormatContextUsage(float64(status.Total)/float64(maxContext)*100, maxContext)
+	line := prefix + elapsed + prompt + completion + total + content
+	if maxContext > 0 && status.ContextTokens > 0 {
+		contextPart := " " + terminalbudget.FormatContextUsage(contextPercent(status.ContextTokens, maxContext), maxContext)
 		line += r.colorize(colorStatsWindow, contextPart)
 	}
 	return line + r.colorize(colorStats, "]")
+}
+
+func contextPercent(contextTokens, maxContext int) float64 {
+	if contextTokens <= 0 || maxContext <= 0 {
+		return 0
+	}
+	return float64(contextTokens) / float64(maxContext) * 100
 }

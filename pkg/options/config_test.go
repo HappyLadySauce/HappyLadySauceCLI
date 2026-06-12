@@ -27,6 +27,7 @@ func TestLoadViperConfigFromSettingsJSON(t *testing.T) {
 	dir := t.TempDir()
 	settingsPath := filepath.Join(dir, "settings.json")
 	content := `{
+		"home": ".HAPPLADYSAUCECLI",
 		"model": {
 			"auth_token": "test-token",
 			"base_url": "https://api.example.com",
@@ -54,6 +55,9 @@ func TestLoadViperConfigFromSettingsJSON(t *testing.T) {
 	}
 	if got := LoadedConfigPath(); got != settingsPath {
 		t.Errorf("LoadedConfigPath() = %q, want %q", got, settingsPath)
+	}
+	if got, want := viper.GetString("home"), ".HAPPLADYSAUCECLI"; got != want {
+		t.Errorf("viper.GetString(home) = %q, want %q", got, want)
 	}
 
 	cases := []struct {
@@ -336,6 +340,7 @@ func TestAddConfigFlagHAPPLADYSAUCECLIModelEnvDoesNotFlattenModelSection(t *test
 
 	fs := pflag.NewFlagSet("t", pflag.ContinueOnError)
 	AddConfigFlag(fs, "HAPPLADYSAUCECLI")
+	t.Setenv("HAPPLADYSAUCECLI_HOME", ".HAPPLADYSAUCECLI")
 	t.Setenv("HAPPLADYSAUCECLI_MODEL", "from-env-model")
 	t.Setenv("HAPPLADYSAUCECLI_BASE_URL", "https://env.example.com")
 
@@ -352,6 +357,9 @@ func TestAddConfigFlagHAPPLADYSAUCECLIModelEnvDoesNotFlattenModelSection(t *test
 	}
 	if got, want := viper.GetString("model.HAPPLADYSAUCECLI_BASE_URL"), "https://env.example.com"; got != want {
 		t.Errorf("viper.GetString(model.HAPPLADYSAUCECLI_BASE_URL) = %q, want %q", got, want)
+	}
+	if got, want := viper.GetString("home"), ".HAPPLADYSAUCECLI"; got != want {
+		t.Errorf("viper.GetString(home) = %q, want %q", got, want)
 	}
 }
 

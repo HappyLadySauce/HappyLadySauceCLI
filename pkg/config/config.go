@@ -9,6 +9,7 @@ import (
 // Config aggregates runtime settings shared across packages.
 // Config 汇总各包共用的运行时配置。
 type Config struct {
+	Home  string                `mapstructure:"home"`
 	Model *options.ModelOptions `mapstructure:"model"`
 }
 

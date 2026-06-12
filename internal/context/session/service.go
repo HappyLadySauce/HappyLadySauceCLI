@@ -8,6 +8,7 @@ import (
 	"fmt"
 
 	"github.com/cloudwego/eino/schema"
+	"k8s.io/klog/v2"
 
 	"github.com/HappyLadySauce/HappyLadySauceCLI/internal/context/contextstore"
 	contextmodel "github.com/HappyLadySauce/HappyLadySauceCLI/internal/context/model"
@@ -76,8 +77,20 @@ func (s *Service) FinishTurn(ctx context.Context, messages []*schema.Message, ru
 	}
 	s.tracker.SetMessages(messages)
 	conversation := s.tracker.FinishConversation(runErr)
-	s.status = statusFromConversation(conversation)
+	contextTokens := s.tracker.TotalTokens()
+	s.status = statusFromConversation(conversation, contextTokens)
+	klog.V(1).Infof(
+		"context turn finished prompt=%d completion=%d total=%d content=%d elapsed_ms=%d messages=%d error=%t",
+		s.status.Prompt,
+		s.status.Completion,
+		s.status.Total,
+		s.status.ContextTokens,
+		s.status.Elapsed.Milliseconds(),
+		len(messages),
+		runErr != nil,
+	)
 	if err := s.persist(ctx, conversation); err != nil {
+		klog.Errorf("save context turn failed: %v", err)
 		return s.status, err
 	}
 	return s.status, nil
@@ -114,14 +127,15 @@ func (s *Service) persist(ctx context.Context, conversation *contextmodel.Conver
 	return nil
 }
 
-func statusFromConversation(conversation *contextmodel.Conversation) contextstatus.Status {
+func statusFromConversation(conversation *contextmodel.Conversation, contextTokens int) contextstatus.Status {
 	if conversation == nil {
 		return contextstatus.Status{}
 	}
 	return contextstatus.Status{
-		Elapsed:    conversation.Elapsed,
-		Prompt:     conversation.Prompt,
-		Completion: conversation.Completion,
-		Total:      conversation.Total,
+		Elapsed:       conversation.Elapsed,
+		Prompt:        conversation.Prompt,
+		Completion:    conversation.Completion,
+		Total:         conversation.Total,
+		ContextTokens: contextTokens,
 	}
 }

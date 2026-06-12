@@ -40,11 +40,13 @@ func (m *compactMiddleware) BeforeModelRewriteState(ctx context.Context, state *
 	sessionTotal := 0
 	if tracker := contexttracker.FromContext(ctx); tracker != nil {
 		sessionTotal = tracker.TotalTokens()
+	} else {
+		klog.V(2).Infof("context compaction tracker missing messages=%d", len(state.Messages))
 	}
 
 	messages, changed, err := m.compactor.CompactIfNeeded(ctx, state.Messages, sessionTotal)
 	if err != nil {
-		klog.Warningf("context compaction skipped: %v", err)
+		klog.Warningf("context compaction skipped content=%d messages=%d error=%v", sessionTotal, len(state.Messages), err)
 		return ctx, state, nil
 	}
 	if !changed {

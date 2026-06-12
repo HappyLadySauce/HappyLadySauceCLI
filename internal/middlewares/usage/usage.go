@@ -9,6 +9,7 @@ import (
 	"github.com/cloudwego/eino/adk"
 	einomodel "github.com/cloudwego/eino/components/model"
 	"github.com/cloudwego/eino/schema"
+	"k8s.io/klog/v2"
 
 	contexttracker "github.com/HappyLadySauce/HappyLadySauceCLI/internal/context/tracker"
 	contextusage "github.com/HappyLadySauce/HappyLadySauceCLI/internal/context/usage"
@@ -95,7 +96,25 @@ func (m *trackingModel) Stream(ctx context.Context, input []*schema.Message, opt
 func recordModelUsage(ctx context.Context, elapsed time.Duration, msg *schema.Message, callErr error) {
 	tracker := contexttracker.FromContext(ctx)
 	if tracker == nil {
+		klog.V(2).Infof("model usage skipped tracker_present=false elapsed_ms=%d error=%t", elapsed.Milliseconds(), callErr != nil)
 		return
 	}
-	tracker.AddTurn(contextusage.TurnFromMessage(elapsed, msg, callErr))
+	turn := contextusage.TurnFromMessage(elapsed, msg, callErr)
+	if turn.Prompt == 0 && turn.Completion == 0 && turn.Total == 0 && callErr == nil {
+		klog.V(2).Infof("model usage missing provider_usage=false elapsed_ms=%d", elapsed.Milliseconds())
+	}
+	recorded := tracker.AddTurn(turn)
+	if recorded == nil {
+		klog.V(2).Infof("model usage skipped active_conversation=false elapsed_ms=%d error=%t", elapsed.Milliseconds(), callErr != nil)
+		return
+	}
+	klog.V(1).Infof(
+		"model usage recorded prompt=%d completion=%d total=%d elapsed_ms=%d status=%s error=%t",
+		recorded.Prompt,
+		recorded.Completion,
+		recorded.Total,
+		recorded.Elapsed.Milliseconds(),
+		recorded.Status,
+		callErr != nil,
+	)
 }

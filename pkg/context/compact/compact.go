@@ -10,6 +10,7 @@ import (
 
 	"github.com/cloudwego/eino/components/model"
 	"github.com/cloudwego/eino/schema"
+	"k8s.io/klog/v2"
 
 	"github.com/HappyLadySauce/HappyLadySauceCLI/pkg/context/estimate"
 )
@@ -93,23 +94,72 @@ func (c *Compactor) CompactIfNeeded(ctx stdcontext.Context, messages []*schema.M
 		return messages, false, nil
 	}
 
-	if sessionTotal < c.triggerTokens() {
+	triggerTokens := c.triggerTokens()
+	if sessionTotal <= 0 {
+		klog.V(2).Infof(
+			"context compaction skipped reason=missing_provider_usage content=%d trigger=%d messages=%d",
+			sessionTotal,
+			triggerTokens,
+			len(messages),
+		)
+		return messages, false, nil
+	}
+	if sessionTotal < triggerTokens {
+		klog.V(2).Infof(
+			"context compaction skipped reason=below_threshold content=%d trigger=%d safe_prompt_budget=%d max_context=%d max_output=%d messages=%d",
+			sessionTotal,
+			triggerTokens,
+			c.safePromptBudget(),
+			c.maxContextTokens,
+			c.maxOutputTokens,
+			len(messages),
+		)
 		return messages, false, nil
 	}
 
 	systemMessages, contextMessages := splitSystemAndContextMessages(messages)
 	boundary := selectBoundary(contextMessages)
 	if !boundary.ok {
+		klog.V(2).Infof(
+			"context compaction skipped reason=unsafe_boundary content=%d trigger=%d messages=%d context_messages=%d",
+			sessionTotal,
+			triggerTokens,
+			len(messages),
+			len(contextMessages),
+		)
 		return messages, false, ErrUnsafeBoundary
 	}
 
 	middleTokens := c.estimator.CountMessages(boundary.middle)
+	summaryLimit := c.summaryTokenLimit()
+	klog.V(2).Infof(
+		"context compaction summary planned content=%d trigger=%d head_messages=%d middle_messages=%d tail_messages=%d middle_estimated_tokens=%d summary_limit=%d",
+		sessionTotal,
+		triggerTokens,
+		len(boundary.head),
+		len(boundary.middle),
+		len(boundary.tail),
+		middleTokens,
+		summaryLimit,
+	)
 	summary, err := c.generateSummary(ctx, boundary.middle, middleTokens)
 	if err != nil {
 		return messages, false, err
 	}
 
 	next := assembleCompactedMessages(systemMessages, boundary.head, summary, boundary.tail)
+	klog.Infof(
+		"context compaction completed content=%d trigger=%d original_messages=%d compacted_messages=%d head_messages=%d middle_messages=%d tail_messages=%d middle_estimated_tokens=%d summary_limit=%d",
+		sessionTotal,
+		triggerTokens,
+		len(messages),
+		len(next),
+		len(boundary.head),
+		len(boundary.middle),
+		len(boundary.tail),
+		middleTokens,
+		summaryLimit,
+	)
 	return next, true, nil
 }
 
@@ -145,6 +195,12 @@ func (c *Compactor) safePromptBudget() int {
 // generateSummary 调用辅助模型生成中间段的结构化摘要。
 func (c *Compactor) generateSummary(ctx stdcontext.Context, middle []*schema.Message, estimatedTokens int) (*schema.Message, error) {
 	targetTokens := c.summaryTokenLimit()
+	klog.V(2).Infof(
+		"context summary generation started middle_messages=%d middle_estimated_tokens=%d target_tokens=%d",
+		len(middle),
+		estimatedTokens,
+		targetTokens,
+	)
 	input := []*schema.Message{
 		schema.SystemMessage(summarySystemPrompt),
 		schema.UserMessage(summaryUserPrompt(summaryPromptInput{

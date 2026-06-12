@@ -16,3 +16,5 @@ bin/
 
 # Temporary files
 .tmp/
+# Local application home for development
+.HAPPLADYSAUCECLI/

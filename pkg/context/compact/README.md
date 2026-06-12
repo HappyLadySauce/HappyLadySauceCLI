@@ -1,8 +1,8 @@
 # compact 包
 
-Hermes 风格的语义上下文压缩：当 provider 返回的会话上下文占用 `tracker.TotalTokens()` 接近模型窗口上限时，将对话历史切分为 **head / middle / tail**，对 middle 段调用辅助模型生成结构化摘要，再组装为 `[system, head, summary, tail]` 供后续模型调用使用。
+Hermes 风格的语义上下文压缩：当 provider 返回的上下文窗口占用 `tracker.TotalTokens()` 接近模型窗口上限时，将对话历史切分为 **head / middle / tail**，对 middle 段调用辅助模型生成结构化摘要，再组装为 `[system, head, summary, tail]` 供后续模型调用使用。
 
-上层集成：`internal/middlewares/content/content.go` 在每次 `BeforeModelRewriteState` 钩子中调用 `Compactor.CompactIfNeeded()`。
+上层集成：`internal/middlewares/compact/compact.go` 在每次 `BeforeModelRewriteState` 钩子中调用 `Compactor.CompactIfNeeded()`。
 
 ---
 
@@ -29,7 +29,7 @@ flowchart TD
 
 | 阶段 | 职责 | 关键函数 |
 |------|------|----------|
-| 1. 压力检测 | 读取 ChatModel 层写入的 provider session total，与安全窗口水位比较 | `tracker.TotalTokens`, `triggerTokens`, `safePromptBudget` |
+| 1. 压力检测 | 读取 ChatModel 层写入的 provider context total，与安全窗口水位比较 | `tracker.TotalTokens`, `triggerTokens`, `safePromptBudget` |
 | 2. 边界切分 | 拆分并保留 system 消息，仅对非 system 上下文划分 head/middle/tail，保证 tool 配对完整 | `splitSystemAndContextMessages`, `selectBoundary` |
 | 3. 中间段摘要 | 调用主模型生成六段式结构化摘要 | `generateSummary`, `summaryTokenLimit` |
 | 4. 结果组装 | 不修改原消息，拼接 `[system, head, summary, tail]` | `assembleCompactedMessages` |
@@ -41,7 +41,7 @@ safePromptBudget = maxContextTokens - maxOutputTokens
 triggerTokens    = safePromptBudget × 80%
 ```
 
-当 `tracker.TotalTokens() >= triggerTokens` 时进入压缩。`total↑↓` 表示当前对话循环占用的上下文窗口大小，不再由本地 `tiktoken` 对 messages/tools 估算；本地估算只用于生成摘要 prompt 时提示 middle 段规模。
+当 `tracker.TotalTokens() >= triggerTokens` 时进入压缩。终端统计行中的 `content` 显示同一个上下文窗口占用值；`total↑↓` 只表示当前用户交互内所有 model turn 的 provider total 聚合值，不参与压缩触发。本地估算只用于生成摘要 prompt 时提示 middle 段规模。
 
 ### 默认边界参数
 
@@ -76,8 +76,8 @@ triggerTokens    = safePromptBudget × 80%
 NewCompactor(cfg)
   └── estimate.NewTokenEstimator(modelName)   # 仅用于 middle 段摘要规模提示
 
-CompactIfNeeded(ctx, messages)
-  ├── tracker.TotalTokens()
+CompactIfNeeded(ctx, messages, sessionTotal)
+  ├── sessionTotal from tracker.TotalTokens()
   ├── triggerTokens()
   │     └── safePromptBudget()
   ├── splitSystemAndContextMessages(messages)     [boundary.go]
@@ -88,8 +88,8 @@ CompactIfNeeded(ctx, messages)
   │     └── hasCompleteToolPairs(head/tail)
   ├── generateSummary(ctx, middle, middleTokens)
   │     ├── summaryTokenLimit()
-  │     ├── prompts.ContextCompactionSystemPrompt
-  │     ├── prompts.ContextCompactionUserPrompt(...)
+  │     ├── summarySystemPrompt
+  │     ├── summaryUserPrompt(...)
   │     └── model.Generate(...)
   └── assembleCompactedMessages(system, head, summary, tail)  [assemble.go]
 ```
@@ -110,7 +110,7 @@ flowchart LR
 
     subgraph boundary.go
         SB[selectBoundary]
-        WSM[withoutSystemMessages]
+        SCM[splitSystemAndContextMessages]
         AHE[adjustHeadEndForToolPairs]
         ATS[adjustTailStartForToolPairs]
         CM[cloneMessages]
@@ -123,13 +123,14 @@ flowchart LR
 
     subgraph external
         TE[estimate.TokenEstimator]
-        PR[prompts.*]
+        PR[summary prompt helpers]
         MD[model.Generate]
     end
 
     NC --> TE
     CIN --> ST
     CIN --> TT --> SPB
+    CIN --> SCM
     CIN --> SB
     CIN --> GS --> STL
     GS --> PR
@@ -192,7 +193,7 @@ messages (非 system context)
 
 ## 摘要生成（generateSummary）
 
-输入为 middle 段消息，构造 system + user 两条 prompt，调用 `model.Generate`。输出为 **user 角色**消息，前缀 `prompts.ContextCompactionSummaryPrefix`，以便后续压缩轮次不会被当作 system 过滤。
+输入为 middle 段消息，构造 system + user 两条 prompt，调用 `model.Generate`。输出为 **user 角色**消息，前缀 `summaryPrefix`，以便后续压缩轮次不会被当作 system 过滤。
 
 建议摘要结构：`Goal` / `Constraints` / `Progress` / `Decisions` / `Relevant Files` / `Next Steps`。
 
@@ -204,6 +205,7 @@ messages (非 system context)
 func (c *Compactor) CompactIfNeeded(
     ctx context.Context,
     messages []*schema.Message,
+    sessionTotal int,
 ) (next []*schema.Message, changed bool, err error)
 ```
 
@@ -221,9 +223,9 @@ Middleware 在 `err != nil` 时记录 warning 并透传原 state，不中断 age
 
 | 包 | 用途 |
 |----|------|
-| `internal/context/tracker` | provider total 压力信号 |
-| `internal/context/estimate` | `TokenEstimator` 的实际实现 |
-| `internal/prompts` | 压缩 system/user prompt 与摘要前缀 |
+| `internal/context/tracker` | provider context total 压力信号 |
+| `pkg/context/estimate` | `TokenEstimator` 的实际实现 |
+| `pkg/context/compact/prompts.go` | 压缩 system/user prompt 与摘要前缀 |
 | `github.com/cloudwego/eino/components/model` | `Generate` 生成摘要 |
 | `github.com/cloudwego/eino/schema` | 消息与工具类型 |
 
@@ -231,8 +233,7 @@ Middleware 在 `err != nil` 时记录 warning 并透传原 state，不中断 age
 
 ## 相关文档
 
-- 设计总览：[`docs/context/compression.md`](../../../docs/context/compression.md)
-- Middleware 集成：[`internal/middlewares/content/content.go`](../../middlewares/content/content.go)
-- Token 估算：[`internal/context/estimate/estimate.go`](../estimate/estimate.go)
-- 终端统计行：[`internal/terminal/budget/README.md`](../../terminal/budget/README.md)
-- 创建 Compactor：[`internal/agents/interactive.go`](../../agents/interactive.go)
+- Middleware 集成：[`internal/middlewares/compact/compact.go`](../../../internal/middlewares/compact/compact.go)
+- Token 估算：[`pkg/context/estimate/estimate.go`](../estimate/estimate.go)
+- 终端统计行：[`internal/terminal/budget/README.md`](../../../internal/terminal/budget/README.md)
+- 创建 Compactor：[`internal/middlewares/middleware.go`](../../../internal/middlewares/middleware.go)

@@ -11,10 +11,8 @@ import (
 	"path/filepath"
 
 	_ "modernc.org/sqlite"
-)
 
-const (
-	defaultDirName = ".HAPPLADYSAUCECLI"
+	"github.com/HappyLadySauce/HappyLadySauceCLI/pkg/appdirs"
 )
 
 // DefaultDir returns the shared application data directory under the user home.
@@ -23,11 +21,7 @@ const (
 // DefaultDir 返回用户 home 下的共享应用数据目录。
 // 它返回 ~/.HAPPLADYSAUCECLI，但不会创建目录。
 func DefaultDir() (string, error) {
-	homeDir, err := os.UserHomeDir()
-	if err != nil {
-		return "", fmt.Errorf("get user home directory: %w", err)
-	}
-	return filepath.Join(homeDir, defaultDirName), nil
+	return appdirs.DefaultDir()
 }
 
 // DefaultPath returns a database path under ~/.HAPPLADYSAUCECLI.

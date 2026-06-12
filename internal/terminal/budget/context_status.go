@@ -14,14 +14,15 @@ func FormatConversationStatusLine(status contextstatus.Status, maxContext int) s
 	}
 
 	line := fmt.Sprintf(
-		"[Stats: elapsed=%s prompt↑=%d completion↓=%d content↑↓=%d",
+		"[Stats: elapsed=%s prompt↑=%d completion↓=%d total↑↓=%d content=%d",
 		FormatElapsed(status.Elapsed.Milliseconds()),
 		status.Prompt,
 		status.Completion,
 		status.Total,
+		status.ContextTokens,
 	)
-	if maxContext > 0 && status.Total > 0 {
-		line += " " + FormatContextUsage(percentUsed(status.Total, maxContext), maxContext)
+	if maxContext > 0 && status.ContextTokens > 0 {
+		line += " " + FormatContextUsage(percentUsed(status.ContextTokens, maxContext), maxContext)
 	}
 	return line + "]"
 }

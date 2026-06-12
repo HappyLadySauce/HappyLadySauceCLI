@@ -80,7 +80,7 @@ func configureEnvBinding(prefix string) {
 	// AutomaticEnv 会把 HAPPLADYSAUCECLI_MODEL 映射为顶层 "model" 字符串，在 Makefile/.env 导出 HAPPLADYSAUCECLI_MODEL 时
 	// 会破坏 settings.json 中 model{} 嵌套块的反序列化。
 	if prefix == "HAPPLADYSAUCECLI" {
-		for configKey, envKey := range HAPPLADYSAUCECLIModelEnvBindings {
+		for configKey, envKey := range HAPPLADYSAUCECLIEnvBindings {
 			_ = viper.BindEnv(configKey, envKey)
 		}
 		return
@@ -89,7 +89,8 @@ func configureEnvBinding(prefix string) {
 	viper.AutomaticEnv()
 }
 
-var HAPPLADYSAUCECLIModelEnvBindings = map[string]string{
+var HAPPLADYSAUCECLIEnvBindings = map[string]string{
+	"home":                                     "HAPPLADYSAUCECLI_HOME",
 	"model.HAPPLADYSAUCECLI_API_KEY":           "HAPPLADYSAUCECLI_API_KEY",
 	"model.HAPPLADYSAUCECLI_BASE_URL":          "HAPPLADYSAUCECLI_BASE_URL",
 	"model.HAPPLADYSAUCECLI_MODEL":             "HAPPLADYSAUCECLI_MODEL",

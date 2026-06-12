@@ -33,8 +33,8 @@ func TestFormatElapsed(t *testing.T) {
 func TestFormatConversationStatusLine(t *testing.T) {
 	t.Parallel()
 
-	line := FormatConversationStatusLine(testConversation(766*time.Millisecond, 318, 37, 318), 128000)
-	want := "[Stats: elapsed=0.77s prompt↑=318 completion↓=37 content↑↓=318 0.25%(128K)]"
+	line := FormatConversationStatusLine(testConversation(766*time.Millisecond, 318, 37, 634, 318), 128000)
+	want := "[Stats: elapsed=0.77s prompt↑=318 completion↓=37 total↑↓=634 content=318 0.25%(128K)]"
 	if line != want {
 		t.Fatalf("FormatConversationStatusLine() = %q, want %q", line, want)
 	}
@@ -51,8 +51,8 @@ func TestFormatConversationStatusLineEmpty(t *testing.T) {
 func TestFormatConversationStatusLineWithoutContext(t *testing.T) {
 	t.Parallel()
 
-	line := FormatConversationStatusLine(testConversation(100*time.Millisecond, 50, 5, 0), 0)
-	want := "[Stats: elapsed=0.10s prompt↑=50 completion↓=5 content↑↓=0]"
+	line := FormatConversationStatusLine(testConversation(100*time.Millisecond, 50, 5, 55, 0), 0)
+	want := "[Stats: elapsed=0.10s prompt↑=50 completion↓=5 total↑↓=55 content=0]"
 	if line != want {
 		t.Fatalf("FormatConversationStatusLine() = %q, want %q", line, want)
 	}
@@ -61,8 +61,8 @@ func TestFormatConversationStatusLineWithoutContext(t *testing.T) {
 func TestFormatConversationStatusLineOverOneMinute(t *testing.T) {
 	t.Parallel()
 
-	line := FormatConversationStatusLine(testConversation(65*time.Second, 1000, 200, 5000), 128000)
-	want := "[Stats: elapsed=1m5s prompt↑=1000 completion↓=200 content↑↓=5000 3.91%(128K)]"
+	line := FormatConversationStatusLine(testConversation(65*time.Second, 1000, 200, 6200, 5000), 128000)
+	want := "[Stats: elapsed=1m5s prompt↑=1000 completion↓=200 total↑↓=6200 content=5000 3.91%(128K)]"
 	if line != want {
 		t.Fatalf("FormatConversationStatusLine() = %q, want %q", line, want)
 	}
@@ -82,22 +82,23 @@ func TestFormatPercentTwoDecimals(t *testing.T) {
 func TestFormatConversationStatusLinePercentRounding(t *testing.T) {
 	t.Parallel()
 
-	tiny := FormatConversationStatusLine(testConversation(0, 0, 0, 4), 1000)
-	if tiny != "[Stats: elapsed=0.00s prompt↑=0 completion↓=0 content↑↓=4 0.40%(1K)]" {
+	tiny := FormatConversationStatusLine(testConversation(0, 0, 0, 99, 4), 1000)
+	if tiny != "[Stats: elapsed=0.00s prompt↑=0 completion↓=0 total↑↓=99 content=4 0.40%(1K)]" {
 		t.Fatalf("tiny percent line = %q", tiny)
 	}
 
-	rounded := FormatConversationStatusLine(testConversation(0, 0, 0, 415), 1000)
-	if rounded != "[Stats: elapsed=0.00s prompt↑=0 completion↓=0 content↑↓=415 41.50%(1K)]" {
+	rounded := FormatConversationStatusLine(testConversation(0, 0, 0, 999, 415), 1000)
+	if rounded != "[Stats: elapsed=0.00s prompt↑=0 completion↓=0 total↑↓=999 content=415 41.50%(1K)]" {
 		t.Fatalf("rounded percent line = %q", rounded)
 	}
 }
 
-func testConversation(elapsed time.Duration, prompt, completion, total int) contextstatus.Status {
+func testConversation(elapsed time.Duration, prompt, completion, total, contextTokens int) contextstatus.Status {
 	return contextstatus.Status{
-		Elapsed:    elapsed,
-		Prompt:     prompt,
-		Completion: completion,
-		Total:      total,
+		Elapsed:       elapsed,
+		Prompt:        prompt,
+		Completion:    completion,
+		Total:         total,
+		ContextTokens: contextTokens,
 	}
 }

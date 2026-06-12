@@ -30,10 +30,14 @@ endif
 
 BINARY   := $(BIN_DIR)/$(PROJECT)$(BIN_EXT)
 LDFLAGS  := -s -w
+V        ?=
+RUN_ARGS ?=
+LOG_VERBOSITY_ARG := $(if $(V),-v=$(V),)
 
 # Auto-load local secrets; missing .env is OK.
 # 自动加载本地密钥；.env 不存在时不报错。
 -include .env
+HAPPLADYSAUCECLI_HOME ?= .HAPPLADYSAUCECLI
 export
 
 .PHONY: help deps tidy fmt vet lint check verify build install run run-bin check-env \
@@ -124,16 +128,16 @@ else
 	fi
 endif
 
-## run: Run CLI with go run (requires HAPPLADYSAUCECLI_BASE_URL and HAPPLADYSAUCECLI_MODEL)
+## run: Run CLI with go run (HAPPLADYSAUCECLI_HOME from .env or .HAPPLADYSAUCECLI)
 run: check-env
-	$(GO) run $(CMD)
+	$(GO) run $(CMD) $(LOG_VERBOSITY_ARG) $(RUN_ARGS)
 
 ## run-bin: Build and run the compiled binary
 run-bin: build check-env
 ifeq ($(IS_WINDOWS),1)
-	"$(BINARY)"
+	"$(BINARY)" $(LOG_VERBOSITY_ARG) $(RUN_ARGS)
 else
-	./$(BINARY)
+	./$(BINARY) $(LOG_VERBOSITY_ARG) $(RUN_ARGS)
 endif
 
 ## test: Run all tests
