@@ -52,14 +52,14 @@ func newInteractiveRuntime(ctx context.Context, cfg *config.Config, in io.Reader
 		return nil, fmt.Errorf("new capability registry: %w", err)
 	}
 
-	promptReader := input.NewPromptReader(inputCtx, in)
-	agentTools, err := tools.NewAgentTools()
-	if err != nil {
-		return nil, fmt.Errorf("new agent tools: %w", err)
-	}
 	workspaceGuard, err := newRuntimeWorkspaceGuard(cfg.Security)
 	if err != nil {
 		return nil, err
+	}
+	promptReader := input.NewPromptReader(inputCtx, in)
+	agentTools, err := tools.NewAgentTools(workspaceGuard)
+	if err != nil {
+		return nil, fmt.Errorf("new agent tools: %w", err)
 	}
 	commandSandbox, err := newRuntimeCommandSandbox(cfg.Security)
 	if err != nil {

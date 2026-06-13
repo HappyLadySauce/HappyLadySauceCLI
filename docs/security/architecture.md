@@ -39,6 +39,8 @@
 | `internal/utils/urlscope/` | URL 白名单规范化与比较（跨模块复用） |
 | `internal/tools/execguard/` | tool endpoint 与已授权 URL 资源对齐 helper |
 | `internal/security/workspace.go` | 路径遍历与符号链接保护 |
+| `internal/execution/files/` | 文件读取、列举、精确替换、创建、删除的执行服务 |
+| `internal/tools/files/` | 文件工具 schema、descriptor、operation builder 与 endpoint guard 接线 |
 | `internal/execution/sandbox/` | command.run 的 WSL2 sandbox runner 抽象与 fake-executor 可测实现 |
 | `internal/security/policy/engine.go` | 策略决策矩阵 |
 | `internal/security/policy/grants.go` | 会话级审批授权缓存 |
@@ -186,6 +188,20 @@ type Descriptor struct {
 | `file:delete` | `file.delete` |
 
 文件工具的 `OperationBuilder` 必须产出匹配的 `file.*` OperationKind，并至少产出一个 `Kind == "path"` 或 `Kind == "file"` 的资源。中间件会先用 `WorkspaceGuard.NormalizeResources` 规范化这些资源，再执行 `ValidateFileResources`，scope 与 OperationKind 不匹配会 hard-fail。
+
+### 3.8 Built-in file tools
+
+当前内置文件工具只覆盖 workspace roots 下的文本文件与单层目录操作：
+
+| 工具 | OperationKind | Scope | Risk / DefaultPolicy | 约束 |
+|------|---------------|-------|----------------------|------|
+| `file_read` | `file.read` | `file:read` | low / allow | UTF-8 文本；`start_line` 默认 1，`max_lines` 默认 200，最大 1000 |
+| `file_list` | `file.list` | `file:list` | low / allow | 仅单层目录；`max_entries` 默认 200，最大 1000 |
+| `file_edit` | `file.write` | `file:write` | medium / review | `old_text` 必须非空且唯一匹配；原子替换并保留权限 |
+| `file_create` | `file.write` | `file:write` | medium / review | 只创建新 UTF-8 文本文件；不覆盖、不自动创建父目录 |
+| `file_delete` | `file.delete` | `file:delete` | high / review | 只删除普通文件；不删除目录、不递归、不展开 glob |
+
+写入类 builder 的 `SanitizedArgsSummary` 只能包含 path、字节数与 SHA-256，不包含 `content`、`old_text` 或 `new_text` 正文。文件正文可以作为 `file_read` 工具结果返回给模型，但不得进入 diagnostic log、approval summary 或审计元数据。
 
 ---
 
@@ -445,7 +461,7 @@ auditExecution() / auditStreamOpened()  ← 审计日志
 
 文件操作必须满足：`file.*` OperationKind 与精确 `file:` scope 匹配，且 builder 产出 path/file resource。存在 `file:` scope 但 OperationKind 不是 `file.*`，或存在 path/file resource 但 OperationKind 不是 `file.*`，都会 hard-fail。
 
-**Endpoint TOCTOU 约束**：授权基于 builder 产出的 `OperationRequest`；endpoint 应通过 `security.AuthorizedOperationFromContext(ctx)` 读取已授权资源，并使用 `execguard.MatchAuthorizedURL` / `execguard.RequireAuthorizedPath` 验证实际执行目标与授权一致，不得从 raw JSON 解析出不同的 path/URL 后静默执行。
+**Endpoint TOCTOU 约束**：授权基于 builder 产出的 `OperationRequest`；endpoint 应通过 `security.AuthorizedOperationFromContext(ctx)` 读取已授权资源，并使用 `execguard.MatchAuthorizedURL` / `execguard.RequireAuthorizedPath` 验证实际执行目标与授权一致，不得从 raw JSON 解析出不同的 path/URL 后静默执行。内置文件工具 endpoint 与 security middleware 必须共享 runtime setup 创建的同一个 `WorkspaceGuard`。
 
 ### 9.4 Command sandbox
 
@@ -553,6 +569,7 @@ func NewChatModelAgentMiddlewares(cfg ChatModelAgentMiddlewareConfig) ([]adk.Cha
    ├── tools.NewCapabilityRegistry()   创建 Capability 注册表
    ├── tools.NewOperationBuilders()    创建 OperationBuilder 映射
    ├── security.NewWorkspaceGuard()     创建共享 workspace guard
+   ├── tools.NewAgentTools(guard)       创建 weather + file tools
    ├── sandbox.NewRunner()              创建 command sandbox runner
    ├── newTerminalApprover()           创建终端审批器
    └── NewChatModelAgentMiddlewares()  组装中间件链

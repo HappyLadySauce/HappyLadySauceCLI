@@ -152,8 +152,9 @@ Thread-safe renderer with ANSI color support (disabled for non-terminal writers)
 
 ### Tools (`internal/tools/`)
 
-- `tools.go` — `AgentTools` struct wrapping Eino `ToolsConfig`; currently registers only the weather tool
+- `tools.go` — central factory for built-in Eino tools, capability descriptors, and operation builders
 - `weather/weather.go` — Calls uapis.cn weather API. Built with `utils.InferTool` which auto-generates JSON Schema from Go structs. Validates city (required) and lang (zh/en).
+- `files/files.go` — Built-in guarded file tools: `file_read`, `file_list`, `file_edit`, `file_create`, `file_delete`. Endpoints must use the shared `WorkspaceGuard` and `execguard.RequireAuthorizedPath`; write/delete tools require review and audit only path/size/hash metadata, never raw file content.
 
 ## Code Conventions
 

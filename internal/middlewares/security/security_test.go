@@ -378,6 +378,57 @@ func TestWrapInvokableToolCallRejectsEscapingPathResource(t *testing.T) {
 	}
 }
 
+func TestWrapInvokableToolCallRejectsFileScopeOperationMismatch(t *testing.T) {
+	t.Parallel()
+
+	root := t.TempDir()
+	target := filepath.Join(root, "notes.txt")
+	registry := newTestRegistry(t, capability.Descriptor{
+		Name:          "file_tool",
+		Type:          capability.TypeNativeTool,
+		Source:        capability.SourceBuiltin,
+		Risk:          capability.RiskMedium,
+		DefaultPolicy: capability.DefaultPolicyReview,
+		Scopes:        []string{securitycore.ScopeFileWrite},
+	})
+	guard, err := securitycore.NewWorkspaceGuard([]string{root})
+	if err != nil {
+		t.Fatalf("NewWorkspaceGuard() error = %v", err)
+	}
+	middleware, err := NewExecutionSecurityMiddleware(Config{
+		Registry:       registry,
+		Policy:         policy.NewEngine(),
+		Grants:         policy.NewSessionGrants(),
+		WorkspaceGuard: guard,
+		Builders: map[string]securitycore.OperationBuilder{
+			"file_tool": func(ctx context.Context, request securitycore.OperationRequest, input securitycore.OperationBuildInput) securitycore.OperationRequest {
+				request.OperationKind = securitycore.OperationFileRead
+				request.Resources = []securitycore.OperationResource{{Kind: securitycore.ResourceKindFile, Value: target}}
+				return request
+			},
+		},
+	})
+	if err != nil {
+		t.Fatalf("NewExecutionSecurityMiddleware() error = %v", err)
+	}
+
+	var called atomic.Bool
+	wrapped, err := middleware.WrapInvokableToolCall(context.Background(), func(ctx context.Context, argumentsInJSON string, opts ...tool.Option) (string, error) {
+		called.Store(true)
+		return "ok", nil
+	}, &adk.ToolContext{Name: "file_tool", CallID: "call-1"})
+	if err != nil {
+		t.Fatalf("WrapInvokableToolCall() error = %v", err)
+	}
+
+	if _, err := wrapped(context.Background(), `{}`); err == nil {
+		t.Fatal("expected file scope mismatch error")
+	}
+	if called.Load() {
+		t.Fatal("endpoint should not run for file scope mismatch")
+	}
+}
+
 func TestWrapInvokableToolCallRejectsNetworkResourceOutsideScope(t *testing.T) {
 	t.Parallel()
 
