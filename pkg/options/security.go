@@ -41,11 +41,14 @@ type CommandSandboxOptions struct {
 // SecurityOptions configures execution safety and persistence redaction.
 // SecurityOptions 配置执行安全与持久化脱敏策略。
 type SecurityOptions struct {
-	WorkspaceRoots        []string              `mapstructure:"workspace_roots"`
-	PersistContent        string                `mapstructure:"persist_content"`
-	CommandTimeoutSeconds int                   `mapstructure:"command_timeout_seconds"`
-	MaxToolOutputBytes    int                   `mapstructure:"max_tool_output_bytes"`
-	CommandSandbox        CommandSandboxOptions `mapstructure:"command_sandbox"`
+	WorkspaceRoots              []string              `mapstructure:"workspace_roots"`
+	PersistContent              string                `mapstructure:"persist_content"`
+	CommandTimeoutSeconds       int                   `mapstructure:"command_timeout_seconds"`
+	FileOperationTimeoutSeconds int                   `mapstructure:"file_operation_timeout_seconds"`
+	FileMaxBytes                int                   `mapstructure:"file_max_bytes"`
+	FileMaxLineBytes            int                   `mapstructure:"file_max_line_bytes"`
+	MaxToolOutputBytes          int                   `mapstructure:"max_tool_output_bytes"`
+	CommandSandbox              CommandSandboxOptions `mapstructure:"command_sandbox"`
 }
 
 // NewSecurityOptions returns secure defaults for the current process.
@@ -56,10 +59,13 @@ func NewSecurityOptions() *SecurityOptions {
 		cwd = "."
 	}
 	return &SecurityOptions{
-		WorkspaceRoots:        []string{cwd},
-		PersistContent:        PersistContentSanitized,
-		CommandTimeoutSeconds: 30,
-		MaxToolOutputBytes:    1 << 20,
+		WorkspaceRoots:              []string{cwd},
+		PersistContent:              PersistContentSanitized,
+		CommandTimeoutSeconds:       30,
+		FileOperationTimeoutSeconds: 30,
+		FileMaxBytes:                16 << 20,
+		FileMaxLineBytes:            64 << 10,
+		MaxToolOutputBytes:          1 << 20,
 		CommandSandbox: CommandSandboxOptions{
 			Backend:        CommandSandboxBackendWSL2,
 			FailClosed:     true,
@@ -85,6 +91,15 @@ func (o *SecurityOptions) Validate() error {
 	if o.CommandTimeoutSeconds == 0 {
 		o.CommandTimeoutSeconds = defaults.CommandTimeoutSeconds
 	}
+	if o.FileOperationTimeoutSeconds == 0 {
+		o.FileOperationTimeoutSeconds = defaults.FileOperationTimeoutSeconds
+	}
+	if o.FileMaxBytes == 0 {
+		o.FileMaxBytes = defaults.FileMaxBytes
+	}
+	if o.FileMaxLineBytes == 0 {
+		o.FileMaxLineBytes = defaults.FileMaxLineBytes
+	}
 	if o.MaxToolOutputBytes == 0 {
 		o.MaxToolOutputBytes = defaults.MaxToolOutputBytes
 	}
@@ -106,6 +121,15 @@ func (o *SecurityOptions) Validate() error {
 	}
 	if o.CommandTimeoutSeconds <= 0 {
 		errs = errors.Join(errs, errors.New("security.command_timeout_seconds must be greater than 0"))
+	}
+	if o.FileOperationTimeoutSeconds <= 0 {
+		errs = errors.Join(errs, errors.New("security.file_operation_timeout_seconds must be greater than 0"))
+	}
+	if o.FileMaxBytes <= 0 {
+		errs = errors.Join(errs, errors.New("security.file_max_bytes must be greater than 0"))
+	}
+	if o.FileMaxLineBytes <= 0 {
+		errs = errors.Join(errs, errors.New("security.file_max_line_bytes must be greater than 0"))
 	}
 	if o.MaxToolOutputBytes <= 0 {
 		errs = errors.Join(errs, errors.New("security.max_tool_output_bytes must be greater than 0"))
@@ -139,6 +163,9 @@ func (o *SecurityOptions) AddFlags(fs *pflag.FlagSet) {
 	fs.StringSliceVar(&o.WorkspaceRoots, "security-workspace-roots", o.WorkspaceRoots, "Allowed workspace roots for path/file operation resources")
 	fs.StringVar(&o.PersistContent, "security-persist-content", o.PersistContent, "Context persistence mode: sanitized or metadata_only")
 	fs.IntVar(&o.CommandTimeoutSeconds, "security-command-timeout-seconds", o.CommandTimeoutSeconds, "Default timeout for command.run operations")
+	fs.IntVar(&o.FileOperationTimeoutSeconds, "security-file-operation-timeout-seconds", o.FileOperationTimeoutSeconds, "Default timeout for file.* operations")
+	fs.IntVar(&o.FileMaxBytes, "security-file-max-bytes", o.FileMaxBytes, "Maximum bytes for one file tool input file")
+	fs.IntVar(&o.FileMaxLineBytes, "security-file-max-line-bytes", o.FileMaxLineBytes, "Maximum bytes for one line returned by file_read")
 	fs.IntVar(&o.MaxToolOutputBytes, "security-max-tool-output-bytes", o.MaxToolOutputBytes, "Maximum tool output bytes")
 	fs.StringVar(&o.CommandSandbox.Backend, "security-command-sandbox-backend", o.CommandSandbox.Backend, "Command sandbox backend; only wsl2 is supported")
 	fs.BoolVar(&o.CommandSandbox.FailClosed, "security-command-sandbox-fail-closed", o.CommandSandbox.FailClosed, "Reject command.run when the sandbox is unavailable")

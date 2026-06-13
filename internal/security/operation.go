@@ -104,7 +104,7 @@ type OperationBuildInput struct {
 
 // OperationBuilder enriches the default operation request from tool input.
 // OperationBuilder 基于工具输入补充默认操作请求。
-type OperationBuilder func(ctx context.Context, request OperationRequest, input OperationBuildInput) OperationRequest
+type OperationBuilder func(ctx context.Context, request OperationRequest, input OperationBuildInput) (OperationRequest, error)
 
 // GrantKey returns the stable reusable approval key for the operation.
 // GrantKey 返回该操作对应的稳定可复用授权 key。

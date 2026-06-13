@@ -10,6 +10,7 @@ import (
 	"github.com/cloudwego/eino/adk"
 
 	contextsession "github.com/HappyLadySauce/HappyLadySauceCLI/internal/context/session"
+	execfiles "github.com/HappyLadySauce/HappyLadySauceCLI/internal/execution/files"
 	commandsandbox "github.com/HappyLadySauce/HappyLadySauceCLI/internal/execution/sandbox"
 	"github.com/HappyLadySauce/HappyLadySauceCLI/internal/input"
 	"github.com/HappyLadySauce/HappyLadySauceCLI/internal/middlewares"
@@ -57,7 +58,8 @@ func newInteractiveRuntime(ctx context.Context, cfg *config.Config, in io.Reader
 		return nil, err
 	}
 	promptReader := input.NewPromptReader(inputCtx, in)
-	agentTools, err := tools.NewAgentTools(workspaceGuard)
+	fileService := newRuntimeFileService(cfg.Security)
+	agentTools, err := tools.NewAgentTools(workspaceGuard, fileService)
 	if err != nil {
 		return nil, fmt.Errorf("new agent tools: %w", err)
 	}
@@ -117,6 +119,17 @@ func newRuntimeWorkspaceGuard(securityOpts *options.SecurityOptions) (*securityc
 		return nil, fmt.Errorf("new runtime workspace guard: %w", err)
 	}
 	return guard, nil
+}
+
+func newRuntimeFileService(securityOpts *options.SecurityOptions) *execfiles.Service {
+	if securityOpts == nil {
+		securityOpts = options.NewSecurityOptions()
+	}
+	return execfiles.NewService(execfiles.Config{
+		MaxFileBytes:   int64(securityOpts.FileMaxBytes),
+		MaxLineBytes:   securityOpts.FileMaxLineBytes,
+		MaxOutputBytes: securityOpts.MaxToolOutputBytes,
+	})
 }
 
 func newRuntimeCommandSandbox(securityOpts *options.SecurityOptions) (commandsandbox.Runner, error) {

@@ -58,6 +58,7 @@ type Config struct {
 	WorkspaceGuard        *securitycore.WorkspaceGuard
 	CommandSandbox        commandsandbox.Runner
 	CommandTimeoutSeconds int
+	FileTimeoutSeconds    int
 	MaxToolOutputBytes    int
 }
 
@@ -73,6 +74,7 @@ type ExecutionSecurityMiddleware struct {
 	workspaceGuard        *securitycore.WorkspaceGuard
 	commandSandbox        commandsandbox.Runner
 	commandTimeoutSeconds int
+	fileTimeoutSeconds    int
 	maxToolOutputBytes    int
 	approvalLocksMu       sync.Mutex
 	approvalLocks         map[string]*approvalLockEntry
@@ -119,6 +121,7 @@ func NewExecutionSecurityMiddleware(cfg Config) (*ExecutionSecurityMiddleware, e
 		workspaceGuard:               cfg.WorkspaceGuard,
 		commandSandbox:               cfg.CommandSandbox,
 		commandTimeoutSeconds:        cfg.CommandTimeoutSeconds,
+		fileTimeoutSeconds:           cfg.FileTimeoutSeconds,
 		maxToolOutputBytes:           cfg.MaxToolOutputBytes,
 		approvalLocks:                make(map[string]*approvalLockEntry),
 	}, nil
@@ -455,7 +458,11 @@ func (m *ExecutionSecurityMiddleware) operationForTool(ctx context.Context, tCtx
 		operation.Resources = append(operation.Resources, securitycore.OperationResource{Kind: securitycore.ResourceKindDeclared, Value: resource})
 	}
 	if builder := m.builders[operation.ToolName]; builder != nil {
-		operation = builder(ctx, operation, input)
+		var builderErr error
+		operation, builderErr = builder(ctx, operation, input)
+		if builderErr != nil {
+			return operation, securitycore.CapabilityInvalidArgumentsError(operation.ToolName, builderErr)
+		}
 	}
 	if operation.Risk == "" {
 		operation.Risk = operation.Capability.Risk
@@ -483,6 +490,12 @@ func (m *ExecutionSecurityMiddleware) finishAuthorize(ctx context.Context, auth 
 		return "", false, nil
 	}
 	if !securitycore.IsRecoverableAuthorizationDenial(err) {
+		if securitycore.IsRecoverableToolInputError(err) {
+			reason := securitycore.ToolFailureReasonInvalidArguments
+			payload := toolresult.FormatFailure(err, reason)
+			m.auditAuthorizationRecovered(ctx, auth, err, len(payload), reason)
+			return payload, true, nil
+		}
 		return "", false, err
 	}
 	reason := securitycore.DenialReasonFor(err)
@@ -628,10 +641,13 @@ func sandboxAuditKVs(status commandsandbox.Status) []any {
 }
 
 func (m *ExecutionSecurityMiddleware) executionContext(ctx context.Context, operation securitycore.OperationRequest) (context.Context, context.CancelFunc) {
-	if m.commandTimeoutSeconds <= 0 || operation.OperationKind != securitycore.OperationCommandRun {
-		return ctx, func() {}
+	if operation.OperationKind == securitycore.OperationCommandRun && m.commandTimeoutSeconds > 0 {
+		return context.WithTimeout(ctx, time.Duration(m.commandTimeoutSeconds)*time.Second)
 	}
-	return context.WithTimeout(ctx, time.Duration(m.commandTimeoutSeconds)*time.Second)
+	if operation.IsFileOperation() && m.fileTimeoutSeconds > 0 {
+		return context.WithTimeout(ctx, time.Duration(m.fileTimeoutSeconds)*time.Second)
+	}
+	return ctx, func() {}
 }
 
 func (m *ExecutionSecurityMiddleware) ensureToolOutputWithinLimit(size int) error {

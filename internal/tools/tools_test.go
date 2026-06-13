@@ -7,13 +7,14 @@ import (
 	"testing"
 
 	"github.com/HappyLadySauce/HappyLadySauceCLI/internal/capability"
+	execfiles "github.com/HappyLadySauce/HappyLadySauceCLI/internal/execution/files"
 	securitycore "github.com/HappyLadySauce/HappyLadySauceCLI/internal/security"
 )
 
 func TestNewAgentToolsExposesBuiltinTools(t *testing.T) {
 	t.Parallel()
 
-	cfg, err := NewAgentTools(testWorkspaceGuard(t))
+	cfg, err := NewAgentTools(testWorkspaceGuard(t), testFileService())
 	if err != nil {
 		t.Fatalf("NewAgentTools() error = %v", err)
 	}
@@ -44,11 +45,14 @@ func TestNewOperationBuildersRegistersWeatherBuilder(t *testing.T) {
 	if builder == nil {
 		t.Fatal("expected get_weather operation builder")
 	}
-	operation := builder(context.Background(), securitycore.OperationRequest{
+	operation, err := builder(context.Background(), securitycore.OperationRequest{
 		ToolName:      "get_weather",
 		OperationKind: securitycore.OperationNativeTool,
 		Risk:          capability.RiskLow,
 	}, securitycore.OperationBuildInput{Summary: `{city=北京}`})
+	if err != nil {
+		t.Fatalf("builder() error = %v", err)
+	}
 	if operation.OperationKind != "network.weather" {
 		t.Fatalf("OperationKind = %q, want network.weather", operation.OperationKind)
 	}
@@ -60,7 +64,7 @@ func TestNewOperationBuildersRegistersWeatherBuilder(t *testing.T) {
 func TestOperationBuildersCoverAllRegisteredTools(t *testing.T) {
 	t.Parallel()
 
-	cfg, err := NewAgentTools(testWorkspaceGuard(t))
+	cfg, err := NewAgentTools(testWorkspaceGuard(t), testFileService())
 	if err != nil {
 		t.Fatalf("NewAgentTools() error = %v", err)
 	}
@@ -87,7 +91,7 @@ func TestOperationBuildersCoverAllRegisteredTools(t *testing.T) {
 func TestOperationBuildersHonorNetworkScopeDiscipline(t *testing.T) {
 	t.Parallel()
 
-	cfg, err := NewAgentTools(testWorkspaceGuard(t))
+	cfg, err := NewAgentTools(testWorkspaceGuard(t), testFileService())
 	if err != nil {
 		t.Fatalf("NewAgentTools() error = %v", err)
 	}
@@ -113,12 +117,15 @@ func TestOperationBuildersHonorNetworkScopeDiscipline(t *testing.T) {
 		if builder == nil {
 			t.Fatalf("tool %q has no operation builder", info.Name)
 		}
-		operation := builder(context.Background(), securitycore.OperationRequest{
+		operation, err := builder(context.Background(), securitycore.OperationRequest{
 			ToolName:   info.Name,
 			Capability: desc,
 			Registered: true,
 			Risk:       desc.Risk,
 		}, securitycore.OperationBuildInput{RawJSON: `{}`, Summary: securitycore.SummarizeArguments(`{}`)})
+		if err != nil {
+			t.Fatalf("builder() error = %v", err)
+		}
 		if !strings.HasPrefix(operation.OperationKind, "network.") {
 			t.Fatalf("tool %q OperationKind = %q, want network.* prefix", info.Name, operation.OperationKind)
 		}
@@ -209,12 +216,15 @@ func TestFileOperationBuildersMapScopesAndResources(t *testing.T) {
 		if builder == nil {
 			t.Fatalf("tool %q has no builder", tc.name)
 		}
-		operation := builder(context.Background(), securitycore.OperationRequest{
+		operation, err := builder(context.Background(), securitycore.OperationRequest{
 			ToolName:   tc.name,
 			Capability: desc,
 			Registered: true,
 			Risk:       desc.Risk,
 		}, securitycore.OperationBuildInput{RawJSON: tc.args, Summary: securitycore.SummarizeArguments(tc.args)})
+		if err != nil {
+			t.Fatalf("%s builder() error = %v", tc.name, err)
+		}
 		if operation.OperationKind != tc.operation {
 			t.Fatalf("%s OperationKind = %q, want %q", tc.name, operation.OperationKind, tc.operation)
 		}
@@ -234,6 +244,10 @@ func testWorkspaceGuard(t *testing.T) *securitycore.WorkspaceGuard {
 		t.Fatalf("NewWorkspaceGuard() error = %v", err)
 	}
 	return guard
+}
+
+func testFileService() *execfiles.Service {
+	return execfiles.NewService(execfiles.Config{})
 }
 
 func slashPath(path string) string {

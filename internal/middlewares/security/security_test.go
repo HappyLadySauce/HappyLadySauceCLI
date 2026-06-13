@@ -4,7 +4,9 @@ import (
 	"context"
 	"errors"
 	"io"
+	"os"
 	"path/filepath"
+	"strings"
 	"sync"
 	"sync/atomic"
 	"testing"
@@ -15,9 +17,11 @@ import (
 	"github.com/cloudwego/eino/schema"
 
 	"github.com/HappyLadySauce/HappyLadySauceCLI/internal/capability"
+	execfiles "github.com/HappyLadySauce/HappyLadySauceCLI/internal/execution/files"
 	commandsandbox "github.com/HappyLadySauce/HappyLadySauceCLI/internal/execution/sandbox"
 	securitycore "github.com/HappyLadySauce/HappyLadySauceCLI/internal/security"
 	"github.com/HappyLadySauce/HappyLadySauceCLI/internal/security/policy"
+	filetools "github.com/HappyLadySauce/HappyLadySauceCLI/internal/tools/files"
 	"github.com/HappyLadySauce/HappyLadySauceCLI/internal/tools/toolresult"
 )
 
@@ -350,10 +354,10 @@ func TestWrapInvokableToolCallRejectsEscapingPathResource(t *testing.T) {
 		Grants:         policy.NewSessionGrants(),
 		WorkspaceGuard: guard,
 		Builders: map[string]securitycore.OperationBuilder{
-			"read_file": func(ctx context.Context, request securitycore.OperationRequest, input securitycore.OperationBuildInput) securitycore.OperationRequest {
+			"read_file": func(ctx context.Context, request securitycore.OperationRequest, input securitycore.OperationBuildInput) (securitycore.OperationRequest, error) {
 				request.OperationKind = securitycore.OperationFileRead
 				request.Resources = []securitycore.OperationResource{{Kind: "path", Value: filepath.Join(outside, "secret.txt")}}
-				return request
+				return request, nil
 			},
 		},
 	})
@@ -401,10 +405,10 @@ func TestWrapInvokableToolCallRejectsFileScopeOperationMismatch(t *testing.T) {
 		Grants:         policy.NewSessionGrants(),
 		WorkspaceGuard: guard,
 		Builders: map[string]securitycore.OperationBuilder{
-			"file_tool": func(ctx context.Context, request securitycore.OperationRequest, input securitycore.OperationBuildInput) securitycore.OperationRequest {
+			"file_tool": func(ctx context.Context, request securitycore.OperationRequest, input securitycore.OperationBuildInput) (securitycore.OperationRequest, error) {
 				request.OperationKind = securitycore.OperationFileRead
 				request.Resources = []securitycore.OperationResource{{Kind: securitycore.ResourceKindFile, Value: target}}
-				return request
+				return request, nil
 			},
 		},
 	})
@@ -446,10 +450,10 @@ func TestWrapInvokableToolCallRejectsNetworkResourceOutsideScope(t *testing.T) {
 		Policy:   policy.NewEngine(),
 		Grants:   policy.NewSessionGrants(),
 		Builders: map[string]securitycore.OperationBuilder{
-			"network_tool": func(ctx context.Context, request securitycore.OperationRequest, input securitycore.OperationBuildInput) securitycore.OperationRequest {
+			"network_tool": func(ctx context.Context, request securitycore.OperationRequest, input securitycore.OperationBuildInput) (securitycore.OperationRequest, error) {
 				request.OperationKind = "network.test"
 				request.Resources = []securitycore.OperationResource{{Kind: "url", Value: "https://example.com/other"}}
-				return request
+				return request, nil
 			},
 		},
 	})
@@ -489,10 +493,10 @@ func TestWrapInvokableToolCallRejectsNetworkResourceWithoutNetworkScope(t *testi
 		Policy:   policy.NewEngine(),
 		Grants:   policy.NewSessionGrants(),
 		Builders: map[string]securitycore.OperationBuilder{
-			"network_tool": func(ctx context.Context, request securitycore.OperationRequest, input securitycore.OperationBuildInput) securitycore.OperationRequest {
+			"network_tool": func(ctx context.Context, request securitycore.OperationRequest, input securitycore.OperationBuildInput) (securitycore.OperationRequest, error) {
 				request.OperationKind = "network.test"
 				request.Resources = []securitycore.OperationResource{{Kind: "url", Value: "https://example.com/other"}}
-				return request
+				return request, nil
 			},
 		},
 	})
@@ -534,10 +538,10 @@ func TestWrapInvokableToolCallInjectsAuthorizedOperationIntoContext(t *testing.T
 		Policy:   policy.NewEngine(),
 		Grants:   policy.NewSessionGrants(),
 		Builders: map[string]securitycore.OperationBuilder{
-			"get_weather": func(ctx context.Context, request securitycore.OperationRequest, input securitycore.OperationBuildInput) securitycore.OperationRequest {
+			"get_weather": func(ctx context.Context, request securitycore.OperationRequest, input securitycore.OperationBuildInput) (securitycore.OperationRequest, error) {
 				request.OperationKind = "network.weather"
 				request.Resources = []securitycore.OperationResource{{Kind: "url", Value: "https://uapis.cn/api/v1/misc/weather"}}
-				return request
+				return request, nil
 			},
 		},
 	})
@@ -564,6 +568,105 @@ func TestWrapInvokableToolCallInjectsAuthorizedOperationIntoContext(t *testing.T
 
 	if _, err := wrapped(context.Background(), `{"city":"北京"}`); err != nil {
 		t.Fatalf("wrapped endpoint returned error: %v", err)
+	}
+}
+
+func TestWrapInvokableToolCallRunsRegisteredFileReadWithinWorkspace(t *testing.T) {
+	t.Parallel()
+
+	root := t.TempDir()
+	target := filepath.Join(root, "notes.txt")
+	if err := os.WriteFile(target, []byte("hello\nworld\n"), 0o600); err != nil {
+		t.Fatalf("WriteFile() error = %v", err)
+	}
+	guard, err := securitycore.NewWorkspaceGuard([]string{root})
+	if err != nil {
+		t.Fatalf("NewWorkspaceGuard() error = %v", err)
+	}
+	descriptors := filetools.CapabilityDescriptors()
+	registry := newTestRegistry(t, descriptors...)
+	middleware, err := NewExecutionSecurityMiddleware(Config{
+		Registry:       registry,
+		Policy:         policy.NewEngine(),
+		Grants:         policy.NewSessionGrants(),
+		WorkspaceGuard: guard,
+		Builders:       filetools.OperationBuilders(),
+	})
+	if err != nil {
+		t.Fatalf("NewExecutionSecurityMiddleware() error = %v", err)
+	}
+	registeredTools, err := filetools.NewTools(guard, execfiles.NewService(execfiles.Config{}))
+	if err != nil {
+		t.Fatalf("NewTools() error = %v", err)
+	}
+	var readTool tool.InvokableTool
+	for _, candidate := range registeredTools {
+		info, err := candidate.Info(context.Background())
+		if err != nil {
+			t.Fatalf("Info() error = %v", err)
+		}
+		if info.Name == "file_read" {
+			var ok bool
+			readTool, ok = candidate.(tool.InvokableTool)
+			if !ok {
+				t.Fatalf("file_read tool does not implement InvokableTool")
+			}
+		}
+	}
+	if readTool == nil {
+		t.Fatal("file_read tool not found")
+	}
+	wrapped, err := middleware.WrapInvokableToolCall(context.Background(), readTool.InvokableRun, &adk.ToolContext{Name: "file_read", CallID: "call-1"})
+	if err != nil {
+		t.Fatalf("WrapInvokableToolCall() error = %v", err)
+	}
+
+	got, err := wrapped(context.Background(), `{"path":"`+escapeJSONPath(target)+`","max_lines":1}`)
+	if err != nil {
+		t.Fatalf("wrapped file_read returned error: %v", err)
+	}
+	if !strings.Contains(got, `"content":"hello\n"`) || !strings.Contains(got, `"truncated":true`) {
+		t.Fatalf("file_read result = %q, want content and truncated metadata", got)
+	}
+}
+
+func TestWrapInvokableToolCallReturnsRecoverableInvalidFileArguments(t *testing.T) {
+	t.Parallel()
+
+	root := t.TempDir()
+	guard, err := securitycore.NewWorkspaceGuard([]string{root})
+	if err != nil {
+		t.Fatalf("NewWorkspaceGuard() error = %v", err)
+	}
+	registry := newTestRegistry(t, filetools.CapabilityDescriptors()...)
+	middleware, err := NewExecutionSecurityMiddleware(Config{
+		Registry:       registry,
+		Policy:         policy.NewEngine(),
+		Grants:         policy.NewSessionGrants(),
+		WorkspaceGuard: guard,
+		Builders:       filetools.OperationBuilders(),
+	})
+	if err != nil {
+		t.Fatalf("NewExecutionSecurityMiddleware() error = %v", err)
+	}
+	var called atomic.Bool
+	wrapped, err := middleware.WrapInvokableToolCall(context.Background(), func(ctx context.Context, argumentsInJSON string, opts ...tool.Option) (string, error) {
+		called.Store(true)
+		return "should not run", nil
+	}, &adk.ToolContext{Name: "file_read", CallID: "call-1"})
+	if err != nil {
+		t.Fatalf("WrapInvokableToolCall() error = %v", err)
+	}
+
+	got, err := wrapped(context.Background(), `{`)
+	if err != nil {
+		t.Fatalf("wrapped file_read returned error: %v", err)
+	}
+	if called.Load() {
+		t.Fatal("endpoint should not run for invalid file arguments")
+	}
+	if !toolresult.IsErrorPayload(got) || toolresult.DenialReason(got) != securitycore.ToolFailureReasonInvalidArguments {
+		t.Fatalf("expected invalid argument payload, got %q", got)
 	}
 }
 
@@ -657,10 +760,10 @@ func TestWrapInvokableToolCallReusesSessionApprovalForDifferentNetworkArgs(t *te
 		Grants:   policy.NewSessionGrants(),
 		Approver: approver,
 		Builders: map[string]securitycore.OperationBuilder{
-			"get_weather": func(ctx context.Context, request securitycore.OperationRequest, input securitycore.OperationBuildInput) securitycore.OperationRequest {
+			"get_weather": func(ctx context.Context, request securitycore.OperationRequest, input securitycore.OperationBuildInput) (securitycore.OperationRequest, error) {
 				request.OperationKind = "network.weather"
 				request.Resources = []securitycore.OperationResource{{Kind: "url", Value: "https://uapis.cn/api/v1/misc/weather"}}
-				return request
+				return request, nil
 			},
 		},
 	})
@@ -768,9 +871,9 @@ func TestWrapInvokableToolCallAppliesTimeout(t *testing.T) {
 		CommandSandbox:        fakeSandboxRunner{status: commandsandbox.Status{Backend: commandsandbox.BackendWSL2, Available: true, Reason: "ready"}},
 		CommandTimeoutSeconds: 1,
 		Builders: map[string]securitycore.OperationBuilder{
-			"slow_tool": func(ctx context.Context, request securitycore.OperationRequest, input securitycore.OperationBuildInput) securitycore.OperationRequest {
+			"slow_tool": func(ctx context.Context, request securitycore.OperationRequest, input securitycore.OperationBuildInput) (securitycore.OperationRequest, error) {
 				request.OperationKind = securitycore.OperationCommandRun
-				return request
+				return request, nil
 			},
 		},
 	})
@@ -781,6 +884,60 @@ func TestWrapInvokableToolCallAppliesTimeout(t *testing.T) {
 		<-ctx.Done()
 		return "", ctx.Err()
 	}, &adk.ToolContext{Name: "slow_tool", CallID: "call-1"})
+	if err != nil {
+		t.Fatalf("WrapInvokableToolCall() error = %v", err)
+	}
+
+	got, err := wrapped(context.Background(), `{}`)
+	if err != nil {
+		t.Fatalf("wrapped endpoint returned error: %v", err)
+	}
+	if !toolresult.IsErrorPayload(got) {
+		t.Fatalf("expected soft-fail payload, got %q", got)
+	}
+}
+
+func TestWrapInvokableToolCallAppliesFileTimeout(t *testing.T) {
+	t.Parallel()
+
+	root := t.TempDir()
+	target := filepath.Join(root, "notes.txt")
+	registry := newTestRegistry(t, capability.Descriptor{
+		Name:          "file_read",
+		Type:          capability.TypeNativeTool,
+		Source:        capability.SourceBuiltin,
+		Risk:          capability.RiskLow,
+		DefaultPolicy: capability.DefaultPolicyAllow,
+		Scopes:        []string{securitycore.ScopeFileRead},
+	})
+	guard, err := securitycore.NewWorkspaceGuard([]string{root})
+	if err != nil {
+		t.Fatalf("NewWorkspaceGuard() error = %v", err)
+	}
+	middleware, err := NewExecutionSecurityMiddleware(Config{
+		Registry:              registry,
+		Policy:                policy.NewEngine(),
+		Grants:                policy.NewSessionGrants(),
+		WorkspaceGuard:        guard,
+		FileTimeoutSeconds:    1,
+		MaxToolOutputBytes:    1 << 20,
+		CommandSandbox:        fakeSandboxRunner{status: commandsandbox.Status{Backend: commandsandbox.BackendWSL2, Available: true, Reason: "ready"}},
+		CommandTimeoutSeconds: 30,
+		Builders: map[string]securitycore.OperationBuilder{
+			"file_read": func(ctx context.Context, request securitycore.OperationRequest, input securitycore.OperationBuildInput) (securitycore.OperationRequest, error) {
+				request.OperationKind = securitycore.OperationFileRead
+				request.Resources = []securitycore.OperationResource{{Kind: securitycore.ResourceKindFile, Value: target}}
+				return request, nil
+			},
+		},
+	})
+	if err != nil {
+		t.Fatalf("NewExecutionSecurityMiddleware() error = %v", err)
+	}
+	wrapped, err := middleware.WrapInvokableToolCall(context.Background(), func(ctx context.Context, argumentsInJSON string, opts ...tool.Option) (string, error) {
+		<-ctx.Done()
+		return "", ctx.Err()
+	}, &adk.ToolContext{Name: "file_read", CallID: "call-1"})
 	if err != nil {
 		t.Fatalf("WrapInvokableToolCall() error = %v", err)
 	}
@@ -811,9 +968,9 @@ func TestWrapInvokableToolCallDeniesCommandWhenSandboxUnavailable(t *testing.T) 
 		Approver:       &fakeApprover{approve: true},
 		CommandSandbox: fakeSandboxRunner{status: commandsandbox.Status{Backend: commandsandbox.BackendWSL2, Reason: "missing bwrap"}},
 		Builders: map[string]securitycore.OperationBuilder{
-			"run_shell": func(ctx context.Context, request securitycore.OperationRequest, input securitycore.OperationBuildInput) securitycore.OperationRequest {
+			"run_shell": func(ctx context.Context, request securitycore.OperationRequest, input securitycore.OperationBuildInput) (securitycore.OperationRequest, error) {
 				request.OperationKind = securitycore.OperationCommandRun
-				return request
+				return request, nil
 			},
 		},
 	})
@@ -1062,6 +1219,10 @@ func newTestMiddleware(t *testing.T, registry *capability.Registry, approver App
 		t.Fatalf("NewExecutionSecurityMiddleware() error = %v", err)
 	}
 	return middleware
+}
+
+func escapeJSONPath(path string) string {
+	return strings.ReplaceAll(path, `\`, `\\`)
 }
 
 type slowApprover struct {

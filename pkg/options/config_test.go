@@ -365,6 +365,18 @@ func TestAddConfigFlagHAPPLADYSAUCECLIModelEnvDoesNotFlattenModelSection(t *test
 	if got, want := viper.GetString("security.persist_content"), "metadata_only"; got != want {
 		t.Errorf("viper.GetString(security.persist_content) = %q, want %q", got, want)
 	}
+	t.Setenv("HAPPLADYSAUCECLI_SECURITY_FILE_OPERATION_TIMEOUT_SECONDS", "7")
+	t.Setenv("HAPPLADYSAUCECLI_SECURITY_FILE_MAX_BYTES", "1024")
+	t.Setenv("HAPPLADYSAUCECLI_SECURITY_FILE_MAX_LINE_BYTES", "128")
+	if got, want := viper.GetInt("security.file_operation_timeout_seconds"), 7; got != want {
+		t.Errorf("viper.GetInt(security.file_operation_timeout_seconds) = %d, want %d", got, want)
+	}
+	if got, want := viper.GetInt("security.file_max_bytes"), 1024; got != want {
+		t.Errorf("viper.GetInt(security.file_max_bytes) = %d, want %d", got, want)
+	}
+	if got, want := viper.GetInt("security.file_max_line_bytes"), 128; got != want {
+		t.Errorf("viper.GetInt(security.file_max_line_bytes) = %d, want %d", got, want)
+	}
 }
 
 // TestAddConfigFlagBindsEnvWithBasenamePrefix checks env prefix and key replacer for hyphenated basenames.

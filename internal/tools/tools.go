@@ -6,6 +6,7 @@ import (
 	"github.com/cloudwego/eino/compose"
 
 	"github.com/HappyLadySauce/HappyLadySauceCLI/internal/capability"
+	execfiles "github.com/HappyLadySauce/HappyLadySauceCLI/internal/execution/files"
 	securitycore "github.com/HappyLadySauce/HappyLadySauceCLI/internal/security"
 	filetools "github.com/HappyLadySauce/HappyLadySauceCLI/internal/tools/files"
 	"github.com/HappyLadySauce/HappyLadySauceCLI/internal/tools/weather"
@@ -13,12 +14,12 @@ import (
 
 // NewAgentTools returns the Eino tools available to the agent.
 // NewAgentTools 返回 agent 可用的 Eino tools。
-func NewAgentTools(workspaceGuard *securitycore.WorkspaceGuard) (adk.ToolsConfig, error) {
+func NewAgentTools(workspaceGuard *securitycore.WorkspaceGuard, fileService *execfiles.Service) (adk.ToolsConfig, error) {
 	weatherTool, err := weather.GetWeatherTool()
 	if err != nil {
 		return adk.ToolsConfig{}, err
 	}
-	fileTools, err := filetools.NewTools(workspaceGuard)
+	fileTools, err := filetools.NewTools(workspaceGuard, fileService)
 	if err != nil {
 		return adk.ToolsConfig{}, err
 	}

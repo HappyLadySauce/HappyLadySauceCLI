@@ -145,14 +145,16 @@ Thread-safe renderer with ANSI color support (disabled for non-terminal writers)
 
 - `ExecutionSecurityMiddleware` wraps tool invocations: policy evaluation → user approval → audit → endpoint
 - Recoverable failures (user/policy denial, tool execution errors) return JSON payloads to the model with `nil` Go error so the ReAct loop continues; invariant violations (path/scope, missing approver) still hard-fail
+- Malformed tool JSON and empty required paths are recoverable `invalid_arguments` payloads and must not call endpoints
 - File operations must use matching `file:*` scopes plus normalized path/file resources, and endpoints must re-check actual paths with `execguard.RequireAuthorizedPath`
+- File operations use `security.file_operation_timeout_seconds`, `security.file_max_bytes`, `security.file_max_line_bytes`, and `security.max_tool_output_bytes`; file read/edit/delete reject symlink/reparse targets and `file_list` reports `entries`, `returned_entries`, `truncated`, and per-entry `readable`
 - `command.run` requires an available WSL2 sandbox runner; if the sandbox probe fails, the middleware returns policy denial and never falls back to native Windows execution
 - Denial sentinels and reasons live in `internal/security/denial.go`; JSON formatting in `internal/tools/toolresult/`
 - Full error-handling matrix: `docs/security/architecture.md` §9
 
 ### Tools (`internal/tools/`)
 
-- `tools.go` — central factory for built-in Eino tools, capability descriptors, and operation builders
+- `tools.go` — central factory for built-in Eino tools, capability descriptors, and operation builders; runtime setup injects the shared `WorkspaceGuard` and `execfiles.Service`
 - `weather/weather.go` — Calls uapis.cn weather API. Built with `utils.InferTool` which auto-generates JSON Schema from Go structs. Validates city (required) and lang (zh/en).
 - `files/files.go` — Built-in guarded file tools: `file_read`, `file_list`, `file_edit`, `file_create`, `file_delete`. Endpoints must use the shared `WorkspaceGuard` and `execguard.RequireAuthorizedPath`; write/delete tools require review and audit only path/size/hash metadata, never raw file content.
 

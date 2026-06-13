@@ -71,13 +71,16 @@ type toolSet struct {
 
 // NewTools returns guarded filesystem tools.
 // NewTools 返回受保护的文件系统工具。
-func NewTools(guard *securitycore.WorkspaceGuard) ([]tool.BaseTool, error) {
+func NewTools(guard *securitycore.WorkspaceGuard, service *execfiles.Service) ([]tool.BaseTool, error) {
 	if guard == nil {
 		return nil, errors.New("workspace guard is required")
 	}
+	if service == nil {
+		return nil, errors.New("file service is required")
+	}
 	set := &toolSet{
 		guard:   guard,
-		service: execfiles.NewService(),
+		service: service,
 	}
 	readTool, err := utils.InferTool(toolFileRead, "Read a bounded UTF-8 line range from a workspace file", set.read)
 	if err != nil {
@@ -251,31 +254,46 @@ func (s *toolSet) delete(ctx context.Context, req *FileDeleteParams) (*execfiles
 }
 
 func readOperationBuilder() securitycore.OperationBuilder {
-	return func(ctx context.Context, request securitycore.OperationRequest, input securitycore.OperationBuildInput) securitycore.OperationRequest {
+	return func(ctx context.Context, request securitycore.OperationRequest, input securitycore.OperationBuildInput) (securitycore.OperationRequest, error) {
 		var params FileReadParams
-		_ = json.Unmarshal([]byte(input.RawJSON), &params)
+		if err := decodeToolArgs(input.RawJSON, &params); err != nil {
+			return request, err
+		}
+		if err := requirePath(params.Path); err != nil {
+			return request, err
+		}
 		request.OperationKind = securitycore.OperationFileRead
 		request.Resources = fileResources(securitycore.ResourceKindFile, params.Path)
 		request.SanitizedArgsSummary = fmt.Sprintf("{path=%s,start_line=%d,max_lines=%d}", sanitizePath(params.Path), params.StartLine, params.MaxLines)
-		return request
+		return request, nil
 	}
 }
 
 func listOperationBuilder() securitycore.OperationBuilder {
-	return func(ctx context.Context, request securitycore.OperationRequest, input securitycore.OperationBuildInput) securitycore.OperationRequest {
+	return func(ctx context.Context, request securitycore.OperationRequest, input securitycore.OperationBuildInput) (securitycore.OperationRequest, error) {
 		var params FileListParams
-		_ = json.Unmarshal([]byte(input.RawJSON), &params)
+		if err := decodeToolArgs(input.RawJSON, &params); err != nil {
+			return request, err
+		}
+		if err := requirePath(params.Path); err != nil {
+			return request, err
+		}
 		request.OperationKind = securitycore.OperationFileList
 		request.Resources = fileResources(securitycore.ResourceKindPath, params.Path)
 		request.SanitizedArgsSummary = fmt.Sprintf("{path=%s,max_entries=%d}", sanitizePath(params.Path), params.MaxEntries)
-		return request
+		return request, nil
 	}
 }
 
 func editOperationBuilder() securitycore.OperationBuilder {
-	return func(ctx context.Context, request securitycore.OperationRequest, input securitycore.OperationBuildInput) securitycore.OperationRequest {
+	return func(ctx context.Context, request securitycore.OperationRequest, input securitycore.OperationBuildInput) (securitycore.OperationRequest, error) {
 		var params FileEditParams
-		_ = json.Unmarshal([]byte(input.RawJSON), &params)
+		if err := decodeToolArgs(input.RawJSON, &params); err != nil {
+			return request, err
+		}
+		if err := requirePath(params.Path); err != nil {
+			return request, err
+		}
 		request.OperationKind = securitycore.OperationFileWrite
 		request.Resources = fileResources(securitycore.ResourceKindFile, params.Path)
 		request.SanitizedArgsSummary = fmt.Sprintf(
@@ -286,14 +304,19 @@ func editOperationBuilder() securitycore.OperationBuilder {
 			sha256Text(params.OldText),
 			sha256Text(params.NewText),
 		)
-		return request
+		return request, nil
 	}
 }
 
 func createOperationBuilder() securitycore.OperationBuilder {
-	return func(ctx context.Context, request securitycore.OperationRequest, input securitycore.OperationBuildInput) securitycore.OperationRequest {
+	return func(ctx context.Context, request securitycore.OperationRequest, input securitycore.OperationBuildInput) (securitycore.OperationRequest, error) {
 		var params FileCreateParams
-		_ = json.Unmarshal([]byte(input.RawJSON), &params)
+		if err := decodeToolArgs(input.RawJSON, &params); err != nil {
+			return request, err
+		}
+		if err := requirePath(params.Path); err != nil {
+			return request, err
+		}
 		request.OperationKind = securitycore.OperationFileWrite
 		request.Resources = fileResources(securitycore.ResourceKindFile, params.Path)
 		request.SanitizedArgsSummary = fmt.Sprintf(
@@ -302,19 +325,41 @@ func createOperationBuilder() securitycore.OperationBuilder {
 			len(params.Content),
 			sha256Text(params.Content),
 		)
-		return request
+		return request, nil
 	}
 }
 
 func deleteOperationBuilder() securitycore.OperationBuilder {
-	return func(ctx context.Context, request securitycore.OperationRequest, input securitycore.OperationBuildInput) securitycore.OperationRequest {
+	return func(ctx context.Context, request securitycore.OperationRequest, input securitycore.OperationBuildInput) (securitycore.OperationRequest, error) {
 		var params FileDeleteParams
-		_ = json.Unmarshal([]byte(input.RawJSON), &params)
+		if err := decodeToolArgs(input.RawJSON, &params); err != nil {
+			return request, err
+		}
+		if err := requirePath(params.Path); err != nil {
+			return request, err
+		}
 		request.OperationKind = securitycore.OperationFileDelete
 		request.Resources = fileResources(securitycore.ResourceKindFile, params.Path)
 		request.SanitizedArgsSummary = fmt.Sprintf("{path=%s}", sanitizePath(params.Path))
-		return request
+		return request, nil
 	}
+}
+
+func decodeToolArgs(raw string, target any) error {
+	if strings.TrimSpace(raw) == "" {
+		return errors.New("tool arguments are required")
+	}
+	if err := json.Unmarshal([]byte(raw), target); err != nil {
+		return fmt.Errorf("decode tool arguments: %w", err)
+	}
+	return nil
+}
+
+func requirePath(path string) error {
+	if strings.TrimSpace(path) == "" {
+		return errors.New("path is required")
+	}
+	return nil
 }
 
 func fileResources(kind, path string) []securitycore.OperationResource {

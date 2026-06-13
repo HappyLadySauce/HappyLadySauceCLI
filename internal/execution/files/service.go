@@ -4,6 +4,7 @@ package files
 
 import (
 	"bufio"
+	"bytes"
 	"context"
 	"crypto/sha256"
 	"encoding/hex"
@@ -31,11 +32,30 @@ const (
 	// MaxListEntries is the maximum file_list entry budget.
 	// MaxListEntries 是 file_list 单次允许返回的最大条目数。
 	MaxListEntries = 1000
+	// DefaultMaxFileBytes is the default input file byte limit for file tools.
+	// DefaultMaxFileBytes 是文件工具默认输入文件字节上限。
+	DefaultMaxFileBytes = 16 << 20
+	// DefaultMaxLineBytes is the default single-line byte limit for file_read.
+	// DefaultMaxLineBytes 是 file_read 默认单行字节上限。
+	DefaultMaxLineBytes = 64 << 10
+	// DefaultMaxOutputBytes is the default tool output budget used by file tools.
+	// DefaultMaxOutputBytes 是文件工具默认输出预算。
+	DefaultMaxOutputBytes = 1 << 20
 )
+
+// Config contains safety limits for file execution.
+// Config 包含文件执行的安全限制。
+type Config struct {
+	MaxFileBytes   int64
+	MaxLineBytes   int
+	MaxOutputBytes int
+}
 
 // Service executes file operations on already-authorized canonical paths.
 // Service 在已授权的规范化路径上执行文件操作。
-type Service struct{}
+type Service struct {
+	config Config
+}
 
 // ReadRequest contains one line-range text read.
 // ReadRequest 表示一次按行范围读取文本文件的请求。
@@ -68,6 +88,7 @@ type ListEntry struct {
 	Name     string `json:"name"`
 	Path     string `json:"path"`
 	Type     string `json:"type"`
+	Readable bool   `json:"readable"`
 	Size     int64  `json:"size"`
 	Modified string `json:"modified"`
 }
@@ -75,9 +96,9 @@ type ListEntry struct {
 // ListResult contains bounded single-level directory entries.
 // ListResult 包含有界单层目录条目。
 type ListResult struct {
-	Entries      []ListEntry `json:"entries"`
-	TotalEntries int         `json:"total_entries"`
-	Truncated    bool        `json:"truncated"`
+	Entries         []ListEntry `json:"entries"`
+	ReturnedEntries int         `json:"returned_entries"`
+	Truncated       bool        `json:"truncated"`
 }
 
 // EditRequest contains one exact text replacement.
@@ -124,8 +145,8 @@ type DeleteResult struct {
 
 // NewService creates a file execution service.
 // NewService 创建文件执行服务。
-func NewService() *Service {
-	return &Service{}
+func NewService(config Config) *Service {
+	return &Service{config: normalizeConfig(config)}
 }
 
 // ReadText reads a bounded UTF-8 line range from a regular file.
@@ -135,7 +156,7 @@ func (s *Service) ReadText(ctx context.Context, req ReadRequest) (ReadResult, er
 	if err != nil {
 		return ReadResult{}, err
 	}
-	file, err := openRegularFile(req.Path)
+	file, info, err := openVerifiedRegularFile(req.Path, s.config.MaxFileBytes)
 	if err != nil {
 		return ReadResult{}, err
 	}
@@ -143,37 +164,60 @@ func (s *Service) ReadText(ctx context.Context, req ReadRequest) (ReadResult, er
 
 	reader := bufio.NewReader(file)
 	var builder strings.Builder
-	var totalLines, endLine int
+	var lineBuf bytes.Buffer
+	var lineBytes, currentLine, endLine int
+	var truncated bool
+	outputBudget := newOutputBudget(s.config.MaxOutputBytes)
 	for {
 		if err := ctx.Err(); err != nil {
 			return ReadResult{}, err
 		}
-		line, readErr := reader.ReadString('\n')
-		if line != "" {
+		part, isPrefix, readErr := reader.ReadLine()
+		if len(part) > 0 {
+			lineBytes += len(part)
+			if lineBytes > s.config.MaxLineBytes {
+				return ReadResult{}, fmt.Errorf("file line exceeds security.file_max_line_bytes: %d > %d", lineBytes, s.config.MaxLineBytes)
+			}
+			lineBuf.Write(part)
+		}
+		if isPrefix {
+			continue
+		}
+		if readErr != nil && !errors.Is(readErr, io.EOF) {
+			return ReadResult{}, fmt.Errorf("read file: %w", readErr)
+		}
+		if lineBuf.Len() > 0 || readErr == nil {
+			currentLine++
+			line := lineBuf.String()
 			if !utf8.ValidString(line) {
 				return ReadResult{}, fmt.Errorf("file is not valid UTF-8: %s", req.Path)
 			}
-			totalLines++
-			if totalLines >= startLine && totalLines < startLine+maxLines {
+			if currentLine >= startLine && currentLine < startLine+maxLines {
+				if err := outputBudget.Add(len(line) + 1); err != nil {
+					return ReadResult{}, err
+				}
 				builder.WriteString(line)
-				endLine = totalLines
+				if readErr == nil {
+					builder.WriteByte('\n')
+				}
+				endLine = currentLine
+			} else if currentLine >= startLine+maxLines {
+				truncated = true
 			}
-		}
-		if readErr == nil {
-			continue
+			lineBuf.Reset()
+			lineBytes = 0
 		}
 		if errors.Is(readErr, io.EOF) {
 			break
 		}
-		return ReadResult{}, fmt.Errorf("read file: %w", readErr)
 	}
 
 	return ReadResult{
 		Content:    builder.String(),
 		StartLine:  startLine,
 		EndLine:    endLine,
-		TotalLines: totalLines,
-		Truncated:  readWasTruncated(startLine, endLine, totalLines),
+		TotalLines: currentLine,
+		Truncated:  truncated || readWasTruncated(startLine, endLine, currentLine, info.Size()),
 	}, nil
 }
 
@@ -184,27 +228,24 @@ func (s *Service) ListDirectory(ctx context.Context, req ListRequest) (ListResul
 	if err != nil {
 		return ListResult{}, err
 	}
-	info, err := os.Stat(req.Path)
+	dir, _, err := openVerifiedDirectory(req.Path)
 	if err != nil {
-		return ListResult{}, fmt.Errorf("stat directory: %w", err)
+		return ListResult{}, err
 	}
-	if !info.IsDir() {
-		return ListResult{}, fmt.Errorf("path is not a directory: %s", req.Path)
-	}
-	children, err := os.ReadDir(req.Path)
-	if err != nil {
+	defer dir.Close()
+	children, err := dir.ReadDir(maxEntries + 1)
+	if err != nil && !errors.Is(err, io.EOF) {
 		return ListResult{}, fmt.Errorf("list directory: %w", err)
 	}
-	sort.Slice(children, func(i, j int) bool {
-		return children[i].Name() < children[j].Name()
-	})
-
-	limit := maxEntries
-	if len(children) < limit {
-		limit = len(children)
+	truncated := len(children) > maxEntries
+	if truncated {
+		children = children[:maxEntries]
 	}
-	entries := make([]ListEntry, 0, limit)
-	for _, child := range children[:limit] {
+	sort.Slice(children, func(i, j int) bool { return children[i].Name() < children[j].Name() })
+
+	outputBudget := newOutputBudget(s.config.MaxOutputBytes)
+	entries := make([]ListEntry, 0, len(children))
+	for _, child := range children {
 		if err := ctx.Err(); err != nil {
 			return ListResult{}, err
 		}
@@ -212,12 +253,15 @@ func (s *Service) ListDirectory(ctx context.Context, req ListRequest) (ListResul
 		if err != nil {
 			return ListResult{}, err
 		}
+		if err := outputBudget.Add(estimateListEntryBytes(entry)); err != nil {
+			return ListResult{}, err
+		}
 		entries = append(entries, entry)
 	}
 	return ListResult{
-		Entries:      entries,
-		TotalEntries: len(children),
-		Truncated:    len(children) > maxEntries,
+		Entries:         entries,
+		ReturnedEntries: len(entries),
+		Truncated:       truncated,
 	}, nil
 }
 
@@ -233,13 +277,28 @@ func (s *Service) EditText(ctx context.Context, req EditRequest) (EditResult, er
 	if !utf8.ValidString(req.OldText) || !utf8.ValidString(req.NewText) {
 		return EditResult{}, errors.New("old_text and new_text must be valid UTF-8")
 	}
-	info, err := statRegularFile(req.Path)
+	file, info, err := openVerifiedRegularFile(req.Path, s.config.MaxFileBytes)
 	if err != nil {
 		return EditResult{}, err
 	}
-	data, err := os.ReadFile(req.Path)
+	defer func() {
+		if file != nil {
+			_ = file.Close()
+		}
+	}()
+	data, err := io.ReadAll(io.LimitReader(file, s.config.MaxFileBytes+1))
 	if err != nil {
 		return EditResult{}, fmt.Errorf("read file: %w", err)
+	}
+	if err := file.Close(); err != nil {
+		return EditResult{}, fmt.Errorf("close file: %w", err)
+	}
+	file = nil
+	if int64(len(data)) > s.config.MaxFileBytes {
+		return EditResult{}, fmt.Errorf("file exceeds security.file_max_bytes: %d > %d", len(data), s.config.MaxFileBytes)
+	}
+	if err := ctx.Err(); err != nil {
+		return EditResult{}, err
 	}
 	content := string(data)
 	if !utf8.ValidString(content) {
@@ -250,6 +309,9 @@ func (s *Service) EditText(ctx context.Context, req EditRequest) (EditResult, er
 		return EditResult{}, fmt.Errorf("old_text must match exactly once; matches=%d", count)
 	}
 	next := strings.Replace(content, req.OldText, req.NewText, 1)
+	if int64(len(next)) > s.config.MaxFileBytes {
+		return EditResult{}, fmt.Errorf("edited content exceeds security.file_max_bytes: %d > %d", len(next), s.config.MaxFileBytes)
+	}
 	if err := writeFileAtomically(req.Path, []byte(next), info.Mode().Perm()); err != nil {
 		return EditResult{}, err
 	}
@@ -268,6 +330,9 @@ func (s *Service) CreateText(ctx context.Context, req CreateRequest) (CreateResu
 	}
 	if !utf8.ValidString(req.Content) {
 		return CreateResult{}, errors.New("content must be valid UTF-8")
+	}
+	if int64(len(req.Content)) > s.config.MaxFileBytes {
+		return CreateResult{}, fmt.Errorf("content exceeds security.file_max_bytes: %d > %d", len(req.Content), s.config.MaxFileBytes)
 	}
 	parent := filepath.Dir(req.Path)
 	parentInfo, err := os.Stat(parent)
@@ -318,7 +383,7 @@ func (s *Service) DeleteFile(ctx context.Context, req DeleteRequest) (DeleteResu
 	if err := ctx.Err(); err != nil {
 		return DeleteResult{}, err
 	}
-	if _, err := statRegularFile(req.Path); err != nil {
+	if _, err := lstatRegularFile(req.Path); err != nil {
 		return DeleteResult{}, err
 	}
 	if err := os.Remove(req.Path); err != nil {
@@ -353,9 +418,22 @@ func normalizeListLimit(maxEntries int) (int, error) {
 	return maxEntries, nil
 }
 
-func readWasTruncated(startLine, endLine, totalLines int) bool {
+func normalizeConfig(config Config) Config {
+	if config.MaxFileBytes == 0 {
+		config.MaxFileBytes = DefaultMaxFileBytes
+	}
+	if config.MaxLineBytes == 0 {
+		config.MaxLineBytes = DefaultMaxLineBytes
+	}
+	if config.MaxOutputBytes == 0 {
+		config.MaxOutputBytes = DefaultMaxOutputBytes
+	}
+	return config
+}
+
+func readWasTruncated(startLine, endLine, totalLines int, fileSize int64) bool {
 	if totalLines == 0 {
-		return false
+		return fileSize > 0
 	}
 	if startLine > 1 {
 		return true
@@ -366,21 +444,73 @@ func readWasTruncated(startLine, endLine, totalLines int) bool {
 	return endLine < totalLines
 }
 
-func openRegularFile(path string) (*os.File, error) {
-	if _, err := statRegularFile(path); err != nil {
-		return nil, err
-	}
-	file, err := os.Open(path)
+func openVerifiedRegularFile(path string, maxFileBytes int64) (*os.File, os.FileInfo, error) {
+	before, err := lstatRegularFile(path)
 	if err != nil {
-		return nil, fmt.Errorf("open file: %w", err)
+		return nil, nil, err
 	}
-	return file, nil
+	file, err := openPathNoFollow(path)
+	if err != nil {
+		return nil, nil, fmt.Errorf("open file: %w", err)
+	}
+	info, err := file.Stat()
+	if err != nil {
+		_ = file.Close()
+		return nil, nil, fmt.Errorf("stat opened file: %w", err)
+	}
+	if !info.Mode().IsRegular() {
+		_ = file.Close()
+		return nil, nil, fmt.Errorf("opened path is not a regular file: %s", path)
+	}
+	if !os.SameFile(before, info) {
+		_ = file.Close()
+		return nil, nil, fmt.Errorf("file changed during open: %s", path)
+	}
+	if maxFileBytes > 0 && info.Size() > maxFileBytes {
+		_ = file.Close()
+		return nil, nil, fmt.Errorf("file exceeds security.file_max_bytes: %d > %d", info.Size(), maxFileBytes)
+	}
+	return file, info, nil
 }
 
-func statRegularFile(path string) (os.FileInfo, error) {
+func openVerifiedDirectory(path string) (*os.File, os.FileInfo, error) {
+	before, err := os.Lstat(path)
+	if err != nil {
+		return nil, nil, fmt.Errorf("stat directory: %w", err)
+	}
+	if err := rejectLinkOrReparse(path, before); err != nil {
+		return nil, nil, err
+	}
+	if !before.IsDir() {
+		return nil, nil, fmt.Errorf("path is not a directory: %s", path)
+	}
+	file, err := openDirectoryNoFollow(path)
+	if err != nil {
+		return nil, nil, fmt.Errorf("open directory: %w", err)
+	}
+	info, err := file.Stat()
+	if err != nil {
+		_ = file.Close()
+		return nil, nil, fmt.Errorf("stat opened directory: %w", err)
+	}
+	if !info.IsDir() {
+		_ = file.Close()
+		return nil, nil, fmt.Errorf("opened path is not a directory: %s", path)
+	}
+	if !os.SameFile(before, info) {
+		_ = file.Close()
+		return nil, nil, fmt.Errorf("directory changed during open: %s", path)
+	}
+	return file, info, nil
+}
+
+func lstatRegularFile(path string) (os.FileInfo, error) {
 	info, err := os.Lstat(path)
 	if err != nil {
 		return nil, fmt.Errorf("stat file: %w", err)
+	}
+	if err := rejectLinkOrReparse(path, info); err != nil {
+		return nil, err
 	}
 	if !info.Mode().IsRegular() {
 		return nil, fmt.Errorf("path is not a regular file: %s", path)
@@ -396,13 +526,24 @@ func describeEntry(parent string, entry os.DirEntry) (ListEntry, error) {
 	return ListEntry{
 		Name:     entry.Name(),
 		Path:     filepath.Join(parent, entry.Name()),
-		Type:     entryType(entry),
+		Type:     entryType(parent, entry),
+		Readable: entryReadable(parent, entry),
 		Size:     info.Size(),
 		Modified: info.ModTime().UTC().Format(time.RFC3339),
 	}, nil
 }
 
-func entryType(entry os.DirEntry) string {
+func entryReadable(parent string, entry os.DirEntry) bool {
+	if pathHasReparsePoint(filepath.Join(parent, entry.Name())) {
+		return false
+	}
+	return entry.Type().IsRegular()
+}
+
+func entryType(parent string, entry os.DirEntry) string {
+	if pathHasReparsePoint(filepath.Join(parent, entry.Name())) {
+		return "symlink"
+	}
 	mode := entry.Type()
 	switch {
 	case mode.IsRegular():
@@ -453,4 +594,28 @@ func writeFileAtomically(path string, data []byte, mode os.FileMode) error {
 func sha256String(value string) string {
 	sum := sha256.Sum256([]byte(value))
 	return hex.EncodeToString(sum[:])
+}
+
+type outputBudget struct {
+	max  int
+	used int
+}
+
+func newOutputBudget(max int) *outputBudget {
+	return &outputBudget{max: max}
+}
+
+func (b *outputBudget) Add(size int) error {
+	if b == nil || b.max <= 0 {
+		return nil
+	}
+	b.used += size
+	if b.used > b.max {
+		return fmt.Errorf("file tool output exceeds security.max_tool_output_bytes: %d > %d", b.used, b.max)
+	}
+	return nil
+}
+
+func estimateListEntryBytes(entry ListEntry) int {
+	return len(entry.Name) + len(entry.Path) + len(entry.Type) + len(entry.Modified) + 96
 }

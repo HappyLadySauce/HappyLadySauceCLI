@@ -138,12 +138,12 @@ func CapabilityDescriptor() capability.Descriptor {
 // OperationBuilder returns the operation metadata builder for get_weather calls.
 // OperationBuilder 返回 get_weather 调用的操作元数据构建器。
 func OperationBuilder() securitycore.OperationBuilder {
-	return func(ctx context.Context, request securitycore.OperationRequest, input securitycore.OperationBuildInput) securitycore.OperationRequest {
+	return func(ctx context.Context, request securitycore.OperationRequest, input securitycore.OperationBuildInput) (securitycore.OperationRequest, error) {
 		request.OperationKind = "network.weather"
 		request.Resources = []securitycore.OperationResource{
 			{Kind: securitycore.ResourceKindURL, Value: weatherAPIURL},
 		}
 		request.SanitizedArgsSummary = input.Summary
-		return request
+		return request, nil
 	}
 }

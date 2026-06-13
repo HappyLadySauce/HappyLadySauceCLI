@@ -15,7 +15,7 @@ import (
 func TestNewToolsReturnsFilesystemTools(t *testing.T) {
 	t.Parallel()
 
-	tools, err := NewTools(testGuard(t))
+	tools, err := NewTools(testGuard(t), execfiles.NewService(execfiles.Config{}))
 	if err != nil {
 		t.Fatalf("NewTools() error = %v", err)
 	}
@@ -119,7 +119,7 @@ func TestOperationBuildersDoNotLeakWriteContent(t *testing.T) {
 		if builder == nil {
 			t.Fatalf("builder %s is nil", name)
 		}
-		operation := builder(context.Background(), securitycore.OperationRequest{
+		operation, err := builder(context.Background(), securitycore.OperationRequest{
 			ToolName: name,
 			Capability: capability.Descriptor{
 				Name:          name,
@@ -132,12 +132,30 @@ func TestOperationBuildersDoNotLeakWriteContent(t *testing.T) {
 			Registered: true,
 			Risk:       capability.RiskMedium,
 		}, securitycore.OperationBuildInput{RawJSON: args})
+		if err != nil {
+			t.Fatalf("%s builder() error = %v", name, err)
+		}
 		if strings.Contains(operation.SanitizedArgsSummary, "top secret") || strings.Contains(operation.SanitizedArgsSummary, "created text") {
 			t.Fatalf("%s leaked content in summary: %q", name, operation.SanitizedArgsSummary)
 		}
 		if !strings.Contains(operation.SanitizedArgsSummary, "sha256") {
 			t.Fatalf("%s summary = %q, want content hash metadata", name, operation.SanitizedArgsSummary)
 		}
+	}
+}
+
+func TestOperationBuilderRejectsInvalidArguments(t *testing.T) {
+	t.Parallel()
+
+	builder := OperationBuilders()[toolFileRead]
+	if builder == nil {
+		t.Fatal("file_read builder is nil")
+	}
+	if _, err := builder(context.Background(), securitycore.OperationRequest{}, securitycore.OperationBuildInput{RawJSON: `{`}); err == nil {
+		t.Fatal("builder() error = nil, want malformed JSON error")
+	}
+	if _, err := builder(context.Background(), securitycore.OperationRequest{}, securitycore.OperationBuildInput{RawJSON: `{"path":"  "}`}); err == nil {
+		t.Fatal("builder() error = nil, want empty path error")
 	}
 }
 
@@ -156,5 +174,5 @@ func testGuardForRoot(t *testing.T, root string) *securitycore.WorkspaceGuard {
 }
 
 func newTestService() *execfiles.Service {
-	return execfiles.NewService()
+	return execfiles.NewService(execfiles.Config{})
 }

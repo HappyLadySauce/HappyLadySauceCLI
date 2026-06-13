@@ -18,7 +18,7 @@ func TestServiceReadTextReturnsBoundedLineRange(t *testing.T) {
 		t.Fatalf("WriteFile() error = %v", err)
 	}
 
-	result, err := NewService().ReadText(context.Background(), ReadRequest{
+	result, err := NewService(Config{}).ReadText(context.Background(), ReadRequest{
 		Path:      target,
 		StartLine: 2,
 		MaxLines:  2,
@@ -43,7 +43,7 @@ func TestServiceReadTextRejectsInvalidUTF8(t *testing.T) {
 		t.Fatalf("WriteFile() error = %v", err)
 	}
 
-	if _, err := NewService().ReadText(context.Background(), ReadRequest{Path: target}); err == nil {
+	if _, err := NewService(Config{}).ReadText(context.Background(), ReadRequest{Path: target}); err == nil {
 		t.Fatal("ReadText() error = nil, want invalid UTF-8 error")
 	}
 }
@@ -51,13 +51,58 @@ func TestServiceReadTextRejectsInvalidUTF8(t *testing.T) {
 func TestServiceReadTextRejectsInvalidLimits(t *testing.T) {
 	t.Parallel()
 
-	_, err := NewService().ReadText(context.Background(), ReadRequest{
+	_, err := NewService(Config{}).ReadText(context.Background(), ReadRequest{
 		Path:      filepath.Join(t.TempDir(), "missing.txt"),
 		StartLine: 1,
 		MaxLines:  MaxReadLines + 1,
 	})
 	if err == nil || !strings.Contains(err.Error(), "max_lines") {
 		t.Fatalf("ReadText() error = %v, want max_lines validation", err)
+	}
+}
+
+func TestServiceReadTextRejectsFileAboveMaxBytes(t *testing.T) {
+	t.Parallel()
+
+	root := t.TempDir()
+	target := filepath.Join(root, "large.txt")
+	if err := os.WriteFile(target, []byte("123456"), 0o600); err != nil {
+		t.Fatalf("WriteFile() error = %v", err)
+	}
+
+	_, err := NewService(Config{MaxFileBytes: 4}).ReadText(context.Background(), ReadRequest{Path: target})
+	if err == nil || !strings.Contains(err.Error(), "file_max_bytes") {
+		t.Fatalf("ReadText() error = %v, want file_max_bytes error", err)
+	}
+}
+
+func TestServiceReadTextRejectsLongLine(t *testing.T) {
+	t.Parallel()
+
+	root := t.TempDir()
+	target := filepath.Join(root, "long-line.txt")
+	if err := os.WriteFile(target, []byte("abcdef\n"), 0o600); err != nil {
+		t.Fatalf("WriteFile() error = %v", err)
+	}
+
+	_, err := NewService(Config{MaxLineBytes: 4}).ReadText(context.Background(), ReadRequest{Path: target})
+	if err == nil || !strings.Contains(err.Error(), "file_max_line_bytes") {
+		t.Fatalf("ReadText() error = %v, want file_max_line_bytes error", err)
+	}
+}
+
+func TestServiceReadTextRejectsOutputAboveBudget(t *testing.T) {
+	t.Parallel()
+
+	root := t.TempDir()
+	target := filepath.Join(root, "output.txt")
+	if err := os.WriteFile(target, []byte("one\ntwo\n"), 0o600); err != nil {
+		t.Fatalf("WriteFile() error = %v", err)
+	}
+
+	_, err := NewService(Config{MaxOutputBytes: 4}).ReadText(context.Background(), ReadRequest{Path: target, MaxLines: 2})
+	if err == nil || !strings.Contains(err.Error(), "max_tool_output_bytes") {
+		t.Fatalf("ReadText() error = %v, want output budget error", err)
 	}
 }
 
@@ -71,7 +116,7 @@ func TestServiceListDirectoryReturnsSortedBoundedEntries(t *testing.T) {
 		}
 	}
 
-	result, err := NewService().ListDirectory(context.Background(), ListRequest{
+	result, err := NewService(Config{}).ListDirectory(context.Background(), ListRequest{
 		Path:       root,
 		MaxEntries: 2,
 	})
@@ -81,8 +126,42 @@ func TestServiceListDirectoryReturnsSortedBoundedEntries(t *testing.T) {
 	if len(result.Entries) != 2 || result.Entries[0].Name != "a.txt" || result.Entries[1].Name != "m.txt" {
 		t.Fatalf("Entries = %#v, want sorted first two entries", result.Entries)
 	}
-	if result.TotalEntries != 3 || !result.Truncated {
+	if result.ReturnedEntries != 2 || !result.Truncated {
 		t.Fatalf("unexpected listing metadata: %#v", result)
+	}
+	if !result.Entries[0].Readable {
+		t.Fatalf("regular file entry should be readable: %#v", result.Entries[0])
+	}
+}
+
+func TestServiceListDirectoryMarksSymlinkUnreadable(t *testing.T) {
+	t.Parallel()
+
+	root := t.TempDir()
+	target := filepath.Join(root, "target.txt")
+	link := filepath.Join(root, "link.txt")
+	if err := os.WriteFile(target, []byte("target"), 0o600); err != nil {
+		t.Fatalf("WriteFile() error = %v", err)
+	}
+	if err := os.Symlink(target, link); err != nil {
+		t.Skipf("creating symlink is not available: %v", err)
+	}
+
+	result, err := NewService(Config{}).ListDirectory(context.Background(), ListRequest{Path: root, MaxEntries: 10})
+	if err != nil {
+		t.Fatalf("ListDirectory() error = %v", err)
+	}
+	var sawLink bool
+	for _, entry := range result.Entries {
+		if entry.Name == "link.txt" {
+			sawLink = true
+			if entry.Type != "symlink" || entry.Readable {
+				t.Fatalf("symlink entry = %#v, want type symlink readable=false", entry)
+			}
+		}
+	}
+	if !sawLink {
+		t.Fatalf("did not find symlink in entries: %#v", result.Entries)
 	}
 }
 
@@ -95,7 +174,7 @@ func TestServiceEditTextRequiresUniqueOldText(t *testing.T) {
 		t.Fatalf("WriteFile() error = %v", err)
 	}
 
-	_, err := NewService().EditText(context.Background(), EditRequest{
+	_, err := NewService(Config{}).EditText(context.Background(), EditRequest{
 		Path:    target,
 		OldText: "repeat",
 		NewText: "done",
@@ -121,7 +200,7 @@ func TestServiceEditTextReplacesTextAtomicallyAndPreservesMode(t *testing.T) {
 		t.Fatalf("WriteFile() error = %v", err)
 	}
 
-	result, err := NewService().EditText(context.Background(), EditRequest{
+	result, err := NewService(Config{}).EditText(context.Background(), EditRequest{
 		Path:    target,
 		OldText: "world",
 		NewText: "agent",
@@ -150,6 +229,44 @@ func TestServiceEditTextReplacesTextAtomicallyAndPreservesMode(t *testing.T) {
 	}
 }
 
+func TestServiceEditTextRejectsFileAboveMaxBytes(t *testing.T) {
+	t.Parallel()
+
+	root := t.TempDir()
+	target := filepath.Join(root, "large.txt")
+	if err := os.WriteFile(target, []byte("123456"), 0o600); err != nil {
+		t.Fatalf("WriteFile() error = %v", err)
+	}
+
+	_, err := NewService(Config{MaxFileBytes: 4}).EditText(context.Background(), EditRequest{
+		Path:    target,
+		OldText: "12",
+		NewText: "xx",
+	})
+	if err == nil || !strings.Contains(err.Error(), "file_max_bytes") {
+		t.Fatalf("EditText() error = %v, want file_max_bytes error", err)
+	}
+}
+
+func TestServiceEditTextRejectsEditedContentAboveMaxBytes(t *testing.T) {
+	t.Parallel()
+
+	root := t.TempDir()
+	target := filepath.Join(root, "notes.txt")
+	if err := os.WriteFile(target, []byte("hi"), 0o600); err != nil {
+		t.Fatalf("WriteFile() error = %v", err)
+	}
+
+	_, err := NewService(Config{MaxFileBytes: 4}).EditText(context.Background(), EditRequest{
+		Path:    target,
+		OldText: "hi",
+		NewText: "hello",
+	})
+	if err == nil || !strings.Contains(err.Error(), "file_max_bytes") {
+		t.Fatalf("EditText() error = %v, want file_max_bytes error", err)
+	}
+}
+
 func TestServiceCreateTextFailsWhenTargetExists(t *testing.T) {
 	t.Parallel()
 
@@ -159,7 +276,7 @@ func TestServiceCreateTextFailsWhenTargetExists(t *testing.T) {
 		t.Fatalf("WriteFile() error = %v", err)
 	}
 
-	if _, err := NewService().CreateText(context.Background(), CreateRequest{Path: target, Content: "new"}); err == nil {
+	if _, err := NewService(Config{}).CreateText(context.Background(), CreateRequest{Path: target, Content: "new"}); err == nil {
 		t.Fatal("CreateText() error = nil, want exists error")
 	}
 	data, err := os.ReadFile(target)
@@ -176,7 +293,7 @@ func TestServiceCreateTextCreatesUTF8File(t *testing.T) {
 
 	root := t.TempDir()
 	target := filepath.Join(root, "new.txt")
-	result, err := NewService().CreateText(context.Background(), CreateRequest{Path: target, Content: "hello"})
+	result, err := NewService(Config{}).CreateText(context.Background(), CreateRequest{Path: target, Content: "hello"})
 	if err != nil {
 		t.Fatalf("CreateText() error = %v", err)
 	}
@@ -196,11 +313,38 @@ func TestServiceDeleteFileRejectsDirectory(t *testing.T) {
 	t.Parallel()
 
 	root := t.TempDir()
-	if _, err := NewService().DeleteFile(context.Background(), DeleteRequest{Path: root}); err == nil {
+	if _, err := NewService(Config{}).DeleteFile(context.Background(), DeleteRequest{Path: root}); err == nil {
 		t.Fatal("DeleteFile() error = nil, want directory rejection")
 	}
 	if _, err := os.Stat(root); err != nil {
 		t.Fatalf("directory should still exist: %v", err)
+	}
+}
+
+func TestServiceRejectsSymlinkFileOperations(t *testing.T) {
+	t.Parallel()
+
+	root := t.TempDir()
+	target := filepath.Join(root, "target.txt")
+	link := filepath.Join(root, "link.txt")
+	if err := os.WriteFile(target, []byte("target"), 0o600); err != nil {
+		t.Fatalf("WriteFile() error = %v", err)
+	}
+	if err := os.Symlink(target, link); err != nil {
+		t.Skipf("creating symlink is not available: %v", err)
+	}
+	service := NewService(Config{})
+	if _, err := service.ReadText(context.Background(), ReadRequest{Path: link}); err == nil {
+		t.Fatal("ReadText() error = nil, want symlink rejection")
+	}
+	if _, err := service.EditText(context.Background(), EditRequest{Path: link, OldText: "target", NewText: "next"}); err == nil {
+		t.Fatal("EditText() error = nil, want symlink rejection")
+	}
+	if _, err := service.DeleteFile(context.Background(), DeleteRequest{Path: link}); err == nil {
+		t.Fatal("DeleteFile() error = nil, want symlink rejection")
+	}
+	if _, err := os.Lstat(link); err != nil {
+		t.Fatalf("symlink should still exist: %v", err)
 	}
 }
 
@@ -213,7 +357,7 @@ func TestServiceDeleteFileDeletesRegularFile(t *testing.T) {
 		t.Fatalf("WriteFile() error = %v", err)
 	}
 
-	result, err := NewService().DeleteFile(context.Background(), DeleteRequest{Path: target})
+	result, err := NewService(Config{}).DeleteFile(context.Background(), DeleteRequest{Path: target})
 	if err != nil {
 		t.Fatalf("DeleteFile() error = %v", err)
 	}

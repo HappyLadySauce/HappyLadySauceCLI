@@ -63,6 +63,7 @@ func NewChatModelAgentMiddlewares(cfg ChatModelAgentMiddlewareConfig) ([]adk.Cha
 		WorkspaceGuard:        workspaceGuard,
 		CommandSandbox:        commandSandbox,
 		CommandTimeoutSeconds: securityCommandTimeout(cfg.Security),
+		FileTimeoutSeconds:    securityFileTimeout(cfg.Security),
 		MaxToolOutputBytes:    securityMaxToolOutputBytes(cfg.Security),
 	})
 	if err != nil {
@@ -121,6 +122,13 @@ func securityCommandTimeout(opts *options.SecurityOptions) int {
 		return options.NewSecurityOptions().CommandTimeoutSeconds
 	}
 	return opts.CommandTimeoutSeconds
+}
+
+func securityFileTimeout(opts *options.SecurityOptions) int {
+	if opts == nil {
+		return options.NewSecurityOptions().FileOperationTimeoutSeconds
+	}
+	return opts.FileOperationTimeoutSeconds
 }
 
 func securityMaxToolOutputBytes(opts *options.SecurityOptions) int {

@@ -57,11 +57,14 @@
 
 ```go
 type SecurityOptions struct {
-    WorkspaceRoots        []string  // 允许的工作区根目录
-    PersistContent        string    // 持久化模式："sanitized" | "metadata_only"
-    CommandTimeoutSeconds int       // command.run 执行超时（秒）
-    MaxToolOutputBytes    int       // 工具输出最大字节数
-    CommandSandbox        CommandSandboxOptions
+    WorkspaceRoots              []string  // 允许的工作区根目录
+    PersistContent              string    // 持久化模式："sanitized" | "metadata_only"
+    CommandTimeoutSeconds       int       // command.run 执行超时（秒）
+    FileOperationTimeoutSeconds int       // file.* 执行超时（秒）
+    FileMaxBytes                int       // 单个文件输入字节上限
+    FileMaxLineBytes            int       // file_read 单行字节上限
+    MaxToolOutputBytes          int       // 工具输出最大字节数
+    CommandSandbox              CommandSandboxOptions
 }
 
 type CommandSandboxOptions struct {
@@ -80,6 +83,9 @@ type CommandSandboxOptions struct {
 | `WorkspaceRoots` | `[当前工作目录]` | 文件操作的允许根目录 |
 | `PersistContent` | `"sanitized"` | 持久化内容经过脱敏处理 |
 | `CommandTimeoutSeconds` | `30` | `command.run` 默认 30 秒超时 |
+| `FileOperationTimeoutSeconds` | `30` | `file.*` 默认 30 秒超时 |
+| `FileMaxBytes` | `16777216` (16 MiB) | `file_read` / `file_edit` 输入文件上限，`file_create` 内容上限 |
+| `FileMaxLineBytes` | `65536` (64 KiB) | `file_read` 单行字节上限 |
 | `MaxToolOutputBytes` | `1048576` (1 MiB) | 工具输出上限 |
 | `CommandSandbox.Backend` | `"wsl2"` | command.run 只通过 WSL2 sandbox 后端执行 |
 | `CommandSandbox.FailClosed` | `true` | sandbox 不可用时拒绝 command.run，不降级到裸机执行 |
@@ -92,6 +98,9 @@ type CommandSandboxOptions struct {
 --security-workspace-roots           (string slice)
 --security-persist-content           (string, "sanitized" 或 "metadata_only")
 --security-command-timeout-seconds   (int)
+--security-file-operation-timeout-seconds (int)
+--security-file-max-bytes            (int)
+--security-file-max-line-bytes       (int)
 --security-max-tool-output-bytes     (int)
 --security-command-sandbox-backend              (string, 仅 wsl2)
 --security-command-sandbox-fail-closed          (bool, 必须 true)
@@ -106,6 +115,9 @@ type CommandSandboxOptions struct {
 HAPPLADYSAUCECLI_SECURITY_WORKSPACE_ROOTS
 HAPPLADYSAUCECLI_SECURITY_PERSIST_CONTENT
 HAPPLADYSAUCECLI_SECURITY_COMMAND_TIMEOUT_SECONDS
+HAPPLADYSAUCECLI_SECURITY_FILE_OPERATION_TIMEOUT_SECONDS
+HAPPLADYSAUCECLI_SECURITY_FILE_MAX_BYTES
+HAPPLADYSAUCECLI_SECURITY_FILE_MAX_LINE_BYTES
 HAPPLADYSAUCECLI_SECURITY_MAX_TOOL_OUTPUT_BYTES
 HAPPLADYSAUCECLI_SECURITY_COMMAND_SANDBOX_BACKEND
 HAPPLADYSAUCECLI_SECURITY_COMMAND_SANDBOX_FAIL_CLOSED
@@ -195,13 +207,17 @@ type Descriptor struct {
 
 | 工具 | OperationKind | Scope | Risk / DefaultPolicy | 约束 |
 |------|---------------|-------|----------------------|------|
-| `file_read` | `file.read` | `file:read` | low / allow | UTF-8 文本；`start_line` 默认 1，`max_lines` 默认 200，最大 1000 |
-| `file_list` | `file.list` | `file:list` | low / allow | 仅单层目录；`max_entries` 默认 200，最大 1000 |
+| `file_read` | `file.read` | `file:read` | low / allow | UTF-8 文本；`start_line` 默认 1，`max_lines` 默认 200，最大 1000；受 `file_max_bytes`、`file_max_line_bytes` 与 `max_tool_output_bytes` 约束 |
+| `file_list` | `file.list` | `file:list` | low / allow | 仅单层目录；`max_entries` 默认 200，最大 1000；有界读取，不返回精确总数 |
 | `file_edit` | `file.write` | `file:write` | medium / review | `old_text` 必须非空且唯一匹配；原子替换并保留权限 |
 | `file_create` | `file.write` | `file:write` | medium / review | 只创建新 UTF-8 文本文件；不覆盖、不自动创建父目录 |
 | `file_delete` | `file.delete` | `file:delete` | high / review | 只删除普通文件；不删除目录、不递归、不展开 glob |
 
 写入类 builder 的 `SanitizedArgsSummary` 只能包含 path、字节数与 SHA-256，不包含 `content`、`old_text` 或 `new_text` 正文。文件正文可以作为 `file_read` 工具结果返回给模型，但不得进入 diagnostic log、approval summary 或审计元数据。
+
+文件执行服务只对已授权、已规范化的 path 工作。`file_read` / `file_edit` / `file_delete` 拒绝 symlink、Windows reparse point 与目录目标；打开普通文件后会用 fd metadata 再次确认对象仍与授权 path 指向的文件一致，防止 builder 授权和 endpoint I/O 之间发生 TOCTOU 目标替换。`file_edit` 仍使用同目录临时文件 + rename 原子替换，并沿用已验证源文件权限。
+
+`file_list` 的结果 contract 为 `entries`、`returned_entries`、`truncated`。它不再扫描完整目录来计算 `total_entries`；每个 `ListEntry` 带 `readable` 字段，仅普通文件为 `true`，目录、symlink/reparse point 与其他类型为 `false`。
 
 ---
 
@@ -243,10 +259,10 @@ type OperationBuildInput struct {
     Summary string // SummarizeArguments(RawJSON)
 }
 
-type OperationBuilder func(ctx context.Context, request OperationRequest, input OperationBuildInput) OperationRequest
+type OperationBuilder func(ctx context.Context, request OperationRequest, input OperationBuildInput) (OperationRequest, error)
 ```
 
-`RawJSON` 供 builder 解析完整参数（避免 240 字符摘要截断）；`Summary` 供审批提示与审计摘要使用。
+`RawJSON` 供 builder 解析完整参数（避免 240 字符摘要截断）；`Summary` 供审批提示与审计摘要使用。Builder 的 JSON 解析错误、空 path 等用户输入错误会转成 `reason=invalid_arguments` 的 recoverable tool error payload，不进入 endpoint，也不作为路径/scope invariant hard-fail。
 
 ### 4.4 GrantKey 与 SessionGrantKey
 
@@ -405,7 +421,7 @@ type ExecutionSecurityMiddleware struct {
 authorize()                          ← 策略评估 + 审批
   ├── descriptorForTool()            ← 在 Capability Registry 中查找
   ├── operationForTool()             ← 构建 OperationRequest
-  │   ├── OperationBuilder 补充信息
+  │   ├── OperationBuilder 补充信息；畸形参数返回 invalid_arguments soft-fail
   │   ├── SanitizeText 脱敏参数
   │   ├── WorkspaceGuard.NormalizeResources 校验路径资源
   │   ├── security.ValidateNetworkResources 校验 network/url allowlist（见下）
@@ -423,7 +439,7 @@ authorize()                          ← 策略评估 + 审批
       └── 审批通过 + scope=session → grants.Allow()
 
 WithAuthorizedOperation(ctx)         ← 将已授权 OperationRequest 注入 context
-executionContext()                   ← 对 command.run 应用超时控制
+executionContext()                   ← 对 command.run 与 file.* 应用各自超时控制
   └── context.WithTimeout(ctx, timeout)
 
 endpoint() 调用实际工具              ← 执行；endpoint 不得作用于与 AuthorizedOperation.Resources 不一致的目标
@@ -439,11 +455,12 @@ auditExecution() / auditStreamOpened()  ← 审计日志
 |---------|------|---------|-------|
 | 用户审批拒绝 | soft-fail JSON，`reason=user_denied` | 是 | 继续 |
 | 策略 Deny | soft-fail JSON，`reason=policy_denied` | 是 | 继续 |
+| Builder 参数错误 | soft-fail JSON，`reason=invalid_arguments` | 是 | 继续 |
 | 路径/scope 校验失败 | hard-fail Go error | 否 | 中断 |
 | 无 Approver / 审批 I/O 失败 | hard-fail Go error | 否 | 中断 |
 | 工具执行/网络/参数/输出超限 | soft-fail JSON | 是 | 继续 |
 
-用户/策略拒绝以 `status=denial_returned recovered=true` 审计；工具 endpoint 执行失败以 `status=tool_error_returned recovered=true` 审计后回传给模型，ReAct 循环可继续。
+用户/策略拒绝以 `status=denial_returned recovered=true` 审计；builder 参数错误与工具 endpoint 执行失败以 recoverable tool failure 审计后回传给模型，ReAct 循环可继续。
 
 **ValidateNetworkResources 触发条件**（满足任一即校验 `url` 资源）：
 
@@ -569,7 +586,8 @@ func NewChatModelAgentMiddlewares(cfg ChatModelAgentMiddlewareConfig) ([]adk.Cha
    ├── tools.NewCapabilityRegistry()   创建 Capability 注册表
    ├── tools.NewOperationBuilders()    创建 OperationBuilder 映射
    ├── security.NewWorkspaceGuard()     创建共享 workspace guard
-   ├── tools.NewAgentTools(guard)       创建 weather + file tools
+   ├── execfiles.NewService(limits)     创建文件执行服务
+   ├── tools.NewAgentTools(guard, fileService) 创建 weather + file tools
    ├── sandbox.NewRunner()              创建 command sandbox runner
    ├── newTerminalApprover()           创建终端审批器
    └── NewChatModelAgentMiddlewares()  组装中间件链
