@@ -69,9 +69,9 @@ type SecurityOptions struct {
 
 type CommandSandboxOptions struct {
     Backend         string   // "wsl2"
-    FailClosed      bool     // sandbox 不可用时拒绝 command.run
+    FailClosed      bool     // 必须为 true；由 middleware 强制 fail-closed
     Network         string   // "deny"
-    WSLDistribution string   // 可选 WSL2 distribution
+    WSLDistribution string   // 可选 WSL2 distribution，仅允许 [A-Za-z0-9._-]
     AllowedEnvKeys  []string // 可传入 sandbox 的环境变量名 allowlist
 }
 ```
@@ -88,7 +88,7 @@ type CommandSandboxOptions struct {
 | `FileMaxLineBytes` | `65536` (64 KiB) | `file_read` 单行字节上限 |
 | `MaxToolOutputBytes` | `1048576` (1 MiB) | 工具输出上限 |
 | `CommandSandbox.Backend` | `"wsl2"` | command.run 只通过 WSL2 sandbox 后端执行 |
-| `CommandSandbox.FailClosed` | `true` | sandbox 不可用时拒绝 command.run，不降级到裸机执行 |
+| `CommandSandbox.FailClosed` | `true` | 配置层必须为 true；sandbox 不可用时由 middleware 拒绝 `command.run`，不降级到裸机执行 |
 | `CommandSandbox.Network` | `"deny"` | command sandbox 默认禁止网络访问 |
 | `CommandSandbox.AllowedEnvKeys` | `PATH, HOME, LANG, LC_ALL, TERM` | 命令环境变量 allowlist |
 
@@ -426,7 +426,7 @@ authorize()                          ← 策略评估 + 审批
   │   ├── WorkspaceGuard.NormalizeResources 校验路径资源
   │   ├── security.ValidateNetworkResources 校验 network/url allowlist（见下）
   │   └── security.ValidateFileResources 校验 file scope/path 纪律
-  ├── commandSandbox.Probe()         ← command.run 必须 sandbox available，否则 fail-closed
+  ├── commandSandbox.Probe()         ← command.run 必须 sandbox available，否则 fail-closed；Probe 有短超时与缓存
   ├── policy.Evaluate()              ← 策略矩阵决策
   │
   ├── ActionAllow → 直接放行
@@ -439,6 +439,7 @@ authorize()                          ← 策略评估 + 审批
       └── 审批通过 + scope=session → grants.Allow()
 
 WithAuthorizedOperation(ctx)         ← 将已授权 OperationRequest 注入 context
+commandsandbox.WithRunner(ctx)       ← command.run 额外注入已探测可用的 sandbox runner
 executionContext()                   ← 对 command.run 与 file.* 应用各自超时控制
   └── context.WithTimeout(ctx, timeout)
 
@@ -455,6 +456,7 @@ auditExecution() / auditStreamOpened()  ← 审计日志
 |---------|------|---------|-------|
 | 用户审批拒绝 | soft-fail JSON，`reason=user_denied` | 是 | 继续 |
 | 策略 Deny | soft-fail JSON，`reason=policy_denied` | 是 | 继续 |
+| command sandbox 不可用 | soft-fail JSON，`reason=command_sandbox_unavailable` | 是 | 继续 |
 | Builder 参数错误 | soft-fail JSON，`reason=invalid_arguments` | 是 | 继续 |
 | 路径/scope 校验失败 | hard-fail Go error | 否 | 中断 |
 | 无 Approver / 审批 I/O 失败 | hard-fail Go error | 否 | 中断 |
@@ -478,13 +480,15 @@ auditExecution() / auditStreamOpened()  ← 审计日志
 
 文件操作必须满足：`file.*` OperationKind 与精确 `file:` scope 匹配，且 builder 产出 path/file resource。存在 `file:` scope 但 OperationKind 不是 `file.*`，或存在 path/file resource 但 OperationKind 不是 `file.*`，都会 hard-fail。
 
-**Endpoint TOCTOU 约束**：授权基于 builder 产出的 `OperationRequest`；endpoint 应通过 `security.AuthorizedOperationFromContext(ctx)` 读取已授权资源，并使用 `execguard.MatchAuthorizedURL` / `execguard.RequireAuthorizedPath` 验证实际执行目标与授权一致，不得从 raw JSON 解析出不同的 path/URL 后静默执行。内置文件工具 endpoint 与 security middleware 必须共享 runtime setup 创建的同一个 `WorkspaceGuard`。
+**Endpoint TOCTOU 约束**：授权基于 builder 产出的 `OperationRequest`；endpoint 应通过 `security.AuthorizedOperationFromContext(ctx)` 读取已授权资源，并使用 `execguard.MatchAuthorizedURL` / `execguard.RequireAuthorizedPath` 验证实际执行目标与授权一致，不得从 raw JSON 解析出不同的 path/URL 后静默执行。内置文件工具 endpoint 与 security middleware 必须共享 runtime setup 创建的同一个 `WorkspaceGuard`。`RequireAuthorizedPath` 对 `file.read` / `file.write` / `file.delete` 采用精确路径匹配；仅 `file.list` 的 `path` resource 允许目录前缀匹配。
 
 ### 9.4 Command sandbox
 
-`command.run` 不只依赖审批。中间件会先探测 `internal/execution/sandbox.Runner`，只有 WSL2 sandbox backend 返回 available 时才继续进入 policy/approval/endpoint 链路。sandbox unavailable 时返回 `policy_denied` soft-fail payload，`decision_reason=command_sandbox_unavailable`，endpoint 不会被调用。
+`command.run` 不只依赖审批。中间件会先探测 `internal/execution/sandbox.Runner`，只有 WSL2 sandbox backend 返回 available 时才继续进入 policy/approval/endpoint 链路。Probe 使用固定短超时，并由 runner 做短期缓存，避免 WSL2 未安装、distro 启动慢或连续调用时阻塞 REPL。sandbox unavailable 时返回 `command_sandbox_unavailable` soft-fail payload，`decision_reason=command_sandbox_unavailable`，endpoint 不会被调用。
 
-当前 backend 只支持 `wsl2`：宿主侧通过 `wsl.exe` 进入可选 distribution，Linux 侧要求 `bwrap` 可用；执行时使用 `bwrap --unshare-net --clearenv`，默认禁止网络，workspace roots 只读绑定，`/tmp` 可写。原生 Windows 裸机执行不是 fallback。
+授权通过后，中间件会把 runner 通过 `commandsandbox.WithRunner(ctx, runner)` 注入 endpoint context。未来 `command.run` endpoint 必须通过 `commandsandbox.RunFromContext(ctx, request)` 执行，不得直接调用 `exec.Command` 或绕过 runner。这样 Probe、审批、审计和实际 sandbox 执行共享同一个安全依赖。
+
+当前 backend 只支持 `wsl2`：宿主侧通过 `wsl.exe` 进入可选 distribution，Linux 侧要求 `bwrap` 可用；执行时使用 `bwrap --unshare-net --clearenv`，默认禁止网络，workspace roots 只读绑定，`/tmp` 可写。为提供基础运行时，sandbox 还只读绑定 `/bin`、`/usr`、`/lib`、`/lib64`、`/etc` 等 WSL 系统路径，因此它不是完全空 rootfs；后续如需更强隔离，需要单独评估最小 rootfs。原生 Windows 裸机执行不是 fallback。
 
 ### 9.5 流式输出的特殊处理
 
@@ -565,7 +569,7 @@ func NewChatModelAgentMiddlewares(cfg ChatModelAgentMiddlewareConfig) ([]adk.Cha
 ```
 
 该工厂函数创建完整的中间件链，包括：
-1. 接收 runtime setup 创建的共享 `WorkspaceGuard` 与 `CommandSandbox`（测试路径可由 factory fallback 创建）
+1. 接收 runtime setup 创建的共享 `WorkspaceGuard` 与 `CommandSandbox`（生产路径必须注入共享实例；factory fallback 仅用于单元测试或孤立构造）
 2. 创建 `ExecutionSecurityMiddleware`（包含 Policy Engine + Session Grants + Approver + command sandbox probe）
 3. 创建 `CompactMiddleware`
 4. 创建 `UsageMiddleware`

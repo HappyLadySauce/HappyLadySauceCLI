@@ -91,3 +91,13 @@ func TestSecurityOptionsValidateRejectsInvalidCommandSandboxEnvKey(t *testing.T)
 		t.Fatal("Validate() error = nil, want invalid command sandbox env key")
 	}
 }
+
+func TestSecurityOptionsValidateRejectsInvalidCommandSandboxDistribution(t *testing.T) {
+	t.Parallel()
+
+	opts := NewSecurityOptions()
+	opts.CommandSandbox.WSLDistribution = "Ubuntu;rm"
+	if err := opts.Validate(); err == nil {
+		t.Fatal("Validate() error = nil, want invalid command sandbox distribution")
+	}
+}

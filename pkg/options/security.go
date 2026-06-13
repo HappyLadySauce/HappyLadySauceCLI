@@ -26,7 +26,10 @@ const (
 	PersistContentMetadataOnly = "metadata_only"
 )
 
-var commandSandboxEnvKeyPattern = regexp.MustCompile(`^[A-Za-z_][A-Za-z0-9_]*$`)
+var (
+	commandSandboxEnvKeyPattern          = regexp.MustCompile(`^[A-Za-z_][A-Za-z0-9_]*$`)
+	commandSandboxWSLDistributionPattern = regexp.MustCompile(`^[A-Za-z0-9._-]+$`)
+)
 
 // CommandSandboxOptions configures runtime isolation for command.run operations.
 // CommandSandboxOptions 配置 command.run 操作的运行时隔离。
@@ -146,6 +149,9 @@ func (o *SecurityOptions) Validate() error {
 	case CommandSandboxNetworkDeny:
 	default:
 		errs = errors.Join(errs, fmt.Errorf("security.command_sandbox.network must be %q", CommandSandboxNetworkDeny))
+	}
+	if o.CommandSandbox.WSLDistribution != "" && !commandSandboxWSLDistributionPattern.MatchString(o.CommandSandbox.WSLDistribution) {
+		errs = errors.Join(errs, fmt.Errorf("security.command_sandbox.wsl_distribution contains invalid characters: %q", o.CommandSandbox.WSLDistribution))
 	}
 	for i, key := range o.CommandSandbox.AllowedEnvKeys {
 		key = strings.TrimSpace(key)

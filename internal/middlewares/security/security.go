@@ -138,7 +138,7 @@ func (m *ExecutionSecurityMiddleware) WrapInvokableToolCall(ctx context.Context,
 			return "", authErr
 		}
 
-		ctx = securitycore.WithAuthorizedOperation(ctx, auth.operation)
+		ctx = m.authorizedExecutionContext(ctx, auth.operation)
 		ctx, cancel := m.executionContext(ctx, auth.operation)
 		defer cancel()
 		start := time.Now()
@@ -172,7 +172,7 @@ func (m *ExecutionSecurityMiddleware) WrapStreamableToolCall(ctx context.Context
 			return nil, authErr
 		}
 
-		ctx = securitycore.WithAuthorizedOperation(ctx, auth.operation)
+		ctx = m.authorizedExecutionContext(ctx, auth.operation)
 		ctx, cancel := m.executionContext(ctx, auth.operation)
 		start := time.Now()
 		result, err := endpoint(ctx, argumentsInJSON, opts...)
@@ -234,7 +234,7 @@ func (m *ExecutionSecurityMiddleware) WrapEnhancedInvokableToolCall(ctx context.
 			return nil, authErr
 		}
 
-		ctx = securitycore.WithAuthorizedOperation(ctx, auth.operation)
+		ctx = m.authorizedExecutionContext(ctx, auth.operation)
 		ctx, cancel := m.executionContext(ctx, auth.operation)
 		defer cancel()
 		start := time.Now()
@@ -268,7 +268,7 @@ func (m *ExecutionSecurityMiddleware) WrapEnhancedStreamableToolCall(ctx context
 			return nil, authErr
 		}
 
-		ctx = securitycore.WithAuthorizedOperation(ctx, auth.operation)
+		ctx = m.authorizedExecutionContext(ctx, auth.operation)
 		ctx, cancel := m.executionContext(ctx, auth.operation)
 		start := time.Now()
 		result, err := endpoint(ctx, toolArgument, opts...)
@@ -326,7 +326,7 @@ func (m *ExecutionSecurityMiddleware) authorize(ctx context.Context, tCtx *adk.T
 	}
 	sandboxStatus := m.commandSandboxStatus(ctx, operation)
 	if operation.OperationKind == securitycore.OperationCommandRun && !sandboxStatus.Available {
-		decision := policy.Decision{Action: policy.ActionDeny, Reason: "command_sandbox_unavailable"}
+		decision := policy.Decision{Action: policy.ActionDeny, Reason: securitycore.DenialReasonCommandSandboxUnavailable}
 		auth := authorization{
 			operation:     operation,
 			decision:      decision,
@@ -406,7 +406,9 @@ func (m *ExecutionSecurityMiddleware) commandSandboxStatus(ctx context.Context, 
 	if m.commandSandbox == nil {
 		return commandsandbox.Status{Backend: commandsandbox.BackendWSL2, Reason: "command sandbox runner is not configured"}
 	}
-	return m.commandSandbox.Probe(ctx)
+	probeCtx, cancel := context.WithTimeout(ctx, commandsandbox.DefaultProbeTimeout)
+	defer cancel()
+	return m.commandSandbox.Probe(probeCtx)
 }
 
 func (m *ExecutionSecurityMiddleware) lockApproval(grantKey string) func() {
@@ -499,9 +501,20 @@ func (m *ExecutionSecurityMiddleware) finishAuthorize(ctx context.Context, auth 
 		return "", false, err
 	}
 	reason := securitycore.DenialReasonFor(err)
+	if auth.decision.Reason == securitycore.DenialReasonCommandSandboxUnavailable {
+		reason = securitycore.DenialReasonCommandSandboxUnavailable
+	}
 	payload := toolresult.FormatFailure(err, reason)
 	m.auditAuthorizationRecovered(ctx, auth, err, len(payload), reason)
 	return payload, true, nil
+}
+
+func (m *ExecutionSecurityMiddleware) authorizedExecutionContext(ctx context.Context, operation securitycore.OperationRequest) context.Context {
+	ctx = securitycore.WithAuthorizedOperation(ctx, operation)
+	if operation.OperationKind == securitycore.OperationCommandRun {
+		ctx = commandsandbox.WithRunner(ctx, m.commandSandbox)
+	}
+	return ctx
 }
 
 func (m *ExecutionSecurityMiddleware) auditAuthorizationRecovered(ctx context.Context, auth authorization, err error, outputBytes int, reason string) {

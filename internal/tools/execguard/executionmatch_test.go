@@ -74,3 +74,53 @@ func TestRequireAuthorizedPathRejectsDifferentTarget(t *testing.T) {
 		t.Fatal("expected unauthorized path error")
 	}
 }
+
+func TestRequireAuthorizedPathAllowsListDescendant(t *testing.T) {
+	t.Parallel()
+
+	root := t.TempDir()
+	guard, err := securitycore.NewWorkspaceGuard([]string{root})
+	if err != nil {
+		t.Fatalf("NewWorkspaceGuard() error = %v", err)
+	}
+	allowed, err := guard.NormalizePath(root)
+	if err != nil {
+		t.Fatalf("NormalizePath() error = %v", err)
+	}
+	child := filepath.Join(root, "child.txt")
+	ctx := securitycore.WithAuthorizedOperation(context.Background(), securitycore.OperationRequest{
+		OperationKind: securitycore.OperationFileList,
+		Resources: []securitycore.OperationResource{
+			{Kind: securitycore.ResourceKindPath, Value: allowed},
+		},
+	})
+
+	if _, err := RequireAuthorizedPath(ctx, guard, child); err != nil {
+		t.Fatalf("RequireAuthorizedPath() error = %v, want list descendant allowed", err)
+	}
+}
+
+func TestRequireAuthorizedPathRejectsReadDescendant(t *testing.T) {
+	t.Parallel()
+
+	root := t.TempDir()
+	guard, err := securitycore.NewWorkspaceGuard([]string{root})
+	if err != nil {
+		t.Fatalf("NewWorkspaceGuard() error = %v", err)
+	}
+	allowed, err := guard.NormalizePath(root)
+	if err != nil {
+		t.Fatalf("NormalizePath() error = %v", err)
+	}
+	child := filepath.Join(root, "child.txt")
+	ctx := securitycore.WithAuthorizedOperation(context.Background(), securitycore.OperationRequest{
+		OperationKind: securitycore.OperationFileRead,
+		Resources: []securitycore.OperationResource{
+			{Kind: securitycore.ResourceKindPath, Value: allowed},
+		},
+	})
+
+	if _, err := RequireAuthorizedPath(ctx, guard, child); err == nil {
+		t.Fatal("RequireAuthorizedPath() error = nil, want read descendant rejected")
+	}
+}

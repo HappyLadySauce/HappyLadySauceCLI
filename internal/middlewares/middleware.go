@@ -83,6 +83,8 @@ func middlewareWorkspaceGuard(cfg ChatModelAgentMiddlewareConfig) (*securitycore
 	if cfg.WorkspaceGuard != nil {
 		return cfg.WorkspaceGuard, nil
 	}
+	// Production runtime injects the shared guard; this fallback is for isolated tests.
+	// 生产 runtime 会注入共享 guard；此 fallback 仅用于孤立测试。
 	return newWorkspaceGuard(cfg.Security)
 }
 
@@ -90,13 +92,14 @@ func middlewareCommandSandbox(cfg ChatModelAgentMiddlewareConfig) (commandsandbo
 	if cfg.CommandSandbox != nil {
 		return cfg.CommandSandbox, nil
 	}
+	// Production runtime injects the shared runner; this fallback is for isolated tests.
+	// 生产 runtime 会注入共享 runner；此 fallback 仅用于孤立测试。
 	securityOpts := cfg.Security
 	if securityOpts == nil {
 		securityOpts = options.NewSecurityOptions()
 	}
 	return commandsandbox.NewRunner(commandsandbox.Config{
 		Backend:         securityOpts.CommandSandbox.Backend,
-		FailClosed:      securityOpts.CommandSandbox.FailClosed,
 		Network:         securityOpts.CommandSandbox.Network,
 		WSLDistribution: securityOpts.CommandSandbox.WSLDistribution,
 		AllowedEnvKeys:  securityOpts.CommandSandbox.AllowedEnvKeys,

@@ -18,20 +18,34 @@ const (
 	// NetworkDeny disables network access for sandboxed command processes.
 	// NetworkDeny 禁止 sandboxed command 进程访问网络。
 	NetworkDeny = "deny"
+	// DefaultProbeTimeout bounds WSL2 readiness checks before policy evaluation.
+	// DefaultProbeTimeout 限制策略评估前 WSL2 就绪探测耗时。
+	DefaultProbeTimeout = 5 * time.Second
+	// DefaultProbeCacheTTL avoids repeated wsl.exe probes for adjacent command calls.
+	// DefaultProbeCacheTTL 避免相邻 command 调用重复执行 wsl.exe 探测。
+	DefaultProbeCacheTTL = 30 * time.Second
+	// DefaultMaxEnvValueBytes bounds one allowlisted environment value.
+	// DefaultMaxEnvValueBytes 限制单个允许透传环境变量值长度。
+	DefaultMaxEnvValueBytes = 4 << 10
 )
 
-var envKeyPattern = regexp.MustCompile(`^[A-Za-z_][A-Za-z0-9_]*$`)
+var (
+	envKeyPattern          = regexp.MustCompile(`^[A-Za-z_][A-Za-z0-9_]*$`)
+	wslDistributionPattern = regexp.MustCompile(`^[A-Za-z0-9._-]+$`)
+)
 
 // Config describes command sandbox behavior.
 // Config 描述命令 sandbox 行为。
 type Config struct {
-	Backend         string
-	FailClosed      bool
-	Network         string
-	WSLDistribution string
-	AllowedEnvKeys  []string
-	WorkspaceRoots  []string
-	MaxOutputBytes  int
+	Backend          string
+	Network          string
+	WSLDistribution  string
+	AllowedEnvKeys   []string
+	WorkspaceRoots   []string
+	MaxOutputBytes   int
+	ProbeTimeout     time.Duration
+	ProbeCacheTTL    time.Duration
+	MaxEnvValueBytes int
 }
 
 // Status reports whether a sandbox backend is ready to execute commands.
@@ -89,12 +103,18 @@ func NormalizeConfig(cfg Config) (Config, error) {
 	if len(cfg.AllowedEnvKeys) == 0 {
 		cfg.AllowedEnvKeys = DefaultAllowedEnvKeys()
 	}
-	if !cfg.FailClosed {
-		cfg.FailClosed = true
-	}
 	cfg.Backend = strings.ToLower(strings.TrimSpace(cfg.Backend))
 	cfg.Network = strings.ToLower(strings.TrimSpace(cfg.Network))
 	cfg.WSLDistribution = strings.TrimSpace(cfg.WSLDistribution)
+	if cfg.ProbeTimeout == 0 {
+		cfg.ProbeTimeout = DefaultProbeTimeout
+	}
+	if cfg.ProbeCacheTTL == 0 {
+		cfg.ProbeCacheTTL = DefaultProbeCacheTTL
+	}
+	if cfg.MaxEnvValueBytes == 0 {
+		cfg.MaxEnvValueBytes = DefaultMaxEnvValueBytes
+	}
 
 	var errs error
 	if cfg.Backend != BackendWSL2 {
@@ -102,6 +122,9 @@ func NormalizeConfig(cfg Config) (Config, error) {
 	}
 	if cfg.Network != NetworkDeny {
 		errs = errors.Join(errs, fmt.Errorf("unsupported command sandbox network policy: %s", cfg.Network))
+	}
+	if cfg.WSLDistribution != "" && !wslDistributionPattern.MatchString(cfg.WSLDistribution) {
+		errs = errors.Join(errs, fmt.Errorf("invalid WSL2 distribution name: %s", cfg.WSLDistribution))
 	}
 	for _, key := range cfg.AllowedEnvKeys {
 		key = strings.TrimSpace(key)
@@ -111,6 +134,15 @@ func NormalizeConfig(cfg Config) (Config, error) {
 	}
 	if cfg.MaxOutputBytes < 0 {
 		errs = errors.Join(errs, errors.New("command sandbox max output bytes cannot be negative"))
+	}
+	if cfg.ProbeTimeout < 0 {
+		errs = errors.Join(errs, errors.New("command sandbox probe timeout cannot be negative"))
+	}
+	if cfg.ProbeCacheTTL < 0 {
+		errs = errors.Join(errs, errors.New("command sandbox probe cache ttl cannot be negative"))
+	}
+	if cfg.MaxEnvValueBytes < 0 {
+		errs = errors.Join(errs, errors.New("command sandbox max env value bytes cannot be negative"))
 	}
 	return cfg, errs
 }

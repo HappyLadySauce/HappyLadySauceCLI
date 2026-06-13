@@ -897,6 +897,54 @@ func TestWrapInvokableToolCallAppliesTimeout(t *testing.T) {
 	}
 }
 
+func TestWrapInvokableToolCallInjectsCommandSandboxRunner(t *testing.T) {
+	t.Parallel()
+
+	registry := newTestRegistry(t, capability.Descriptor{
+		Name:          "run_shell",
+		Type:          capability.TypeNativeTool,
+		Source:        capability.SourceBuiltin,
+		Risk:          capability.RiskLow,
+		DefaultPolicy: capability.DefaultPolicyAllow,
+	})
+	middleware, err := NewExecutionSecurityMiddleware(Config{
+		Registry:       registry,
+		Policy:         policy.NewEngine(),
+		Grants:         policy.NewSessionGrants(),
+		Approver:       &fakeApprover{approve: true},
+		CommandSandbox: fakeSandboxRunner{status: commandsandbox.Status{Backend: commandsandbox.BackendWSL2, Available: true, Reason: "ready"}},
+		Builders: map[string]securitycore.OperationBuilder{
+			"run_shell": func(ctx context.Context, request securitycore.OperationRequest, input securitycore.OperationBuildInput) (securitycore.OperationRequest, error) {
+				request.OperationKind = securitycore.OperationCommandRun
+				return request, nil
+			},
+		},
+	})
+	if err != nil {
+		t.Fatalf("NewExecutionSecurityMiddleware() error = %v", err)
+	}
+	wrapped, err := middleware.WrapInvokableToolCall(context.Background(), func(ctx context.Context, argumentsInJSON string, opts ...tool.Option) (string, error) {
+		if _, ok := commandsandbox.RunnerFromContext(ctx); !ok {
+			t.Fatal("RunnerFromContext() ok = false, want injected sandbox runner")
+		}
+		if _, err := commandsandbox.RunFromContext(ctx, commandsandbox.Request{Command: "true"}); err != nil {
+			t.Fatalf("RunFromContext() error = %v", err)
+		}
+		return "ok", nil
+	}, &adk.ToolContext{Name: "run_shell", CallID: "call-1"})
+	if err != nil {
+		t.Fatalf("WrapInvokableToolCall() error = %v", err)
+	}
+
+	got, err := wrapped(context.Background(), `{}`)
+	if err != nil {
+		t.Fatalf("wrapped endpoint returned error: %v", err)
+	}
+	if got != "ok" {
+		t.Fatalf("wrapped endpoint result = %q, want ok", got)
+	}
+}
+
 func TestWrapInvokableToolCallAppliesFileTimeout(t *testing.T) {
 	t.Parallel()
 
@@ -993,8 +1041,58 @@ func TestWrapInvokableToolCallDeniesCommandWhenSandboxUnavailable(t *testing.T) 
 	if called.Load() {
 		t.Fatal("endpoint should not run when command sandbox is unavailable")
 	}
-	if !toolresult.IsDeniedPayload(got) || toolresult.DenialReason(got) != securitycore.DenialReasonPolicyDenied {
-		t.Fatalf("expected policy denial payload, got %q", got)
+	if !toolresult.IsDeniedPayload(got) || toolresult.DenialReason(got) != securitycore.DenialReasonCommandSandboxUnavailable {
+		t.Fatalf("expected command sandbox denial payload, got %q", got)
+	}
+}
+
+func TestWrapInvokableToolCallRejectsFileScopeMismatch(t *testing.T) {
+	t.Parallel()
+
+	root := t.TempDir()
+	target := filepath.Join(root, "notes.txt")
+	registry := newTestRegistry(t, capability.Descriptor{
+		Name:          "file_bad",
+		Type:          capability.TypeNativeTool,
+		Source:        capability.SourceBuiltin,
+		Risk:          capability.RiskLow,
+		DefaultPolicy: capability.DefaultPolicyAllow,
+		Scopes:        []string{securitycore.ScopeFileWrite},
+	})
+	guard, err := securitycore.NewWorkspaceGuard([]string{root})
+	if err != nil {
+		t.Fatalf("NewWorkspaceGuard() error = %v", err)
+	}
+	middleware, err := NewExecutionSecurityMiddleware(Config{
+		Registry:       registry,
+		Policy:         policy.NewEngine(),
+		Grants:         policy.NewSessionGrants(),
+		WorkspaceGuard: guard,
+		Builders: map[string]securitycore.OperationBuilder{
+			"file_bad": func(ctx context.Context, request securitycore.OperationRequest, input securitycore.OperationBuildInput) (securitycore.OperationRequest, error) {
+				request.OperationKind = securitycore.OperationFileRead
+				request.Resources = []securitycore.OperationResource{{Kind: securitycore.ResourceKindFile, Value: target}}
+				return request, nil
+			},
+		},
+	})
+	if err != nil {
+		t.Fatalf("NewExecutionSecurityMiddleware() error = %v", err)
+	}
+	var called atomic.Bool
+	wrapped, err := middleware.WrapInvokableToolCall(context.Background(), func(ctx context.Context, argumentsInJSON string, opts ...tool.Option) (string, error) {
+		called.Store(true)
+		return "ok", nil
+	}, &adk.ToolContext{Name: "file_bad", CallID: "call-1"})
+	if err != nil {
+		t.Fatalf("WrapInvokableToolCall() error = %v", err)
+	}
+
+	if _, err := wrapped(context.Background(), `{}`); err == nil {
+		t.Fatal("wrapped endpoint error = nil, want file scope mismatch hard-fail")
+	}
+	if called.Load() {
+		t.Fatal("endpoint should not run when file scope and operation kind mismatch")
 	}
 }
 

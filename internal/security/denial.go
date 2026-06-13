@@ -12,6 +12,9 @@ const (
 	// DenialReasonPolicyDenied marks a policy engine denial payload.
 	// DenialReasonPolicyDenied 标记策略引擎拒绝 payload。
 	DenialReasonPolicyDenied = "policy_denied"
+	// DenialReasonCommandSandboxUnavailable marks fail-closed sandbox denial payloads.
+	// DenialReasonCommandSandboxUnavailable 标记 sandbox 不可用导致的 fail-closed 拒绝 payload。
+	DenialReasonCommandSandboxUnavailable = "command_sandbox_unavailable"
 	// ToolFailureReasonInvalidArguments marks recoverable tool argument validation failures.
 	// ToolFailureReasonInvalidArguments 标记可恢复的工具参数校验失败。
 	ToolFailureReasonInvalidArguments = "invalid_arguments"
@@ -65,7 +68,9 @@ func IsRecoverableToolInputError(err error) bool {
 // IsStructuredDenialReason reports whether reason is a known authorization denial payload reason.
 // IsStructuredDenialReason 判断 reason 是否为已知的授权拒绝 payload 原因。
 func IsStructuredDenialReason(reason string) bool {
-	return reason == DenialReasonUserDenied || reason == DenialReasonPolicyDenied
+	return reason == DenialReasonUserDenied ||
+		reason == DenialReasonPolicyDenied ||
+		reason == DenialReasonCommandSandboxUnavailable
 }
 
 // DenialReasonFor returns the structured denial reason for recoverable authorization errors.

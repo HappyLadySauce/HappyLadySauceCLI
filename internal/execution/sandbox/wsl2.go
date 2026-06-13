@@ -9,6 +9,7 @@ import (
 	"path/filepath"
 	"runtime"
 	"strings"
+	"sync"
 	"time"
 )
 
@@ -40,8 +41,11 @@ type ExecuteResult struct {
 // WSL2Runner executes commands through wsl.exe and bubblewrap.
 // WSL2Runner 通过 wsl.exe 与 bubblewrap 执行命令。
 type WSL2Runner struct {
-	cfg      Config
-	executor Executor
+	cfg         Config
+	executor    Executor
+	probeMu     sync.Mutex
+	probeStatus Status
+	probeAt     time.Time
 }
 
 // NewWSL2Runner creates a WSL2 sandbox runner.
@@ -49,6 +53,9 @@ type WSL2Runner struct {
 func NewWSL2Runner(cfg Config, executor Executor) *WSL2Runner {
 	if executor == nil {
 		executor = osExecutor{}
+	}
+	if normalized, err := NormalizeConfig(cfg); err == nil {
+		cfg = normalized
 	}
 	return &WSL2Runner{cfg: cfg, executor: executor}
 }
@@ -61,18 +68,45 @@ func (r *WSL2Runner) Probe(ctx context.Context) Status {
 		status.Reason = "sandbox runner is incomplete"
 		return status
 	}
+	if cached, ok := r.cachedProbeStatus(time.Now()); ok {
+		return cached
+	}
+	r.probeMu.Lock()
+	defer r.probeMu.Unlock()
+	now := time.Now()
+	if cached, ok := r.cachedProbeStatusLocked(now); ok {
+		return cached
+	}
+	probeCtx := ctx
+	cancel := func() {}
+	if r.cfg.ProbeTimeout > 0 {
+		probeCtx, cancel = context.WithTimeout(ctx, r.cfg.ProbeTimeout)
+	}
+	defer cancel()
 	args := r.wslArgs("sh", "-lc", "command -v bwrap >/dev/null 2>&1")
-	result, err := r.executor.Execute(ctx, "wsl.exe", args, ExecuteOptions{MaxOutputBytes: 4096})
+	result, err := r.executor.Execute(probeCtx, "wsl.exe", args, ExecuteOptions{MaxOutputBytes: 4096})
 	if err != nil {
-		status.Reason = err.Error()
+		if errors.Is(probeCtx.Err(), context.DeadlineExceeded) {
+			status.Reason = "probe_timeout"
+		} else {
+			status.Reason = err.Error()
+		}
+		r.storeProbeStatus(status, now)
+		return status
+	}
+	if errors.Is(probeCtx.Err(), context.DeadlineExceeded) || result.TimedOut {
+		status.Reason = "probe_timeout"
+		r.storeProbeStatus(status, now)
 		return status
 	}
 	if result.ExitCode != 0 {
 		status.Reason = "bubblewrap is unavailable in WSL2 distribution"
+		r.storeProbeStatus(status, now)
 		return status
 	}
 	status.Available = true
 	status.Reason = "ready"
+	r.storeProbeStatus(status, now)
 	return status
 }
 
@@ -145,7 +179,11 @@ func (r *WSL2Runner) bwrapArgs(command string, commandArgs []string, workDir str
 		"--setenv", "PATH", defaultLinuxPath,
 		"--setenv", "HOME", "/tmp",
 	}
-	args = append(args, r.allowedEnvArgs(env)...)
+	envArgs, err := r.allowedEnvArgs(env)
+	if err != nil {
+		return nil, err
+	}
+	args = append(args, envArgs...)
 	for _, path := range []string{"/bin", "/usr", "/lib", "/lib64", "/etc"} {
 		args = append(args, "--ro-bind-try", path, path)
 	}
@@ -165,9 +203,9 @@ func (r *WSL2Runner) bwrapArgs(command string, commandArgs []string, workDir str
 	return args, nil
 }
 
-func (r *WSL2Runner) allowedEnvArgs(env map[string]string) []string {
+func (r *WSL2Runner) allowedEnvArgs(env map[string]string) ([]string, error) {
 	if len(env) == 0 || len(r.cfg.AllowedEnvKeys) == 0 {
-		return nil
+		return nil, nil
 	}
 	allowed := make(map[string]struct{}, len(r.cfg.AllowedEnvKeys))
 	for _, key := range r.cfg.AllowedEnvKeys {
@@ -178,9 +216,36 @@ func (r *WSL2Runner) allowedEnvArgs(env map[string]string) []string {
 		if _, ok := allowed[key]; !ok {
 			continue
 		}
+		if r.cfg.MaxEnvValueBytes > 0 && len(value) > r.cfg.MaxEnvValueBytes {
+			return nil, fmt.Errorf("command sandbox env value for %s exceeds max length: %d > %d", key, len(value), r.cfg.MaxEnvValueBytes)
+		}
 		args = append(args, "--setenv", key, value)
 	}
-	return args
+	return args, nil
+}
+
+func (r *WSL2Runner) cachedProbeStatus(now time.Time) (Status, bool) {
+	r.probeMu.Lock()
+	defer r.probeMu.Unlock()
+	return r.cachedProbeStatusLocked(now)
+}
+
+func (r *WSL2Runner) cachedProbeStatusLocked(now time.Time) (Status, bool) {
+	if r.cfg.ProbeCacheTTL <= 0 || r.probeAt.IsZero() {
+		return Status{}, false
+	}
+	if now.Sub(r.probeAt) > r.cfg.ProbeCacheTTL {
+		return Status{}, false
+	}
+	return r.probeStatus, true
+}
+
+func (r *WSL2Runner) storeProbeStatus(status Status, now time.Time) {
+	if r.cfg.ProbeCacheTTL <= 0 {
+		return
+	}
+	r.probeStatus = status
+	r.probeAt = now
 }
 
 func (r *WSL2Runner) resolveWorkDir(workDir string) (string, error) {

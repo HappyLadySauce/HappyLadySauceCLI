@@ -138,7 +138,6 @@ func newRuntimeCommandSandbox(securityOpts *options.SecurityOptions) (commandsan
 	}
 	return commandsandbox.NewRunner(commandsandbox.Config{
 		Backend:         securityOpts.CommandSandbox.Backend,
-		FailClosed:      securityOpts.CommandSandbox.FailClosed,
 		Network:         securityOpts.CommandSandbox.Network,
 		WSLDistribution: securityOpts.CommandSandbox.WSLDistribution,
 		AllowedEnvKeys:  securityOpts.CommandSandbox.AllowedEnvKeys,

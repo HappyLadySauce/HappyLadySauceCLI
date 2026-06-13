@@ -148,7 +148,7 @@ Thread-safe renderer with ANSI color support (disabled for non-terminal writers)
 - Malformed tool JSON and empty required paths are recoverable `invalid_arguments` payloads and must not call endpoints
 - File operations must use matching `file:*` scopes plus normalized path/file resources, and endpoints must re-check actual paths with `execguard.RequireAuthorizedPath`
 - File operations use `security.file_operation_timeout_seconds`, `security.file_max_bytes`, `security.file_max_line_bytes`, and `security.max_tool_output_bytes`; file read/edit/delete reject symlink/reparse targets and `file_list` reports `entries`, `returned_entries`, `truncated`, and per-entry `readable`
-- `command.run` requires an available WSL2 sandbox runner; if the sandbox probe fails, the middleware returns policy denial and never falls back to native Windows execution
+- `command.run` requires an available WSL2 sandbox runner; sandbox probe uses a short timeout/cache, unavailable sandbox returns `command_sandbox_unavailable`, and authorized endpoints must execute through `commandsandbox.RunFromContext(ctx, request)` rather than native Windows execution
 - Denial sentinels and reasons live in `internal/security/denial.go`; JSON formatting in `internal/tools/toolresult/`
 - Full error-handling matrix: `docs/security/architecture.md` §9
 

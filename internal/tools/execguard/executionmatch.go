@@ -41,7 +41,7 @@ func RequireAuthorizedPath(ctx context.Context, guard *securitycore.WorkspaceGua
 	if err != nil {
 		return "", fmt.Errorf("normalize execution path: %w", err)
 	}
-	if !MatchAuthorizedPath(operation, normalized) {
+	if !MatchAuthorizedExecutionPath(operation, normalized) {
 		return "", fmt.Errorf("execution path is outside authorized resources: %s", normalized)
 	}
 	return normalized, nil
@@ -62,6 +62,33 @@ func MatchAuthorizedPath(operation securitycore.OperationRequest, resolvedPath s
 	return false
 }
 
+// MatchAuthorizedExecutionPath reports whether resolvedPath is valid for the authorized operation.
+// MatchAuthorizedExecutionPath 判断 resolvedPath 是否符合已授权 operation 的路径语义。
+func MatchAuthorizedExecutionPath(operation securitycore.OperationRequest, resolvedPath string) bool {
+	if MatchAuthorizedPath(operation, resolvedPath) {
+		return true
+	}
+	if operation.OperationKind != securitycore.OperationFileList {
+		return false
+	}
+	return MatchAuthorizedPathPrefix(operation, resolvedPath)
+}
+
+// MatchAuthorizedPathPrefix reports whether resolvedPath is inside an authorized path resource.
+// MatchAuthorizedPathPrefix 判断 resolvedPath 是否位于已授权 path resource 内。
+func MatchAuthorizedPathPrefix(operation securitycore.OperationRequest, resolvedPath string) bool {
+	resolvedPath = cleanPathForCompare(resolvedPath)
+	for _, resource := range operation.Resources {
+		if resource.Kind != securitycore.ResourceKindPath {
+			continue
+		}
+		if pathWithin(cleanPathForCompare(resource.Value), resolvedPath) {
+			return true
+		}
+	}
+	return false
+}
+
 func cleanPathForCompare(value string) string {
 	return filepath.Clean(strings.TrimSpace(value))
 }
@@ -71,4 +98,15 @@ func samePath(left, right string) bool {
 		return strings.EqualFold(left, right)
 	}
 	return left == right
+}
+
+func pathWithin(root, child string) bool {
+	if samePath(root, child) {
+		return true
+	}
+	rel, err := filepath.Rel(root, child)
+	if err != nil {
+		return false
+	}
+	return rel != "." && !strings.HasPrefix(rel, "..") && !filepath.IsAbs(rel)
 }
