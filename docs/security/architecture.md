@@ -2,7 +2,7 @@
 
 ## 一、概览
 
-安全系统由 **四层架构** 组成，在每一次工具调用前执行策略评估、人工审批、路径校验、密钥脱敏与审计日志记录。
+安全系统由 **五层架构** 组成，在每一次工具调用前执行策略评估、人工审批、资源校验、密钥脱敏、命令 sandbox 探测与审计日志记录。
 
 ```
 ┌──────────────────────────────────────────────────────────────┐
@@ -20,6 +20,9 @@
 │  Layer 4: 中间件层                                            │
 │  internal/middlewares/security/  ExecutionSecurityMiddleware │
 │  internal/agents/approver.go    终端人工审批                  │
+├──────────────────────────────────────────────────────────────┤
+│  Layer 5: 命令 sandbox 层                                      │
+│  internal/execution/sandbox/  WSL2 sandbox runner             │
 └──────────────────────────────────────────────────────────────┘
 ```
 
@@ -36,6 +39,7 @@
 | `internal/utils/urlscope/` | URL 白名单规范化与比较（跨模块复用） |
 | `internal/tools/execguard/` | tool endpoint 与已授权 URL 资源对齐 helper |
 | `internal/security/workspace.go` | 路径遍历与符号链接保护 |
+| `internal/execution/sandbox/` | command.run 的 WSL2 sandbox runner 抽象与 fake-executor 可测实现 |
 | `internal/security/policy/engine.go` | 策略决策矩阵 |
 | `internal/security/policy/grants.go` | 会话级审批授权缓存 |
 | `internal/middlewares/security/security.go` | 执行安全中间件（核心） |
@@ -55,6 +59,15 @@ type SecurityOptions struct {
     PersistContent        string    // 持久化模式："sanitized" | "metadata_only"
     CommandTimeoutSeconds int       // command.run 执行超时（秒）
     MaxToolOutputBytes    int       // 工具输出最大字节数
+    CommandSandbox        CommandSandboxOptions
+}
+
+type CommandSandboxOptions struct {
+    Backend         string   // "wsl2"
+    FailClosed      bool     // sandbox 不可用时拒绝 command.run
+    Network         string   // "deny"
+    WSLDistribution string   // 可选 WSL2 distribution
+    AllowedEnvKeys  []string // 可传入 sandbox 的环境变量名 allowlist
 }
 ```
 
@@ -66,6 +79,10 @@ type SecurityOptions struct {
 | `PersistContent` | `"sanitized"` | 持久化内容经过脱敏处理 |
 | `CommandTimeoutSeconds` | `30` | `command.run` 默认 30 秒超时 |
 | `MaxToolOutputBytes` | `1048576` (1 MiB) | 工具输出上限 |
+| `CommandSandbox.Backend` | `"wsl2"` | command.run 只通过 WSL2 sandbox 后端执行 |
+| `CommandSandbox.FailClosed` | `true` | sandbox 不可用时拒绝 command.run，不降级到裸机执行 |
+| `CommandSandbox.Network` | `"deny"` | command sandbox 默认禁止网络访问 |
+| `CommandSandbox.AllowedEnvKeys` | `PATH, HOME, LANG, LC_ALL, TERM` | 命令环境变量 allowlist |
 
 ### 2.3 CLI 参数
 
@@ -74,6 +91,11 @@ type SecurityOptions struct {
 --security-persist-content           (string, "sanitized" 或 "metadata_only")
 --security-command-timeout-seconds   (int)
 --security-max-tool-output-bytes     (int)
+--security-command-sandbox-backend              (string, 仅 wsl2)
+--security-command-sandbox-fail-closed          (bool, 必须 true)
+--security-command-sandbox-network              (string, 仅 deny)
+--security-command-sandbox-wsl-distribution     (string, optional)
+--security-command-sandbox-allowed-env-keys     (string slice)
 ```
 
 ### 2.4 环境变量
@@ -83,6 +105,11 @@ HAPPLADYSAUCECLI_SECURITY_WORKSPACE_ROOTS
 HAPPLADYSAUCECLI_SECURITY_PERSIST_CONTENT
 HAPPLADYSAUCECLI_SECURITY_COMMAND_TIMEOUT_SECONDS
 HAPPLADYSAUCECLI_SECURITY_MAX_TOOL_OUTPUT_BYTES
+HAPPLADYSAUCECLI_SECURITY_COMMAND_SANDBOX_BACKEND
+HAPPLADYSAUCECLI_SECURITY_COMMAND_SANDBOX_FAIL_CLOSED
+HAPPLADYSAUCECLI_SECURITY_COMMAND_SANDBOX_NETWORK
+HAPPLADYSAUCECLI_SECURITY_COMMAND_SANDBOX_WSL_DISTRIBUTION
+HAPPLADYSAUCECLI_SECURITY_COMMAND_SANDBOX_ALLOWED_ENV_KEYS
 ```
 
 配置优先级：`CLI flags > 配置文件 > 环境变量 > 默认值`
@@ -147,6 +174,19 @@ type Descriptor struct {
 | Resources ↔ scope | 含 `http(s)` Resources 时必须声明 `network:` scope |
 | builder 集成测试 | `tools_test.go` 对含 network/HTTP 描述符的工具断言 builder 产出 `network.*` OperationKind 与非空 Resources |
 
+### 3.7 Descriptor.Validate 文件注册纪律
+
+`file:` scope 已从预留字段变成安全信号。Descriptor 只接受以下文件 scope：
+
+| scope | 匹配 OperationKind |
+|-------|-------------------|
+| `file:read` | `file.read` |
+| `file:list` | `file.list` |
+| `file:write` | `file.write` |
+| `file:delete` | `file.delete` |
+
+文件工具的 `OperationBuilder` 必须产出匹配的 `file.*` OperationKind，并至少产出一个 `Kind == "path"` 或 `Kind == "file"` 的资源。中间件会先用 `WorkspaceGuard.NormalizeResources` 规范化这些资源，再执行 `ValidateFileResources`，scope 与 OperationKind 不匹配会 hard-fail。
+
 ---
 
 ## 四、操作请求模型
@@ -171,11 +211,11 @@ type OperationRequest struct {
 | 常量 | 值 | 说明 |
 |------|-----|------|
 | `OperationNativeTool` | `native.tool` | 通用内置工具 |
-| `OperationFileRead` | `file.read` | 文件读取（预留） |
-| `OperationFileList` | `file.list` | 文件列表（预留） |
-| `OperationFileWrite` | `file.write` | 文件写入（预留） |
-| `OperationFileDelete` | `file.delete` | 文件删除（预留） |
-| `OperationCommandRun` | `command.run` | 命令执行（预留） |
+| `OperationFileRead` | `file.read` | 文件读取操作 |
+| `OperationFileList` | `file.list` | 文件列表操作 |
+| `OperationFileWrite` | `file.write` | 文件写入操作 |
+| `OperationFileDelete` | `file.delete` | 文件删除操作 |
+| `OperationCommandRun` | `command.run` | 命令执行操作，必须通过 command sandbox 探测 |
 
 ### 4.3 OperationBuilder
 
@@ -352,7 +392,9 @@ authorize()                          ← 策略评估 + 审批
   │   ├── OperationBuilder 补充信息
   │   ├── SanitizeText 脱敏参数
   │   ├── WorkspaceGuard.NormalizeResources 校验路径资源
-  │   └── security.ValidateNetworkResources 校验 network/url allowlist（见下）
+  │   ├── security.ValidateNetworkResources 校验 network/url allowlist（见下）
+  │   └── security.ValidateFileResources 校验 file scope/path 纪律
+  ├── commandSandbox.Probe()         ← command.run 必须 sandbox available，否则 fail-closed
   ├── policy.Evaluate()              ← 策略矩阵决策
   │
   ├── ActionAllow → 直接放行
@@ -395,15 +437,29 @@ auditExecution() / auditStreamOpened()  ← 审计日志
 
 存在 `url` 资源但 descriptor `Resources` 白名单为空时 hard-fail。URL 比较使用 `internal/utils/urlscope` 的 `CanonicalURLForAllowlist`（scheme/host 小写、剥离默认端口、规范化 path、拒绝 userinfo、剥离 fragment）。
 
-**Endpoint TOCTOU 约束**：授权基于 builder 产出的 `OperationRequest`；endpoint 应通过 `security.AuthorizedOperationFromContext(ctx)` 读取已授权资源，并使用 `execguard.MatchAuthorizedURL` / `WorkspaceGuard` 验证实际执行目标与授权一致，不得从 raw JSON 解析出不同的 path/URL 后静默执行。
+**ValidateFileResources 触发条件**（满足任一即校验文件 scope/path 纪律）：
 
-### 9.4 流式输出的特殊处理
+- descriptor `Scopes` 含受支持的 `file:` scope
+- `OperationKind` 以 `file.` 开头
+- `Resources` 中存在 `Kind == "path"` 或 `Kind == "file"` 的项
+
+文件操作必须满足：`file.*` OperationKind 与精确 `file:` scope 匹配，且 builder 产出 path/file resource。存在 `file:` scope 但 OperationKind 不是 `file.*`，或存在 path/file resource 但 OperationKind 不是 `file.*`，都会 hard-fail。
+
+**Endpoint TOCTOU 约束**：授权基于 builder 产出的 `OperationRequest`；endpoint 应通过 `security.AuthorizedOperationFromContext(ctx)` 读取已授权资源，并使用 `execguard.MatchAuthorizedURL` / `execguard.RequireAuthorizedPath` 验证实际执行目标与授权一致，不得从 raw JSON 解析出不同的 path/URL 后静默执行。
+
+### 9.4 Command sandbox
+
+`command.run` 不只依赖审批。中间件会先探测 `internal/execution/sandbox.Runner`，只有 WSL2 sandbox backend 返回 available 时才继续进入 policy/approval/endpoint 链路。sandbox unavailable 时返回 `policy_denied` soft-fail payload，`decision_reason=command_sandbox_unavailable`，endpoint 不会被调用。
+
+当前 backend 只支持 `wsl2`：宿主侧通过 `wsl.exe` 进入可选 distribution，Linux 侧要求 `bwrap` 可用；执行时使用 `bwrap --unshare-net --clearenv`，默认禁止网络，workspace roots 只读绑定，`/tmp` 可写。原生 Windows 裸机执行不是 fallback。
+
+### 9.5 流式输出的特殊处理
 
 对于流式工具调用，审计时机被推迟到 **流 EOF 消费时** 而非流建立时，以获得准确的执行耗时。使用 `toolOutputBudget` 累加器跟踪流式输出的累计字节数，超出限制时写入 error payload chunk 并结束流，而不是以 Go error 中断 ToolNode。
 
 若 consumer 在未 Recv 的情况下直接 `Close()`，`proxyStreamReaderWithFinalize` 会在转发 goroutine 退出时触发 `capability_call` 完成审计（`doAudit` 通过 atomic 保证至多一次）。
 
-### 9.5 审批锁机制
+### 9.6 审批锁机制
 
 `approvalLocks` 提供按 `SessionGrantKey()` 的并发审批串行化：
 
@@ -476,8 +532,8 @@ func NewChatModelAgentMiddlewares(cfg ChatModelAgentMiddlewareConfig) ([]adk.Cha
 ```
 
 该工厂函数创建完整的中间件链，包括：
-1. 基于 `SecurityOptions` 创建 `WorkspaceGuard`
-2. 创建 `ExecutionSecurityMiddleware`（包含 Policy Engine + Session Grants + Approver）
+1. 接收 runtime setup 创建的共享 `WorkspaceGuard` 与 `CommandSandbox`（测试路径可由 factory fallback 创建）
+2. 创建 `ExecutionSecurityMiddleware`（包含 Policy Engine + Session Grants + Approver + command sandbox probe）
 3. 创建 `CompactMiddleware`
 4. 创建 `UsageMiddleware`
 
@@ -496,6 +552,8 @@ func NewChatModelAgentMiddlewares(cfg ChatModelAgentMiddlewareConfig) ([]adk.Cha
 2. Agent 初始化 (interactive_setup.go)
    ├── tools.NewCapabilityRegistry()   创建 Capability 注册表
    ├── tools.NewOperationBuilders()    创建 OperationBuilder 映射
+   ├── security.NewWorkspaceGuard()     创建共享 workspace guard
+   ├── sandbox.NewRunner()              创建 command sandbox runner
    ├── newTerminalApprover()           创建终端审批器
    └── NewChatModelAgentMiddlewares()  组装中间件链
 
@@ -546,10 +604,12 @@ type AuditRecord struct {
 
 每次工具调用产生两条审计日志：
 
-1. **决策时**（`phase=capability_policy`）：记录策略评估结果、是否触发了审批
-2. **执行后**（`phase=capability_call`）：记录策略决策、审批范围、输出字节数、执行耗时、成功/失败状态
+1. **决策时**（`phase=capability_policy`）：记录策略评估结果、是否触发了审批、sandbox backend/status/reason
+2. **执行后**（`phase=capability_call`）：记录策略决策、审批范围、输出字节数、执行耗时、成功/失败状态、sandbox backend/status/reason
 
 流式工具调用额外产生 `status=stream_opened` 的中间态日志。
+
+`sandbox_reason` 会先经过 `SanitizeText`；日志不会记录 raw command、raw file content 或完整环境变量。
 
 ---
 
@@ -577,6 +637,7 @@ type AuditRecord struct {
 | `operation_test.go` | GrantKey 中的资源排序、分隔符转义 |
 | `sanitizer_test.go` | Bearer token、嵌套 JSON 密钥、已知前缀 token、确定性 key 排序、UTF-8 安全截断 |
 | `workspace_test.go` | 路径遍历、符号链接逃逸、不存在文件的符号链接父路径 |
-| `security_test.go` (options) | 默认值应用、无效持久化模式拒绝 |
+| `security_test.go` (options) | 默认值应用、无效持久化模式、非法 command sandbox backend/network/env key 拒绝 |
 | `approver_test.go` | Yes/once 审批、session 审批、默认拒绝、提示渲染 |
 | `middleware_test.go` | 链注册顺序（security, compact, usage = 3 handlers）、无效工作区根目录拒绝 |
+| `wsl2_test.go` | WSL2 sandbox probe、fake executor、非零退出码、超时与输出截断 |

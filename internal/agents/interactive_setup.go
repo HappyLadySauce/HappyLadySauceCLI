@@ -10,12 +10,15 @@ import (
 	"github.com/cloudwego/eino/adk"
 
 	contextsession "github.com/HappyLadySauce/HappyLadySauceCLI/internal/context/session"
+	commandsandbox "github.com/HappyLadySauce/HappyLadySauceCLI/internal/execution/sandbox"
 	"github.com/HappyLadySauce/HappyLadySauceCLI/internal/input"
 	"github.com/HappyLadySauce/HappyLadySauceCLI/internal/middlewares"
 	"github.com/HappyLadySauce/HappyLadySauceCLI/internal/prompts"
+	securitycore "github.com/HappyLadySauce/HappyLadySauceCLI/internal/security"
 	"github.com/HappyLadySauce/HappyLadySauceCLI/internal/terminal"
 	"github.com/HappyLadySauce/HappyLadySauceCLI/internal/tools"
 	"github.com/HappyLadySauce/HappyLadySauceCLI/pkg/config"
+	"github.com/HappyLadySauce/HappyLadySauceCLI/pkg/options"
 )
 
 func newInteractiveRuntime(ctx context.Context, cfg *config.Config, in io.Reader, out io.Writer, errOut io.Writer) (*interactiveRuntime, error) {
@@ -54,6 +57,14 @@ func newInteractiveRuntime(ctx context.Context, cfg *config.Config, in io.Reader
 	if err != nil {
 		return nil, fmt.Errorf("new agent tools: %w", err)
 	}
+	workspaceGuard, err := newRuntimeWorkspaceGuard(cfg.Security)
+	if err != nil {
+		return nil, err
+	}
+	commandSandbox, err := newRuntimeCommandSandbox(cfg.Security)
+	if err != nil {
+		return nil, err
+	}
 
 	handlers, err := middlewares.NewChatModelAgentMiddlewares(middlewares.ChatModelAgentMiddlewareConfig{
 		Model:              chatModel,
@@ -64,6 +75,8 @@ func newInteractiveRuntime(ctx context.Context, cfg *config.Config, in io.Reader
 		OperationBuilders:  tools.NewOperationBuilders(),
 		Approver:           newTerminalApprover(promptReader, renderer),
 		Security:           cfg.Security,
+		WorkspaceGuard:     workspaceGuard,
+		CommandSandbox:     commandSandbox,
 	})
 	if err != nil {
 		return nil, err
@@ -92,6 +105,33 @@ func newInteractiveRuntime(ctx context.Context, cfg *config.Config, in io.Reader
 		renderer:        renderer,
 		maxModelContext: cfg.Model.MaxModelContext,
 	}, nil
+}
+
+func newRuntimeWorkspaceGuard(securityOpts *options.SecurityOptions) (*securitycore.WorkspaceGuard, error) {
+	var roots []string
+	if securityOpts != nil {
+		roots = securityOpts.WorkspaceRoots
+	}
+	guard, err := securitycore.NewWorkspaceGuard(roots)
+	if err != nil {
+		return nil, fmt.Errorf("new runtime workspace guard: %w", err)
+	}
+	return guard, nil
+}
+
+func newRuntimeCommandSandbox(securityOpts *options.SecurityOptions) (commandsandbox.Runner, error) {
+	if securityOpts == nil {
+		securityOpts = options.NewSecurityOptions()
+	}
+	return commandsandbox.NewRunner(commandsandbox.Config{
+		Backend:         securityOpts.CommandSandbox.Backend,
+		FailClosed:      securityOpts.CommandSandbox.FailClosed,
+		Network:         securityOpts.CommandSandbox.Network,
+		WSLDistribution: securityOpts.CommandSandbox.WSLDistribution,
+		AllowedEnvKeys:  securityOpts.CommandSandbox.AllowedEnvKeys,
+		WorkspaceRoots:  securityOpts.WorkspaceRoots,
+		MaxOutputBytes:  securityOpts.MaxToolOutputBytes,
+	})
 }
 
 // newChatModelConfig builds the OpenAI-compatible chat model configuration.

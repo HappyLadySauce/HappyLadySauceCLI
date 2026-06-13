@@ -170,3 +170,19 @@ func TestDescriptorValidationRejectsEmptyNetworkScopeSuffix(t *testing.T) {
 		t.Fatal("expected empty network: scope suffix to fail validation")
 	}
 }
+
+func TestDescriptorValidationRejectsUnsupportedFileScope(t *testing.T) {
+	t.Parallel()
+
+	err := Descriptor{
+		Name:          "file_tool",
+		Type:          TypeNativeTool,
+		Source:        SourceBuiltin,
+		Risk:          RiskMedium,
+		DefaultPolicy: DefaultPolicyReview,
+		Scopes:        []string{"file:rename"},
+	}.Validate()
+	if err == nil {
+		t.Fatal("expected unsupported file: scope to fail validation")
+	}
+}

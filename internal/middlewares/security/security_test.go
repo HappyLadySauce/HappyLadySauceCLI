@@ -15,6 +15,7 @@ import (
 	"github.com/cloudwego/eino/schema"
 
 	"github.com/HappyLadySauce/HappyLadySauceCLI/internal/capability"
+	commandsandbox "github.com/HappyLadySauce/HappyLadySauceCLI/internal/execution/sandbox"
 	securitycore "github.com/HappyLadySauce/HappyLadySauceCLI/internal/security"
 	"github.com/HappyLadySauce/HappyLadySauceCLI/internal/security/policy"
 	"github.com/HappyLadySauce/HappyLadySauceCLI/internal/tools/toolresult"
@@ -25,6 +26,18 @@ type fakeApprover struct {
 	scope   string
 	calls   atomic.Int32
 	last    ApprovalRequest
+}
+
+type fakeSandboxRunner struct {
+	status commandsandbox.Status
+}
+
+func (r fakeSandboxRunner) Probe(ctx context.Context) commandsandbox.Status {
+	return r.status
+}
+
+func (r fakeSandboxRunner) Run(ctx context.Context, request commandsandbox.Request) (commandsandbox.Result, error) {
+	return commandsandbox.Result{}, nil
 }
 
 func TestWrapEnhancedToolCallsAuthorizeBeforeExecution(t *testing.T) {
@@ -701,6 +714,7 @@ func TestWrapInvokableToolCallAppliesTimeout(t *testing.T) {
 		Policy:                policy.NewEngine(),
 		Grants:                policy.NewSessionGrants(),
 		Approver:              &fakeApprover{approve: true},
+		CommandSandbox:        fakeSandboxRunner{status: commandsandbox.Status{Backend: commandsandbox.BackendWSL2, Available: true, Reason: "ready"}},
 		CommandTimeoutSeconds: 1,
 		Builders: map[string]securitycore.OperationBuilder{
 			"slow_tool": func(ctx context.Context, request securitycore.OperationRequest, input securitycore.OperationBuildInput) securitycore.OperationRequest {
@@ -726,6 +740,53 @@ func TestWrapInvokableToolCallAppliesTimeout(t *testing.T) {
 	}
 	if !toolresult.IsErrorPayload(got) {
 		t.Fatalf("expected soft-fail payload, got %q", got)
+	}
+}
+
+func TestWrapInvokableToolCallDeniesCommandWhenSandboxUnavailable(t *testing.T) {
+	t.Parallel()
+
+	registry := newTestRegistry(t, capability.Descriptor{
+		Name:          "run_shell",
+		Type:          capability.TypeNativeTool,
+		Source:        capability.SourceBuiltin,
+		Risk:          capability.RiskLow,
+		DefaultPolicy: capability.DefaultPolicyAllow,
+	})
+	middleware, err := NewExecutionSecurityMiddleware(Config{
+		Registry:       registry,
+		Policy:         policy.NewEngine(),
+		Grants:         policy.NewSessionGrants(),
+		Approver:       &fakeApprover{approve: true},
+		CommandSandbox: fakeSandboxRunner{status: commandsandbox.Status{Backend: commandsandbox.BackendWSL2, Reason: "missing bwrap"}},
+		Builders: map[string]securitycore.OperationBuilder{
+			"run_shell": func(ctx context.Context, request securitycore.OperationRequest, input securitycore.OperationBuildInput) securitycore.OperationRequest {
+				request.OperationKind = securitycore.OperationCommandRun
+				return request
+			},
+		},
+	})
+	if err != nil {
+		t.Fatalf("NewExecutionSecurityMiddleware() error = %v", err)
+	}
+	var called atomic.Bool
+	wrapped, err := middleware.WrapInvokableToolCall(context.Background(), func(ctx context.Context, argumentsInJSON string, opts ...tool.Option) (string, error) {
+		called.Store(true)
+		return "ok", nil
+	}, &adk.ToolContext{Name: "run_shell", CallID: "call-1"})
+	if err != nil {
+		t.Fatalf("WrapInvokableToolCall() error = %v", err)
+	}
+
+	got, err := wrapped(context.Background(), `{}`)
+	if err != nil {
+		t.Fatalf("wrapped endpoint returned error: %v", err)
+	}
+	if called.Load() {
+		t.Fatal("endpoint should not run when command sandbox is unavailable")
+	}
+	if !toolresult.IsDeniedPayload(got) || toolresult.DenialReason(got) != securitycore.DenialReasonPolicyDenied {
+		t.Fatalf("expected policy denial payload, got %q", got)
 	}
 }
 

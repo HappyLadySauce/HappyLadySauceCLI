@@ -105,6 +105,9 @@ func (d Descriptor) Validate() error {
 		if strings.HasPrefix(scope, "network:") && strings.TrimSpace(strings.TrimPrefix(scope, "network:")) == "" {
 			errs = append(errs, errors.New("network scope must include a non-empty suffix after network:"))
 		}
+		if strings.HasPrefix(scope, "file:") && !validFileScope(scope) {
+			errs = append(errs, fmt.Errorf("unsupported file scope: %s", scope))
+		}
 	}
 	if HasNetworkScope(d.Scopes) && len(d.Resources) == 0 {
 		errs = append(errs, errors.New("capabilities with network: scopes must declare Resources allowlist"))
@@ -172,6 +175,15 @@ func validRiskLevel(value RiskLevel) bool {
 func validDefaultPolicy(value DefaultPolicy) bool {
 	switch value {
 	case DefaultPolicyAllow, DefaultPolicyReview, DefaultPolicyDeny:
+		return true
+	default:
+		return false
+	}
+}
+
+func validFileScope(scope string) bool {
+	switch strings.TrimSpace(scope) {
+	case "file:read", "file:list", "file:write", "file:delete":
 		return true
 	default:
 		return false

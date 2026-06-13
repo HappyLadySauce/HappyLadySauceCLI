@@ -90,16 +90,21 @@ func configureEnvBinding(prefix string) {
 }
 
 var HAPPLADYSAUCECLIEnvBindings = map[string]string{
-	"home":                                     "HAPPLADYSAUCECLI_HOME",
-	"model.HAPPLADYSAUCECLI_API_KEY":           "HAPPLADYSAUCECLI_API_KEY",
-	"model.HAPPLADYSAUCECLI_BASE_URL":          "HAPPLADYSAUCECLI_BASE_URL",
-	"model.HAPPLADYSAUCECLI_MODEL":             "HAPPLADYSAUCECLI_MODEL",
-	"model.HAPPLADYSAUCECLI_MAX_OUTPUT_TOKENS": "HAPPLADYSAUCECLI_MAX_OUTPUT_TOKENS",
-	"model.HAPPLADYSAUCECLI_MAX_MODEL_CONTEXT": "HAPPLADYSAUCECLI_MAX_MODEL_CONTEXT",
-	"security.workspace_roots":                 "HAPPLADYSAUCECLI_SECURITY_WORKSPACE_ROOTS",
-	"security.persist_content":                 "HAPPLADYSAUCECLI_SECURITY_PERSIST_CONTENT",
-	"security.command_timeout_seconds":         "HAPPLADYSAUCECLI_SECURITY_COMMAND_TIMEOUT_SECONDS",
-	"security.max_tool_output_bytes":           "HAPPLADYSAUCECLI_SECURITY_MAX_TOOL_OUTPUT_BYTES",
+	"home":                                      "HAPPLADYSAUCECLI_HOME",
+	"model.HAPPLADYSAUCECLI_API_KEY":            "HAPPLADYSAUCECLI_API_KEY",
+	"model.HAPPLADYSAUCECLI_BASE_URL":           "HAPPLADYSAUCECLI_BASE_URL",
+	"model.HAPPLADYSAUCECLI_MODEL":              "HAPPLADYSAUCECLI_MODEL",
+	"model.HAPPLADYSAUCECLI_MAX_OUTPUT_TOKENS":  "HAPPLADYSAUCECLI_MAX_OUTPUT_TOKENS",
+	"model.HAPPLADYSAUCECLI_MAX_MODEL_CONTEXT":  "HAPPLADYSAUCECLI_MAX_MODEL_CONTEXT",
+	"security.workspace_roots":                  "HAPPLADYSAUCECLI_SECURITY_WORKSPACE_ROOTS",
+	"security.persist_content":                  "HAPPLADYSAUCECLI_SECURITY_PERSIST_CONTENT",
+	"security.command_timeout_seconds":          "HAPPLADYSAUCECLI_SECURITY_COMMAND_TIMEOUT_SECONDS",
+	"security.max_tool_output_bytes":            "HAPPLADYSAUCECLI_SECURITY_MAX_TOOL_OUTPUT_BYTES",
+	"security.command_sandbox.backend":          "HAPPLADYSAUCECLI_SECURITY_COMMAND_SANDBOX_BACKEND",
+	"security.command_sandbox.fail_closed":      "HAPPLADYSAUCECLI_SECURITY_COMMAND_SANDBOX_FAIL_CLOSED",
+	"security.command_sandbox.network":          "HAPPLADYSAUCECLI_SECURITY_COMMAND_SANDBOX_NETWORK",
+	"security.command_sandbox.wsl_distribution": "HAPPLADYSAUCECLI_SECURITY_COMMAND_SANDBOX_WSL_DISTRIBUTION",
+	"security.command_sandbox.allowed_env_keys": "HAPPLADYSAUCECLI_SECURITY_COMMAND_SANDBOX_ALLOWED_ENV_KEYS",
 }
 
 // loadViperConfig loads configuration with priority: --config > cwd > ~/basename/.

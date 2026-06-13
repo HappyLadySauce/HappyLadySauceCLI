@@ -28,6 +28,21 @@ const (
 )
 
 const (
+	// ScopeFileRead permits file.read operations under workspace roots.
+	// ScopeFileRead 允许在 workspace roots 下执行 file.read 操作。
+	ScopeFileRead = "file:read"
+	// ScopeFileList permits file.list operations under workspace roots.
+	// ScopeFileList 允许在 workspace roots 下执行 file.list 操作。
+	ScopeFileList = "file:list"
+	// ScopeFileWrite permits file.write operations under workspace roots.
+	// ScopeFileWrite 允许在 workspace roots 下执行 file.write 操作。
+	ScopeFileWrite = "file:write"
+	// ScopeFileDelete permits file.delete operations under workspace roots.
+	// ScopeFileDelete 允许在 workspace roots 下执行 file.delete 操作。
+	ScopeFileDelete = "file:delete"
+)
+
+const (
 	// OperationNativeTool represents a built-in tool call without a narrower operation kind.
 	// OperationNativeTool 表示尚未细分操作类型的内置工具调用。
 	OperationNativeTool = "native.tool"
@@ -160,6 +175,57 @@ func (r OperationRequest) IsNetworkOperation() bool {
 // RequiresNetworkResourceValidation 判断是否需要进行 URL 白名单校验。
 func (r OperationRequest) RequiresNetworkResourceValidation() bool {
 	return r.IsNetworkOperation() || r.HasResourceKind(ResourceKindURL)
+}
+
+// IsFileOperation reports whether policy should treat the operation as filesystem access.
+// IsFileOperation 判断策略是否应将 operation 视为文件系统访问。
+func (r OperationRequest) IsFileOperation() bool {
+	return strings.HasPrefix(r.OperationKind, "file.") || HasFileScope(r.Capability.Scopes)
+}
+
+// RequiresFileResourceValidation reports whether path/file validation is required.
+// RequiresFileResourceValidation 判断是否需要进行 path/file 资源校验。
+func (r OperationRequest) RequiresFileResourceValidation() bool {
+	return r.IsFileOperation() || r.HasResourceKind(ResourceKindPath) || r.HasResourceKind(ResourceKindFile)
+}
+
+// RequiredFileScope returns the exact scope required by a file operation kind.
+// RequiredFileScope 返回文件操作类型所需的精确 scope。
+func (r OperationRequest) RequiredFileScope() string {
+	switch r.OperationKind {
+	case OperationFileRead:
+		return ScopeFileRead
+	case OperationFileList:
+		return ScopeFileList
+	case OperationFileWrite:
+		return ScopeFileWrite
+	case OperationFileDelete:
+		return ScopeFileDelete
+	default:
+		return ""
+	}
+}
+
+// HasFileScope reports whether scopes include any supported file: scope.
+// HasFileScope 判断 scopes 是否包含任意受支持的 file: scope。
+func HasFileScope(scopes []string) bool {
+	for _, scope := range scopes {
+		if IsSupportedFileScope(scope) {
+			return true
+		}
+	}
+	return false
+}
+
+// IsSupportedFileScope reports whether scope is a recognized file scope.
+// IsSupportedFileScope 判断 scope 是否为受支持的文件 scope。
+func IsSupportedFileScope(scope string) bool {
+	switch strings.TrimSpace(scope) {
+	case ScopeFileRead, ScopeFileList, ScopeFileWrite, ScopeFileDelete:
+		return true
+	default:
+		return false
+	}
 }
 
 func sortedResources(resources []OperationResource) []OperationResource {

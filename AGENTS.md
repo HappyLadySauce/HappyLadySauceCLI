@@ -145,6 +145,8 @@ Thread-safe renderer with ANSI color support (disabled for non-terminal writers)
 
 - `ExecutionSecurityMiddleware` wraps tool invocations: policy evaluation → user approval → audit → endpoint
 - Recoverable failures (user/policy denial, tool execution errors) return JSON payloads to the model with `nil` Go error so the ReAct loop continues; invariant violations (path/scope, missing approver) still hard-fail
+- File operations must use matching `file:*` scopes plus normalized path/file resources, and endpoints must re-check actual paths with `execguard.RequireAuthorizedPath`
+- `command.run` requires an available WSL2 sandbox runner; if the sandbox probe fails, the middleware returns policy denial and never falls back to native Windows execution
 - Denial sentinels and reasons live in `internal/security/denial.go`; JSON formatting in `internal/tools/toolresult/`
 - Full error-handling matrix: `docs/security/architecture.md` §9
 

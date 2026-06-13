@@ -7,6 +7,7 @@ import (
 	"github.com/cloudwego/eino/components/model"
 
 	"github.com/HappyLadySauce/HappyLadySauceCLI/internal/capability"
+	commandsandbox "github.com/HappyLadySauce/HappyLadySauceCLI/internal/execution/sandbox"
 	compactmiddleware "github.com/HappyLadySauce/HappyLadySauceCLI/internal/middlewares/compact"
 	securitymiddleware "github.com/HappyLadySauce/HappyLadySauceCLI/internal/middlewares/security"
 	usagemiddleware "github.com/HappyLadySauce/HappyLadySauceCLI/internal/middlewares/usage"
@@ -27,6 +28,8 @@ type ChatModelAgentMiddlewareConfig struct {
 	OperationBuilders  map[string]securitycore.OperationBuilder
 	Approver           securitymiddleware.Approver
 	Security           *options.SecurityOptions
+	WorkspaceGuard     *securitycore.WorkspaceGuard
+	CommandSandbox     commandsandbox.Runner
 }
 
 // NewChatModelAgentMiddlewares builds the default ChatModelAgent middleware chain.
@@ -42,7 +45,11 @@ func NewChatModelAgentMiddlewares(cfg ChatModelAgentMiddlewareConfig) ([]adk.Cha
 		return nil, fmt.Errorf("new context compactor: %w", err)
 	}
 
-	workspaceGuard, err := newWorkspaceGuard(cfg.Security)
+	workspaceGuard, err := middlewareWorkspaceGuard(cfg)
+	if err != nil {
+		return nil, err
+	}
+	commandSandbox, err := middlewareCommandSandbox(cfg)
 	if err != nil {
 		return nil, err
 	}
@@ -54,6 +61,7 @@ func NewChatModelAgentMiddlewares(cfg ChatModelAgentMiddlewareConfig) ([]adk.Cha
 		Approver:              cfg.Approver,
 		Builders:              cfg.OperationBuilders,
 		WorkspaceGuard:        workspaceGuard,
+		CommandSandbox:        commandSandbox,
 		CommandTimeoutSeconds: securityCommandTimeout(cfg.Security),
 		MaxToolOutputBytes:    securityMaxToolOutputBytes(cfg.Security),
 	})
@@ -68,6 +76,32 @@ func NewChatModelAgentMiddlewares(cfg ChatModelAgentMiddlewareConfig) ([]adk.Cha
 	usageMiddleware := usagemiddleware.NewUsageMiddleware()
 
 	return []adk.ChatModelAgentMiddleware{securityMiddleware, compactMiddleware, usageMiddleware}, nil
+}
+
+func middlewareWorkspaceGuard(cfg ChatModelAgentMiddlewareConfig) (*securitycore.WorkspaceGuard, error) {
+	if cfg.WorkspaceGuard != nil {
+		return cfg.WorkspaceGuard, nil
+	}
+	return newWorkspaceGuard(cfg.Security)
+}
+
+func middlewareCommandSandbox(cfg ChatModelAgentMiddlewareConfig) (commandsandbox.Runner, error) {
+	if cfg.CommandSandbox != nil {
+		return cfg.CommandSandbox, nil
+	}
+	securityOpts := cfg.Security
+	if securityOpts == nil {
+		securityOpts = options.NewSecurityOptions()
+	}
+	return commandsandbox.NewRunner(commandsandbox.Config{
+		Backend:         securityOpts.CommandSandbox.Backend,
+		FailClosed:      securityOpts.CommandSandbox.FailClosed,
+		Network:         securityOpts.CommandSandbox.Network,
+		WSLDistribution: securityOpts.CommandSandbox.WSLDistribution,
+		AllowedEnvKeys:  securityOpts.CommandSandbox.AllowedEnvKeys,
+		WorkspaceRoots:  securityOpts.WorkspaceRoots,
+		MaxOutputBytes:  securityOpts.MaxToolOutputBytes,
+	})
 }
 
 func newWorkspaceGuard(opts *options.SecurityOptions) (*securitycore.WorkspaceGuard, error) {

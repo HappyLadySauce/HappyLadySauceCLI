@@ -17,6 +17,7 @@ import (
 	"github.com/cloudwego/eino/schema"
 
 	"github.com/HappyLadySauce/HappyLadySauceCLI/internal/capability"
+	commandsandbox "github.com/HappyLadySauce/HappyLadySauceCLI/internal/execution/sandbox"
 	"github.com/HappyLadySauce/HappyLadySauceCLI/internal/logger"
 	securitycore "github.com/HappyLadySauce/HappyLadySauceCLI/internal/security"
 	"github.com/HappyLadySauce/HappyLadySauceCLI/internal/security/policy"
@@ -55,6 +56,7 @@ type Config struct {
 	Approver              Approver
 	Builders              map[string]securitycore.OperationBuilder
 	WorkspaceGuard        *securitycore.WorkspaceGuard
+	CommandSandbox        commandsandbox.Runner
 	CommandTimeoutSeconds int
 	MaxToolOutputBytes    int
 }
@@ -69,6 +71,7 @@ type ExecutionSecurityMiddleware struct {
 	approver              Approver
 	builders              map[string]securitycore.OperationBuilder
 	workspaceGuard        *securitycore.WorkspaceGuard
+	commandSandbox        commandsandbox.Runner
 	commandTimeoutSeconds int
 	maxToolOutputBytes    int
 	approvalLocksMu       sync.Mutex
@@ -84,6 +87,7 @@ type authorization struct {
 	operation     securitycore.OperationRequest
 	decision      policy.Decision
 	approvalScope string
+	sandboxStatus commandsandbox.Status
 }
 
 // NewExecutionSecurityMiddleware creates an execution security middleware.
@@ -113,6 +117,7 @@ func NewExecutionSecurityMiddleware(cfg Config) (*ExecutionSecurityMiddleware, e
 		approver:                     cfg.Approver,
 		builders:                     cfg.Builders,
 		workspaceGuard:               cfg.WorkspaceGuard,
+		commandSandbox:               cfg.CommandSandbox,
 		commandTimeoutSeconds:        cfg.CommandTimeoutSeconds,
 		maxToolOutputBytes:           cfg.MaxToolOutputBytes,
 		approvalLocks:                make(map[string]*approvalLockEntry),
@@ -316,35 +321,49 @@ func (m *ExecutionSecurityMiddleware) authorize(ctx context.Context, tCtx *adk.T
 	if err != nil {
 		return authorization{operation: operation}, err
 	}
+	sandboxStatus := m.commandSandboxStatus(ctx, operation)
+	if operation.OperationKind == securitycore.OperationCommandRun && !sandboxStatus.Available {
+		decision := policy.Decision{Action: policy.ActionDeny, Reason: "command_sandbox_unavailable"}
+		auth := authorization{
+			operation:     operation,
+			decision:      decision,
+			approvalScope: securitycore.ApprovalScopeNone,
+			sandboxStatus: sandboxStatus,
+		}
+		m.auditDecision(ctx, operation, decision, securitycore.ApprovalScopeNone, "denied", sandboxStatus)
+		return auth, securitycore.CapabilityDeniedByPolicyError(toolName(tCtx))
+	}
+
 	decision := m.policy.Evaluate(operation)
 	auth := authorization{
 		operation:     operation,
 		decision:      decision,
 		approvalScope: securitycore.ApprovalScopeNone,
+		sandboxStatus: sandboxStatus,
 	}
 
 	switch decision.Action {
 	case policy.ActionAllow:
-		m.auditDecision(ctx, operation, decision, securitycore.ApprovalScopeNone, "allowed")
+		m.auditDecision(ctx, operation, decision, securitycore.ApprovalScopeNone, "allowed", sandboxStatus)
 		return auth, nil
 	case policy.ActionDeny:
-		m.auditDecision(ctx, operation, decision, securitycore.ApprovalScopeNone, "denied")
+		m.auditDecision(ctx, operation, decision, securitycore.ApprovalScopeNone, "denied", sandboxStatus)
 		return auth, securitycore.CapabilityDeniedByPolicyError(toolName(tCtx))
 	case policy.ActionReview:
 		if m.grants.IsAllowed(operation) {
 			auth.approvalScope = securitycore.ApprovalScopeSession
-			m.auditDecision(ctx, operation, decision, auth.approvalScope, "allowed")
+			m.auditDecision(ctx, operation, decision, auth.approvalScope, "allowed", sandboxStatus)
 			return auth, nil
 		}
 		unlock := m.lockApproval(operation.SessionGrantKey())
 		defer unlock()
 		if m.grants.IsAllowed(operation) {
 			auth.approvalScope = securitycore.ApprovalScopeSession
-			m.auditDecision(ctx, operation, decision, auth.approvalScope, "allowed")
+			m.auditDecision(ctx, operation, decision, auth.approvalScope, "allowed", sandboxStatus)
 			return auth, nil
 		}
 		if m.approver == nil {
-			m.auditDecision(ctx, operation, decision, securitycore.ApprovalScopeNone, "denied")
+			m.auditDecision(ctx, operation, decision, securitycore.ApprovalScopeNone, "denied", sandboxStatus)
 			return auth, fmt.Errorf("capability approval required: %s", toolName(tCtx))
 		}
 		approval, err := m.approver.Approve(ctx, ApprovalRequest{
@@ -355,11 +374,11 @@ func (m *ExecutionSecurityMiddleware) authorize(ctx context.Context, tCtx *adk.T
 			Operation:  operation,
 		})
 		if err != nil {
-			m.auditDecision(ctx, operation, decision, securitycore.ApprovalScopeNone, "denied")
+			m.auditDecision(ctx, operation, decision, securitycore.ApprovalScopeNone, "denied", sandboxStatus)
 			return auth, fmt.Errorf("approve capability: %w", err)
 		}
 		if !approval.Approved {
-			m.auditDecision(ctx, operation, decision, securitycore.ApprovalScopeNone, "denied")
+			m.auditDecision(ctx, operation, decision, securitycore.ApprovalScopeNone, "denied", sandboxStatus)
 			return auth, securitycore.CapabilityDeniedByUserError(toolName(tCtx))
 		}
 		approvalScope := approval.ApprovalScope
@@ -370,11 +389,21 @@ func (m *ExecutionSecurityMiddleware) authorize(ctx context.Context, tCtx *adk.T
 		if approvalScope == securitycore.ApprovalScopeSession {
 			m.grants.Allow(operation)
 		}
-		m.auditDecision(ctx, operation, decision, approvalScope, "approved")
+		m.auditDecision(ctx, operation, decision, approvalScope, "approved", sandboxStatus)
 		return auth, nil
 	default:
 		return auth, fmt.Errorf("unknown policy action: %s", decision.Action)
 	}
+}
+
+func (m *ExecutionSecurityMiddleware) commandSandboxStatus(ctx context.Context, operation securitycore.OperationRequest) commandsandbox.Status {
+	if operation.OperationKind != securitycore.OperationCommandRun {
+		return commandsandbox.Status{Backend: "none", Available: true, Reason: "not_applicable"}
+	}
+	if m.commandSandbox == nil {
+		return commandsandbox.Status{Backend: commandsandbox.BackendWSL2, Reason: "command sandbox runner is not configured"}
+	}
+	return m.commandSandbox.Probe(ctx)
 }
 
 func (m *ExecutionSecurityMiddleware) lockApproval(grantKey string) func() {
@@ -443,6 +472,9 @@ func (m *ExecutionSecurityMiddleware) operationForTool(ctx context.Context, tCtx
 	if err := securitycore.ValidateNetworkResources(operation); err != nil {
 		return operation, err
 	}
+	if err := securitycore.ValidateFileResources(operation); err != nil {
+		return operation, err
+	}
 	return operation, nil
 }
 
@@ -478,16 +510,17 @@ func (m *ExecutionSecurityMiddleware) auditAuthorizationRecovered(ctx context.Co
 		"output_bytes", outputBytes,
 		"denial_reason", reason,
 	}
+	kvs = append(kvs, sandboxAuditKVs(auth.sandboxStatus)...)
 	logger.Error(ctx, err, "Capability authorization recovered", append(kvs, "status", "denial_returned", "recovered", true)...)
 }
 
-func (m *ExecutionSecurityMiddleware) auditDecision(ctx context.Context, operation securitycore.OperationRequest, decision policy.Decision, approvalScope, status string) {
+func (m *ExecutionSecurityMiddleware) auditDecision(ctx context.Context, operation securitycore.OperationRequest, decision policy.Decision, approvalScope, status string, sandboxStatus commandsandbox.Status) {
 	record := securitycore.NewAuditRecord(operation)
 	record.Decision = string(decision.Action)
 	record.DecisionReason = decision.Reason
 	record.ApprovalScope = approvalScope
 	record.Status = status
-	logger.Info(ctx, 1, "Capability policy evaluated",
+	kvs := []any{
 		"phase", "capability_policy",
 		"tool_name", record.ToolName,
 		"tool_call_id", record.ToolCallID,
@@ -500,7 +533,9 @@ func (m *ExecutionSecurityMiddleware) auditDecision(ctx context.Context, operati
 		"decision", record.Decision,
 		"decision_reason", record.DecisionReason,
 		"approval_scope", record.ApprovalScope,
-		"status", record.Status)
+	}
+	kvs = append(kvs, sandboxAuditKVs(sandboxStatus)...)
+	logger.Info(ctx, 1, "Capability policy evaluated", append(kvs, "status", record.Status)...)
 }
 
 func (m *ExecutionSecurityMiddleware) auditExecution(ctx context.Context, auth authorization, start time.Time, err error, outputBytes int, recovered bool) {
@@ -523,6 +558,7 @@ func (m *ExecutionSecurityMiddleware) auditExecution(ctx context.Context, auth a
 		"output_bytes", outputBytes,
 		"elapsed_ms", record.ElapsedMS,
 	}
+	kvs = append(kvs, sandboxAuditKVs(auth.sandboxStatus)...)
 	if err != nil {
 		if recovered {
 			logger.Error(ctx, err, "Capability execution recovered", append(kvs, "status", "tool_error_returned", "recovered", true)...)
@@ -551,7 +587,7 @@ func (m *ExecutionSecurityMiddleware) auditStreamOpened(ctx context.Context, aut
 	operation := auth.operation
 	record := securitycore.NewAuditRecord(operation)
 	record.ElapsedMS = time.Since(start).Milliseconds()
-	logger.Info(ctx, 1, "Capability stream opened",
+	kvs := []any{
 		"phase", "capability_call",
 		"tool_name", record.ToolName,
 		"tool_call_id", record.ToolCallID,
@@ -566,7 +602,29 @@ func (m *ExecutionSecurityMiddleware) auditStreamOpened(ctx context.Context, aut
 		"approval_scope", auth.approvalScope,
 		"output_bytes", 0,
 		"elapsed_ms", record.ElapsedMS,
-		"status", "stream_opened")
+	}
+	kvs = append(kvs, sandboxAuditKVs(auth.sandboxStatus)...)
+	logger.Info(ctx, 1, "Capability stream opened", append(kvs, "status", "stream_opened")...)
+}
+
+func sandboxAuditKVs(status commandsandbox.Status) []any {
+	backend := status.Backend
+	if backend == "" {
+		backend = "none"
+	}
+	state := "unavailable"
+	if status.Available {
+		state = "available"
+	}
+	reason := securitycore.SanitizeText(status.Reason)
+	if reason == "" {
+		reason = "none"
+	}
+	return []any{
+		"sandbox_backend", backend,
+		"sandbox_status", state,
+		"sandbox_reason", reason,
+	}
 }
 
 func (m *ExecutionSecurityMiddleware) executionContext(ctx context.Context, operation securitycore.OperationRequest) (context.Context, context.CancelFunc) {
